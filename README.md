@@ -1,4 +1,9 @@
-# Superpowers
+# Next Level Agent (NLA) — Based on Superpowers
+
+> This plugin (`next-level-agent`) is built on top of [Superpowers](https://github.com/obra/superpowers) (base commit `b36e082`).
+> All original skills (`skills/`), philosophy, and workflow remain intact.
+> NLA modifications: `compact/`, `config/model-pools.json`, `.opencode/plugins/nla.json`, plugin identity (`.codex-plugin/plugin.json`), and docs (`docs/superpowers/plans/`, `docs/superpowers/specs/`).
+> See `NLA_MODIFICATIONS.md` for a full boundary list.
 
 Superpowers is a complete software development methodology for your coding agents, built on top of a set of composable skills and some initial instructions that make sure your agent uses them.
 
