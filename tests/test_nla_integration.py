@@ -11,10 +11,11 @@ def test_full_nla_workflow():
     loaded = load_checkpoint(path)
     assert loaded["threshold"] == 50000
 
-    # Compress
-    result = compress_context({"messages": ["a"]}, threshold=50000)
+    # Compress (production behavior: preserves input summary or empty)
+    result = compress_context({"messages": ["a"], "summary": "compressed"}, threshold=50000)
     assert "summary" in result
     assert result["threshold"] == 50000
+    assert result["summary"] == "compressed"
 
     # Pool
     pool = get_pool("coordinator")
