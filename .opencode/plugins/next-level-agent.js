@@ -51,6 +51,13 @@ const normalizePath = (p, homeDir) => {
 // once eliminates redundant fs.existsSync + fs.readFileSync + regex work on
 // every agent step.  See #1202 for the full analysis.
 let _bootstrapCache = undefined; // undefined = not yet loaded, null = file missing
+let _nlaBannerShown = false;
+
+function showNlaBanner() {
+  if (_nlaBannerShown) return;
+  _nlaBannerShown = true;
+  console.error("[Next Level Agent] active — orchestration, subagents, and run logs enabled.");
+}
 
 export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const homeDir = os.homedir();
@@ -105,6 +112,7 @@ ${toolMapping}
     // This works because Config.get() returns a cached singleton — modifications
     // here are visible when skills are lazily discovered later.
     config: async (config) => {
+      showNlaBanner();
       config.skills = config.skills || {};
       config.skills.paths = config.skills.paths || [];
       if (!config.skills.paths.includes(superpowersSkillsDir)) {
