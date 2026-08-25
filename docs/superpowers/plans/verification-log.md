@@ -1,0 +1,4 @@
+- Tests passed: yes
+- Threshold value verified: 50000
+- Model pools roles covered: 6
+- Any errors: none
