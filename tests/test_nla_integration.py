@@ -23,3 +23,7 @@ def test_full_nla_workflow():
     # Integration verification
     assert result["summary"] == "compressed"
     assert loaded == data
+
+def test_fallback_exists():
+    from config.model_pools import get_pool
+    assert get_pool("reviewer")["fallback"] == "claude-sonnet-4-5"
