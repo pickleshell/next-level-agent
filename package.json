@@ -1,9 +1,9 @@
 {
-  "name": "superpowers",
+  "name": "next-level-agent",
   "version": "6.3.0",
-  "description": "Superpowers skills and runtime bootstrap for coding agents",
+  "description": "Next Level Agent orchestration plugin with Superpowers skills",
   "type": "module",
-  "main": ".opencode/plugins/superpowers.js",
+  "main": ".opencode/plugins/next-level-agent.js",
   "keywords": [
     "pi-package",
     "skills",
