@@ -1,7 +1,7 @@
 /**
  * Next Level Agent plugin for OpenCode.ai
  *
- * Injects superpowers bootstrap context via message transform.
+ * Injects NLA bootstrap context via message transform.
  * Auto-registers skills directory via config hook (no symlinks needed).
  */
 
@@ -61,7 +61,7 @@ function showNlaBanner() {
 
 export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const homeDir = os.homedir();
-  const superpowersSkillsDir = path.resolve(__dirname, '../../skills');
+  const nlaSkillsDir = path.resolve(__dirname, '../../skills');
   const envConfigDir = normalizePath(process.env.OPENCODE_CONFIG_DIR, homeDir);
   const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
   let defaultAgent = 'nla';
@@ -94,7 +94,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     if (_bootstrapCache !== undefined) return _bootstrapCache;
 
     // Try to load next-level-agent skill
-    const skillPath = path.join(superpowersSkillsDir, 'next-level-agent', 'SKILL.md');
+    const skillPath = path.join(nlaSkillsDir, 'next-level-agent', 'SKILL.md');
     if (!fs.existsSync(skillPath)) {
       _bootstrapCache = null;
       return null;
@@ -117,9 +117,9 @@ When skills request actions, substitute OpenCode equivalents:
 Use OpenCode's native \`skill\` tool to list and load skills.`;
 
     _bootstrapCache = `<EXTREMELY_IMPORTANT>
-You are running Next Level Agent (NLA), with Superpowers providing its skills framework.
+You are Next Level Agent (NLA).
 
-**IMPORTANT: The Next Level Agent bootstrap is active. On the first user message of each session, invoke the native skill tool for next-level-agent before responding or acting. This makes the active skills framework explicit in the UI. After that first invocation, follow the loaded skill and invoke any additional relevant skills normally.**
+**IMPORTANT: The Next Level Agent bootstrap is active. On the first user message of each session, invoke the native skill tool for next-level-agent before responding or acting. This makes NLA startup explicit in the UI. After that first invocation, follow the loaded skill and invoke any additional relevant skills normally.**
 ${content}
 
 ${toolMapping}
@@ -129,7 +129,7 @@ ${toolMapping}
   };
 
   return {
-    // Inject skills path into live config so OpenCode discovers superpowers skills
+    // Inject skills path into live config so OpenCode discovers NLA skills
     // without requiring manual symlinks or config file edits.
     // This works because Config.get() returns a cached singleton — modifications
     // here are visible when skills are lazily discovered later.
@@ -138,8 +138,8 @@ ${toolMapping}
       showNlaBanner();
       config.skills = config.skills || {};
       config.skills.paths = config.skills.paths || [];
-      if (!config.skills.paths.includes(superpowersSkillsDir)) {
-        config.skills.paths.push(superpowersSkillsDir);
+      if (!config.skills.paths.includes(nlaSkillsDir)) {
+        config.skills.paths.push(nlaSkillsDir);
       }
     },
 
