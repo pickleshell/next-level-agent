@@ -64,6 +64,10 @@ No provider credentials are stored in this repository. Configure authentication 
 - Confirm `.logs/compact.log` exists with event types (`compact`, `checkpoint_save`, `checkpoint_restore`, `token_threshold_exceeded`).
 - Confirm 6 model pool roles in `config/model-pools.json` (`default`, `fallback`, `manual`).
 
+## Run log
+
+NLA writes newline-delimited JSON to `.opencode/agent-run.log` in the target project. Entries are emitted by OpenCode hooks, not authored by the model. They record timestamps, session and call identifiers, primary-agent selection, skill calls, subagent dispatch, and subagent completion. Prompts, tool output, and model replies are not written.
+
 ## Verification Log
 - `docs/superpowers/plans/verification-log.md` (updated after Phase 2; 30/31 PASS before fix; fix applied in `debbbe1`)
 - `docs/superpowers/plans/phase2/plan.md` (Phase 2 scope: A-G completed)

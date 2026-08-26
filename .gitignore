@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# NLA hook-generated workflow evidence
+.opencode/agent-run.log
