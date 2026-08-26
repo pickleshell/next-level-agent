@@ -29,8 +29,8 @@ No provider credentials are stored in this repository. Configure authentication 
 | Agent | Model | Purpose |
 | --- | --- | --- |
 | `nla` | `opencode/hy3-free` | Default workflow: skills, routing, delegation, acceptance |
-| `build` | `opencode/hy3-free` | Direct implementation |
-| `plan` | `opencode/hy3-free` | Planning without implementation |
+| `build` | `openrouter/thinkingmachines/inkling:free` | Direct implementation |
+| `plan` | `openrouter/thinkingmachines/inkling:free` | Planning without implementation |
 
 `router` and all other configured roles are internal subagents. The approved implementation route is `explorer → implementer → reviewer`; new or ambiguous requests first use `brainstorming → writing-plans → user approval`.
 
