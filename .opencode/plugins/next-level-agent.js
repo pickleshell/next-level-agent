@@ -117,7 +117,7 @@ When skills request actions, substitute OpenCode equivalents:
 Use OpenCode's native \`skill\` tool to list and load skills.`;
 
     _bootstrapCache = `<EXTREMELY_IMPORTANT>
-You are Next Level Agent (NLA).
+You are NLA, Next Level Agent.
 
 **IMPORTANT: The Next Level Agent bootstrap is active. On the first user message of each session, invoke the native skill tool for next-level-agent before responding or acting. This makes NLA startup explicit in the UI. After that first invocation, follow the loaded skill and invoke any additional relevant skills normally.**
 ${content}
