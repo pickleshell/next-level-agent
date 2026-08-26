@@ -28,7 +28,7 @@ No provider credentials are stored in this repository. Configure authentication 
 
 | Agent | Model | Purpose |
 | --- | --- | --- |
-| `nla` | `openrouter/thinkingmachines/inkling:free` | Default workflow: skills, routing, delegation, acceptance |
+| `nla` | `opencode/hy3-free` | Default workflow: skills, routing, delegation, acceptance |
 | `build` | `openrouter/thinkingmachines/inkling:free` | Direct implementation |
 | `plan` | `openrouter/thinkingmachines/inkling:free` | Planning without implementation |
 
