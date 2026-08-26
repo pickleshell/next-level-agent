@@ -31,9 +31,8 @@ No provider credentials are stored in this repository. Configure authentication 
 | `nla` | `opencode/hy3-free` | Default workflow: skills, routing, delegation, acceptance |
 | `build` | `opencode/hy3-free` | Direct implementation |
 | `plan` | `opencode/hy3-free` | Planning without implementation |
-| `router` | `opencode/hy3-free` | Read-only Tier 0-3 route diagnosis |
 
-All other configured roles are internal subagents. The approved implementation route is `explorer → implementer → reviewer`; new or ambiguous requests first use `brainstorming → writing-plans → user approval`.
+`router` and all other configured roles are internal subagents. The approved implementation route is `explorer → implementer → reviewer`; new or ambiguous requests first use `brainstorming → writing-plans → user approval`.
 
 ## Testing
 

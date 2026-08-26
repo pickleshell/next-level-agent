@@ -15,7 +15,7 @@
     },
     "router": {
       "description": "Risk-based task routing and delegation control",
-      "mode": "primary",
+      "mode": "subagent",
       "model": "opencode/hy3-free",
       "prompt": "You are the Next-Level Agent Router. Classify the task as Tier 0, 1, 2, or 3. Return only: tier, rationale, ordered route, required roles, gate state, packet contents, and budgets. Do not edit files or execute tools. Tier 0 and Tier 1 must not delegate."
     },
