@@ -64,6 +64,29 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const superpowersSkillsDir = path.resolve(__dirname, '../../skills');
   const envConfigDir = normalizePath(process.env.OPENCODE_CONFIG_DIR, homeDir);
   const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
+  let defaultAgent = 'nla';
+  const runLogPath = path.join(directory, '.opencode', 'agent-run.log');
+
+  // The run log is evidence from OpenCode hooks, not model-authored prose.
+  // Keep it JSONL and retain only identifiers needed to trace workflow roles.
+  const appendRunLog = (entry) => {
+    try {
+      fs.mkdirSync(path.dirname(runLogPath), { recursive: true });
+      const line = JSON.stringify(Object.assign({ ts: new Date().toISOString() }, entry)) + String.fromCharCode(10);
+      fs.appendFileSync(runLogPath, line, { mode: 0o600 });
+    } catch (error) {
+      console.error('[Next Level Agent] could not append run log: ' + error.message);
+    }
+  };
+
+  const safeToolData = (args) => {
+    const source = args && typeof args === 'object' ? args : {};
+    const detail = { arg_keys: Object.keys(source).sort().slice(0, 12) };
+    for (const key of ['agent', 'subagent', 'subagent_type', 'type', 'name', 'skill']) {
+      if (typeof source[key] === 'string') detail[key] = source[key].slice(0, 96);
+    }
+    return detail;
+  };
 
   // Helper to generate bootstrap content (cached after first call)
   const getBootstrapContent = () => {
@@ -96,8 +119,7 @@ Use OpenCode's native \`skill\` tool to list and load skills.`;
     _bootstrapCache = `<EXTREMELY_IMPORTANT>
 You are running Next Level Agent (NLA), with Superpowers providing its skills framework.
 
-**IMPORTANT: The Next Level Agent bootstrap is active. On the first user message of each session, invoke the native `skill` tool for `next-level-agent` before responding or acting. This makes the active skills framework explicit in the UI. After that first invocation, follow the loaded skill and invoke any additional relevant skills normally.**
-
+**IMPORTANT: The Next Level Agent bootstrap is active. On the first user message of each session, invoke the native skill tool for next-level-agent before responding or acting. This makes the active skills framework explicit in the UI. After that first invocation, follow the loaded skill and invoke any additional relevant skills normally.**
 ${content}
 
 ${toolMapping}
@@ -112,12 +134,38 @@ ${toolMapping}
     // This works because Config.get() returns a cached singleton — modifications
     // here are visible when skills are lazily discovered later.
     config: async (config) => {
+      defaultAgent = config.default_agent || defaultAgent;
       showNlaBanner();
       config.skills = config.skills || {};
       config.skills.paths = config.skills.paths || [];
       if (!config.skills.paths.includes(superpowersSkillsDir)) {
         config.skills.paths.push(superpowersSkillsDir);
       }
+    },
+
+    // Record role and workflow-tool activity directly from OpenCode hooks.
+    'chat.message': async (input) => {
+      appendRunLog({ event: 'primary_agent', session_id: input.sessionID, agent: input.agent || defaultAgent, model: input.model ? input.model.providerID + '/' + input.model.modelID : undefined });
+    },
+    'tool.execute.before': async (input, output) => {
+      if (input.tool !== 'skill' && input.tool !== 'task') return;
+      appendRunLog({
+        event: input.tool === 'task' ? 'subagent_dispatch' : 'skill_invoked',
+        session_id: input.sessionID,
+        call_id: input.callID,
+        tool: input.tool,
+        ...safeToolData(output.args),
+      });
+    },
+
+    'tool.execute.after': async (input) => {
+      if (input.tool !== 'skill' && input.tool !== 'task') return;
+      appendRunLog({
+        event: input.tool === 'task' ? 'subagent_finished' : 'skill_finished',
+        session_id: input.sessionID,
+        call_id: input.callID,
+        tool: input.tool,
+      });
     },
 
     // Inject bootstrap into the first user message of each session.
