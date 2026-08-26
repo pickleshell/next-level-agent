@@ -5,16 +5,35 @@ Plugin: `next-level-agent` (`.codex-plugin/plugin.json`)
 
 ## Installation
 
-1. Clone base:
-   `git clone https://github.com/obra/superpowers.git`
-2. Copy/merge NLA files: `compact/`, `config/model-pools.json`, `.opencode/plugins/nla.json`, `tests/test_*.py`, `docs/superpowers/plans/`, `docs/superpowers/specs/`.
-3. Verify plugin entry: `.codex-plugin/plugin.json` must contain `"name":"next-level-agent"`.
-4. Verify OpenCode plugin: `.opencode/plugins/nla.json` points to current entrypoint.
-5. Restart harness (OpenCode / Codex / Claude) after installation.
+The authoritative OpenCode profile is the checked-in [`opencode.json`](../opencode.json). It declares the local NLA plugin, the `nla` default agent, primary agents, subagents, model bindings, and `./skills`.
 
-Boundary (see `NLA_MODIFICATIONS.md`):
-- NLA: `compact/`, `config/`, `.opencode/plugins/nla.json`, `tests/test_*`, `docs/superpowers/plans/`, `.codex-plugin/plugin.json` (name only)
-- Superpowers base: `skills/`, `.claude-plugin/`, `.cursor-plugin/`, `assets/`, `README.md` (updated with NLA note)
+Run it from the repository root:
+
+```bash
+git clone <NLA-repository-url> next-level-agent
+cd next-level-agent
+opencode
+```
+
+A healthy new session shows:
+
+```text
+> nla · hy3-free
+→ Skill "next-level-agent"
+```
+
+No provider credentials are stored in this repository. Configure authentication in the user OpenCode profile. That global profile is an installation target; this repository is the source of truth.
+
+### User-selectable agents
+
+| Agent | Model | Purpose |
+| --- | --- | --- |
+| `nla` | `opencode/hy3-free` | Default workflow: skills, routing, delegation, acceptance |
+| `build` | `opencode/hy3-free` | Direct implementation |
+| `plan` | `opencode/hy3-free` | Planning without implementation |
+| `router` | `opencode/hy3-free` | Read-only Tier 0-3 route diagnosis |
+
+All other configured roles are internal subagents. The approved implementation route is `explorer → implementer → reviewer`; new or ambiguous requests first use `brainstorming → writing-plans → user approval`.
 
 ## Testing
 
