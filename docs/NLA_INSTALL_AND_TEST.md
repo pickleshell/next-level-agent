@@ -34,6 +34,15 @@ No provider credentials are stored in this repository. Configure authentication 
 
 `router` and all other configured roles are internal subagents. The approved implementation route is `explorer → implementer → reviewer`; new or ambiguous requests first use `brainstorming → writing-plans → user approval`.
 
+### Tier routing
+
+| Tier | Use | Route |
+| --- | --- | --- |
+| 0 | Direct answer or focused read-only exploration | NLA works directly |
+| 1 | Small, bounded edit | Direct change plus targeted verification |
+| 2 | Non-trivial implementation | Explore → implement → verify → independent review when required → checkpoint |
+| 3 | High-risk or architectural work | Explore/research → architecture decision → explicit approval → implement → verify → independent review → checkpoint |
+
 ## Testing
 
 ### Unit Tests
