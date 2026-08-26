@@ -7,11 +7,11 @@
   "agent": {
     "build": {
       "mode": "primary",
-      "model": "opencode/hy3-free"
+      "model": "openrouter/thinkingmachines/inkling:free"
     },
     "plan": {
       "mode": "primary",
-      "model": "opencode/hy3-free"
+      "model": "openrouter/thinkingmachines/inkling:free"
     },
     "router": {
       "description": "Risk-based task routing and delegation control",
@@ -46,7 +46,7 @@
     "implementer": {
       "description": "Focused implementation with verification",
       "mode": "subagent",
-      "model": "opencode/hy3-free",
+      "model": "openrouter/thinkingmachines/inkling:free",
       "prompt": "You are the Next-Level Agent Implementer. Make only scoped changes from the bounded task packet. Verify the result with targeted tests and report changed files, evidence, failures, and next step."
     },
     "reviewer": {
