@@ -70,8 +70,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     // Return cached result on subsequent calls
     if (_bootstrapCache !== undefined) return _bootstrapCache;
 
-    // Try to load using-superpowers skill
-    const skillPath = path.join(superpowersSkillsDir, 'using-superpowers', 'SKILL.md');
+    // Try to load next-level-agent skill
+    const skillPath = path.join(superpowersSkillsDir, 'next-level-agent', 'SKILL.md');
     if (!fs.existsSync(skillPath)) {
       _bootstrapCache = null;
       return null;
@@ -96,7 +96,7 @@ Use OpenCode's native \`skill\` tool to list and load skills.`;
     _bootstrapCache = `<EXTREMELY_IMPORTANT>
 You are running Next Level Agent (NLA), with Superpowers providing its skills framework.
 
-**IMPORTANT: The Next Level Agent bootstrap and the using-superpowers skill content are included below. They are ALREADY LOADED - you are currently following it. Do NOT use the skill tool to load "using-superpowers" again - that would be redundant.**
+**IMPORTANT: The Next Level Agent bootstrap is active. On the first user message of each session, invoke the native `skill` tool for `next-level-agent` before responding or acting. This makes the active skills framework explicit in the UI. After that first invocation, follow the loaded skill and invoke any additional relevant skills normally.**
 
 ${content}
 
