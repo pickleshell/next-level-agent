@@ -92,15 +92,16 @@ your path and complete them in order.
 5. **Implement** — proceed with the normal development workflow (TDD applies); no plan document
 
 **Architectural:**
-1. **Explore project context** — check files, docs, recent commits
+1. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria sufficiently to focus repository discovery
 2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.
-3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
-4. **Propose 2-3 approaches** — with trade-offs and your recommendation
-5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
-7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-8. **User reviews written spec** — ask user to review the spec file before proceeding
-9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
+3. **Invoke Explorer** — use `nla_task` for a bounded read-only context report; NLA does not duplicate this repository exploration itself
+4. **Invoke Architect (required)** — use `nla_task` with the clarified requirements and Explorer report; require 2-3 approaches, a recommendation, boundaries, interfaces, data flow, failure handling, testing, and risks
+5. **Discuss approaches and present design** — NLA, not Architect, talks to the user; present sections scaled to their complexity and get user approval
+6. **Validate material revisions** — invoke Architect again only if user choices or revisions materially changed boundaries, interfaces, data flow, dependencies, or major risks
+7. **Write design doc** — save the approved design to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
+8. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+9. **User reviews written spec** — ask user to review the spec file before proceeding
+10. **Transition to implementation** — invoke writing-plans only when a successful Architect report exists and the written design is explicitly approved
 
 ## Process Flow
 
@@ -113,9 +114,11 @@ digraph brainstorming {
     "Human approves?" [shape=diamond];
     "Investigate; report recommendation" [shape=doublecircle];
     "Implement via normal workflow (no plan doc)" [shape=doublecircle];
-    "Explore project context" [shape=box];
     "Ask clarifying questions" [shape=box];
-    "Propose 2-3 approaches" [shape=box];
+    "Invoke Explorer via nla_task" [shape=box];
+    "Invoke Architect via nla_task" [shape=box];
+    "Architect validation needed?" [shape=diamond];
+    "Validate revised design" [shape=box];
     "Present design sections" [shape=box];
     "User approves design?" [shape=diamond];
     "Write design doc" [shape=box];
@@ -126,19 +129,23 @@ digraph brainstorming {
 
     "Classify: spike / bounded / architectural" -> "Present question + probe (2-3 sentences)" [label="spike"];
     "Classify: spike / bounded / architectural" -> "Ask clarifying questions (bounded)" [label="bounded"];
-    "Classify: spike / bounded / architectural" -> "Explore project context" [label="architectural"];
+    "Classify: spike / bounded / architectural" -> "Ask clarifying questions" [label="architectural"];
     "Present question + probe (2-3 sentences)" -> "Human approves?";
     "Ask clarifying questions (bounded)" -> "Present short design in chat";
     "Present short design in chat" -> "Human approves?";
     "Human approves?" -> "Investigate; report recommendation" [label="spike: yes"];
     "Human approves?" -> "Implement via normal workflow (no plan doc)" [label="bounded: yes"];
     "Hidden complexity? Upgrade path" -> "Classify: spike / bounded / architectural";
-    "Explore project context" -> "Ask clarifying questions";
-    "Ask clarifying questions" -> "Propose 2-3 approaches";
-    "Propose 2-3 approaches" -> "Present design sections";
+    "Ask clarifying questions" -> "Invoke Explorer via nla_task";
+    "Invoke Explorer via nla_task" -> "Invoke Architect via nla_task";
+    "Invoke Architect via nla_task" -> "Present design sections";
     "Present design sections" -> "User approves design?";
     "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
+    "User approves design?" -> "Architect validation needed?" [label="yes"];
+    "Architect validation needed?" -> "Validate revised design" [label="yes"];
+    "Validate revised design" -> "Present design sections" [label="corrections"];
+    "Validate revised design" -> "Write design doc" [label="approved"];
+    "Architect validation needed?" -> "Write design doc" [label="no"];
     "Write design doc" -> "Spec self-review\n(fix inline)";
     "Spec self-review\n(fix inline)" -> "User reviews spec?";
     "User reviews spec?" -> "Write design doc" [label="changes requested"];
@@ -146,9 +153,11 @@ digraph brainstorming {
 }
 ```
 
-**Terminal states are path-bound.** Architectural: the ONLY skill you
-invoke after brainstorming is writing-plans — never frontend-design,
-mcp-builder, or any other implementation skill. Bounded: after
+**Terminal states are path-bound.** Architectural: during brainstorming,
+the required Explorer and Architect calls are subagent tool calls, not
+implementation skills. The ONLY skill you invoke after brainstorming is
+writing-plans — never frontend-design, mcp-builder, or any other
+implementation skill. Bounded: after
 approval, implementation proceeds directly through the normal
 development workflow; no plan document. Spike: the terminal state is a
 reported recommendation.
@@ -163,7 +172,7 @@ is the whole process.
 
 **Understanding the idea:**
 
-- Check out the current project state first (files, docs, recent commits)
+- On the architectural path, clarify the goal and constraints first, then have Explorer inspect files, docs, and recent commits; do not duplicate Explorer's repository work in NLA
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
@@ -173,8 +182,11 @@ is the whole process.
 
 **Exploring approaches:**
 
-- Propose 2-3 different approaches with trade-offs
-- Present options conversationally with your recommendation and reasoning
+- After clarifying requirements, dispatch Explorer with `nla_task` for the bounded facts the Architect needs
+- Dispatch Architect with `nla_task`; raw `task` is forbidden because it bypasses the configured model pool
+- Give Architect the clarified requirements, success criteria, constraints, and complete Explorer report
+- Require Architect to propose 2-3 different approaches with trade-offs and a recommendation
+- NLA presents the options conversationally with the recommendation and reasoning; Architect does not question the user directly
 - Lead with your recommended option and explain why
 - YAGNI ruthlessly - remove unnecessary features from every approach and design
 
@@ -227,6 +239,8 @@ Wait for the user's response. If they request changes, make them and re-run the 
 
 **Implementation:**
 
+- HARD GATE: do not invoke writing-plans on the architectural path unless the session contains a successful Architect design report and explicit user approval of the resulting written design
+- If the approved design materially differs from Architect's proposal in boundaries, interfaces, data flow, dependencies, or major risks, obtain an Architect validation report before writing-plans
 - Invoke the writing-plans skill to create a detailed implementation plan
 - Do NOT invoke any other skill. writing-plans is the next step.
 
