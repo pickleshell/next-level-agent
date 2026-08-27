@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { tool } from '@opencode-ai/plugin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -72,8 +73,12 @@ function splitModel(model) {
 }
 
 function retryableProviderError(error) {
-  const text = typeof error === 'string' ? error : JSON.stringify(error || {});
-  return /\b(429|500|502|503|504)\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset/i.test(text);
+  const text = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : typeof error === 'string'
+      ? error
+      : JSON.stringify(error || {});
+  return /\b(404|410|429|500|502|503|504)\b|model not found|end of life|\bgone\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset/i.test(text);
 }
 
 function showNlaBanner() {
@@ -182,6 +187,121 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     return detail;
   };
 
+  const nlaTask = tool({
+    description: 'Run one bounded NLA subagent task through its ordered model pool. Use this instead of task for NLA roles so early model errors, provider failures, and timeouts can fall back safely.',
+    args: {
+      role: tool.schema.string().describe('Configured NLA subagent role, for example explorer, architect, implementer, or reviewer'),
+      description: tool.schema.string().max(120).describe('Short task title'),
+      prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
+    },
+    execute: async (args, context) => {
+      const pool = pools[args.role];
+      if (!pool || !pool.enabled || !Array.isArray(pool.models) || pool.models.length === 0) {
+        throw new Error(`No enabled NLA model pool for role: ${args.role}`);
+      }
+
+      const attempts = pool.models.slice(0, Math.min(pool.models.length, (pool.max_failovers || 0) + 1));
+      const created = await client.session.create({
+        body: { parentID: context.sessionID, title: args.description },
+        query: { directory: context.directory || directory },
+        throwOnError: true,
+      });
+      const childID = created.data.id;
+      appendRunLog({
+        event: 'pooled_subagent_created', session_id: childID,
+        parent_session_id: context.sessionID, agent: args.role,
+        models: attempts,
+      });
+
+      let lastError = null;
+      for (let index = 0; index < attempts.length; index += 1) {
+        if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
+        const modelName = attempts[index];
+        const model = splitModel(modelName);
+        if (!model) {
+          lastError = new Error(`Invalid model identifier in ${args.role} pool: ${modelName}`);
+          continue;
+        }
+
+        appendRunLog({
+          event: 'model_attempt_started', session_id: childID,
+          parent_session_id: context.sessionID, agent: args.role,
+          model: modelName, attempt: index + 1,
+        });
+
+        let timer = null;
+        try {
+          const request = client.session.prompt({
+            path: { id: childID },
+            query: { directory: context.directory || directory },
+            body: {
+              agent: args.role,
+              model,
+              parts: [{ type: 'text', text: args.prompt }],
+            },
+            throwOnError: true,
+          });
+          const timeoutMs = pool.idle_timeout_ms || 0;
+          const result = timeoutMs > 0
+            ? await Promise.race([
+                request,
+                new Promise((_, reject) => {
+                  timer = setTimeout(() => {
+                    void client.session.abort({ path: { id: childID } });
+                    reject(new Error(`NLA pooled task timed out after ${timeoutMs}ms`));
+                  }, timeoutMs);
+                }),
+              ])
+            : await request;
+          if (timer) clearTimeout(timer);
+
+          if (result.data.info && result.data.info.error) {
+            const modelError = result.data.info.error;
+            const detail = modelError.data && (modelError.data.message || modelError.data.responseBody);
+            const status = modelError.data && modelError.data.statusCode;
+            throw new Error(`${modelError.name || 'ModelError'}${status ? ` ${status}` : ''}: ${detail || JSON.stringify(modelError)}`);
+          }
+
+          const output = (result.data.parts || [])
+            .filter((part) => part.type === 'text' && typeof part.text === 'string')
+            .map((part) => part.text)
+            .join('\n')
+            .trim();
+          if (!output) throw new Error('NLA pooled subagent returned no text result');
+
+          appendRunLog({
+            event: 'model_attempt_succeeded', session_id: childID,
+            parent_session_id: context.sessionID, agent: args.role,
+            model: modelName, attempt: index + 1,
+          });
+          return {
+            title: `${args.description} (${args.role})`,
+            output,
+            metadata: { sessionID: childID, role: args.role, model: modelName, attempt: index + 1 },
+          };
+        } catch (error) {
+          if (timer) clearTimeout(timer);
+          lastError = error;
+          const reason = error instanceof Error ? error.message : String(error);
+          appendRunLog({
+            event: 'model_attempt_failed', session_id: childID,
+            parent_session_id: context.sessionID, agent: args.role,
+            model: modelName, attempt: index + 1, reason: reason.slice(0, 180),
+          });
+          if (index + 1 >= attempts.length || !retryableProviderError(error)) break;
+          appendRunLog({
+            event: 'model_fallback_started', session_id: childID,
+            parent_session_id: context.sessionID, agent: args.role,
+            previous_model: modelName, model: attempts[index + 1], failover: index + 1,
+          });
+        }
+      }
+
+      const reason = lastError instanceof Error ? lastError.message : String(lastError || 'unknown failure');
+      throw new Error(`NLA pooled task failed for ${args.role} after ${attempts.length} model attempt(s): ${reason}`);
+    },
+  });
+
   // Helper to generate bootstrap content (cached after first call)
   const getBootstrapContent = () => {
     // Return cached result on subsequent calls
@@ -200,7 +320,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     const toolMapping = `**Tool Mapping for OpenCode:**
 When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → \`todowrite\`
-- \`Subagent (general-purpose):\` → \`task\` with \`subagent_type: "general"\`
+- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 - Invoke a skill → OpenCode's native \`skill\` tool
 - Read files → \`read\`
 - Create, edit, or delete files → \`apply_patch\`
@@ -223,6 +343,9 @@ ${toolMapping}
   };
 
   return {
+    tool: {
+      nla_task: nlaTask,
+    },
     // Inject skills path into live config so OpenCode discovers NLA skills
     // without requiring manual symlinks or config file edits.
     // This works because Config.get() returns a cached singleton — modifications
@@ -297,9 +420,9 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (input.tool !== 'skill' && input.tool !== 'task') return;
+      if (input.tool !== 'skill' && input.tool !== 'task' && input.tool !== 'nla_task') return;
       appendRunLog({
-        event: input.tool === 'task' ? 'subagent_dispatch' : 'skill_invoked',
+        event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
         call_id: input.callID,
         tool: input.tool,
@@ -308,9 +431,9 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (input.tool !== 'skill' && input.tool !== 'task') return;
+      if (input.tool !== 'skill' && input.tool !== 'task' && input.tool !== 'nla_task') return;
       appendRunLog({
-        event: input.tool === 'task' ? 'subagent_finished' : 'skill_finished',
+        event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,
         call_id: input.callID,
         tool: input.tool,
