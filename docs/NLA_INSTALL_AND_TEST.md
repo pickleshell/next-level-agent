@@ -75,3 +75,18 @@ NLA writes newline-delimited JSON to `.opencode/agent-run.log` in the target pro
 ## Ruling / Deferred (from spec self-review)
 - Full session-monitor integration (automatic trigger at 50000 tokens during real agent session) — deferred; framework present, manual/test trigger verified.
 - `.opencode/plugins/nla.json` created; full harness bootstrap load verified separately.
+
+## Model pools
+
+NLA model pools are implemented by the local plugin, not by prompts. They apply
+only to configured subagents. On a retryable provider failure (such as `429`,
+`5xx`, or timeout) or when a busy subagent produces no OpenCode progress event
+for its role-specific deadline, the plugin aborts that request and resumes the
+same bounded subagent session on its one configured fallback model. It records
+`model_failure` and `model_fallback_started` in `.opencode/agent-run.log`.
+
+A pool has exactly one fallback in `config/model-pools.json`; this prevents
+loops and uncontrolled billed usage. The primary NLA session has no automatic
+fallback: it remains visible to the user. Inkling is intentionally not a
+long-running subagent fallback because the gtop test exposed repeated upstream
+504 responses.

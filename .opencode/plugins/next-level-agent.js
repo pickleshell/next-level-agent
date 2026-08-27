@@ -53,6 +53,29 @@ const normalizePath = (p, homeDir) => {
 let _bootstrapCache = undefined; // undefined = not yet loaded, null = file missing
 let _nlaBannerShown = false;
 
+const MODEL_POOLS_PATH = path.resolve(__dirname, '../../config/model-pools.json');
+
+function loadModelPools() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(MODEL_POOLS_PATH, 'utf8'));
+    return parsed && typeof parsed.roles === 'object' ? parsed.roles : {};
+  } catch (error) {
+    console.error('[Next Level Agent] could not load model pools: ' + error.message);
+    return {};
+  }
+}
+
+function splitModel(model) {
+  const slash = typeof model === 'string' ? model.indexOf('/') : -1;
+  if (slash <= 0 || slash === model.length - 1) return null;
+  return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+}
+
+function retryableProviderError(error) {
+  const text = typeof error === 'string' ? error : JSON.stringify(error || {});
+  return /\b(429|500|502|503|504)\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset/i.test(text);
+}
+
 function showNlaBanner() {
   if (_nlaBannerShown) return;
   _nlaBannerShown = true;
@@ -66,6 +89,77 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
   let defaultAgent = 'nla';
   const runLogPath = path.join(directory, '.opencode', 'agent-run.log');
+
+  const pools = loadModelPools();
+  const pendingTasks = new Map();
+  const trackedSessions = new Map();
+  let watchdog = null;
+
+  const touch = (sessionID) => {
+    const state = trackedSessions.get(sessionID);
+    if (state) state.lastActivity = Date.now();
+  };
+
+  const failover = async (sessionID, reason) => {
+    const state = trackedSessions.get(sessionID);
+    if (!state || state.switching || !state.pool.enabled) return;
+    const nextIndex = state.modelIndex + 1;
+    const nextModel = state.pool.models && state.pool.models[nextIndex];
+    if (!nextModel || state.failovers >= state.pool.max_failovers || !retryableProviderError(reason)) return;
+    const model = splitModel(nextModel);
+    if (!model) return;
+
+    state.switching = true;
+    appendRunLog({
+      event: 'model_failure', session_id: sessionID, agent: state.role,
+      model: state.model, reason: String(reason).slice(0, 180),
+    });
+    try {
+      await client.session.abort({ path: { id: sessionID } });
+      await client.session.promptAsync({
+        path: { id: sessionID },
+        body: {
+          agent: state.role,
+          model,
+          parts: [{
+            type: 'text',
+            text: 'NLA model-pool continuation: the previous provider failed or became unresponsive. Continue the original bounded subtask from the existing session context. Do not repeat completed work; report factual evidence when finished.',
+          }],
+        },
+      });
+      state.model = nextModel;
+      state.modelIndex = nextIndex;
+      state.failovers += 1;
+      state.lastActivity = Date.now();
+      state.busy = true;
+      appendRunLog({
+        event: 'model_fallback_started', session_id: sessionID, agent: state.role,
+        previous_model: state.pool.models[nextIndex - 1], model: nextModel,
+        failover: state.failovers,
+      });
+    } catch (error) {
+      appendRunLog({
+        event: 'model_fallback_failed', session_id: sessionID, agent: state.role,
+        model: nextModel, reason: String(error && error.message || error).slice(0, 180),
+      });
+    } finally {
+      state.switching = false;
+    }
+  };
+
+  const startWatchdog = () => {
+    if (watchdog) return;
+    watchdog = setInterval(() => {
+      const now = Date.now();
+      for (const [sessionID, state] of trackedSessions) {
+        if (!state.busy || state.switching || !state.pool.enabled) continue;
+        const timeout = state.pool.idle_timeout_ms || 0;
+        if (timeout > 0 && now - state.lastActivity >= timeout) {
+          void failover(sessionID, 'NLA watchdog timeout: no OpenCode progress event');
+        }
+      }
+    }, 5000);
+  };
 
   // The run log is evidence from OpenCode hooks, not model-authored prose.
   // Keep it JSONL and retain only identifiers needed to trace workflow roles.
@@ -143,11 +237,66 @@ ${toolMapping}
       }
     },
 
+    // Model pools apply only to subagents. NLA primary is deliberately excluded.
+    event: async ({ event }) => {
+      const props = event.properties || {};
+      if (event.type === 'session.created' && props.info && props.info.parentID) {
+        const queue = pendingTasks.get(props.info.parentID) || [];
+        const role = queue.shift();
+        if (queue.length) pendingTasks.set(props.info.parentID, queue);
+        else pendingTasks.delete(props.info.parentID);
+        const pool = role && pools[role];
+        if (pool && pool.enabled) {
+          trackedSessions.set(props.info.id, {
+            role,
+            pool,
+            model: pool.models[0],
+            modelIndex: 0,
+            failovers: 0,
+            busy: true,
+            switching: false,
+            lastActivity: Date.now(),
+          });
+          appendRunLog({ event: 'model_pool_attached', session_id: props.info.id, parent_session_id: props.info.parentID, agent: role, model: pool.models[0] });
+          startWatchdog();
+        }
+      }
+      if (event.type === 'session.status' && props.sessionID) {
+        const state = trackedSessions.get(props.sessionID);
+        if (state) {
+          state.busy = props.status && props.status.type !== 'idle';
+          touch(props.sessionID);
+        }
+      }
+      if (event.type === 'message.part.updated' && props.part && props.part.sessionID) touch(props.part.sessionID);
+      if (event.type === 'session.compacted' && props.sessionID) {
+        appendRunLog({ event: 'context_compacted', session_id: props.sessionID });
+        touch(props.sessionID);
+      }
+      if (event.type === 'session.error' && props.sessionID) void failover(props.sessionID, props.error);
+      if (event.type === 'session.idle' && props.sessionID) {
+        const state = trackedSessions.get(props.sessionID);
+        if (state) {
+          state.busy = false;
+          touch(props.sessionID);
+        }
+      }
+    },
+
     // Record role and workflow-tool activity directly from OpenCode hooks.
     'chat.message': async (input) => {
       appendRunLog({ event: 'primary_agent', session_id: input.sessionID, agent: input.agent || defaultAgent, model: input.model ? input.model.providerID + '/' + input.model.modelID : undefined });
     },
     'tool.execute.before': async (input, output) => {
+      if (input.tool === 'task') {
+        const args = output.args || {};
+        const role = args.subagent_type || args.agent || args.type;
+        if (typeof role === 'string' && pools[role] && pools[role].enabled) {
+          const queue = pendingTasks.get(input.sessionID) || [];
+          queue.push(role);
+          pendingTasks.set(input.sessionID, queue);
+        }
+      }
       if (input.tool !== 'skill' && input.tool !== 'task') return;
       appendRunLog({
         event: input.tool === 'task' ? 'subagent_dispatch' : 'skill_invoked',
@@ -190,6 +339,13 @@ ${toolMapping}
 
       const ref = firstUser.parts[0];
       firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap });
+    },
+
+    dispose: async () => {
+      if (watchdog) clearInterval(watchdog);
+      watchdog = null;
+      trackedSessions.clear();
+      pendingTasks.clear();
     }
   };
 };

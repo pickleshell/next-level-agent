@@ -1,32 +1,14 @@
 {
-  "coordinator": {
-    "default": "claude-opus-4-5",
-    "fallback": "claude-sonnet-4-5",
-    "manual": false
-  },
-  "implementer": {
-    "default": "claude-opus-4-5",
-    "fallback": "claude-sonnet-4-5",
-    "manual": false
-  },
-  "reviewer": {
-    "default": "claude-opus-4-5",
-    "fallback": "claude-sonnet-4-5",
-    "manual": false
-  },
-  "supervisor": {
-    "default": "claude-opus-4-5",
-    "fallback": "claude-sonnet-4-5",
-    "manual": false
-  },
-  "explorer": {
-    "default": "claude-opus-4-5",
-    "fallback": "claude-sonnet-4-5",
-    "manual": false
-  },
-  "architect": {
-    "default": "claude-opus-4-5",
-    "fallback": "claude-sonnet-4-5",
-    "manual": false
+  "version": 1,
+  "roles": {
+    "nla": {"enabled": false, "models": ["opencode/hy3-free"], "idle_timeout_ms": 0, "max_failovers": 0},
+    "router": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
+    "supervisor": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 180000, "max_failovers": 1},
+    "scout": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
+    "explorer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
+    "architect": {"enabled": true, "models": ["opencode/nemotron-3-ultra-free", "opencode/hy3-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
+    "implementer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
+    "reviewer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 180000, "max_failovers": 1},
+    "compactor": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 90000, "max_failovers": 1}
   }
 }
