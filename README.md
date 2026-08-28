@@ -25,25 +25,45 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 Prompts define role behavior. The NLA plugin controls delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
+## At a Glance
+
+```mermaid
+flowchart TB
+    U[User] --> N[NLA<br/>one accountable coordinator]
+    N --> T{Risk tier}
+
+    T -->|Tier 0 or 1| D[Direct work<br/>and verification]
+    T -->|Tier 2 or 3| E[Explore and research]
+    E --> A{Architecture gate<br/>when required}
+    A --> I[Implement]
+    I --> V[Verify]
+    V --> R{Independent review<br/>when required}
+    D --> X[Acceptance]
+    R --> X
+
+    P[Role-specific model pools<br/>preferred model to fallback] -. power .-> E
+    P -. power .-> A
+    P -. power .-> I
+    P -. power .-> R
+
+    N <--> M[(Ledger and<br/>Assistant Notebook)]
+    N -. context pressure .-> C[Supervisor audit<br/>and Compactor checkpoint]
+    C --> O[OpenCode compaction]
+    O --> N
+
+    L[Telemetry<br/>sessions, models, context, failover] -. observes .-> N
+
+    classDef primary fill:#5b5bd6,color:#fff,stroke:#333,stroke-width:2px;
+    classDef gate fill:#f5c451,color:#111,stroke:#333;
+    classDef memory fill:#78c6a3,color:#111,stroke:#333;
+    class N primary;
+    class T,A,R gate;
+    class M memory;
+```
+
 ## Architecture and Roles
 
 Primary NLA is the only user-facing coordinator and the exclusive owner of shared memory. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA.
-
-```text
-User
-  ↓
-NLA: coordinator, memory owner, acceptance owner
-  ├─ Router: optional Tier classification
-  ├─ Explorer: repository discovery
-  ├─ Scout: external research
-  ├─ Architect: design gate
-  ├─ Implementer: scoped code changes
-  ├─ Reviewer: independent quality gate
-  ├─ Supervisor: workflow and evidence audit
-  └─ Compactor: recovery checkpoint
-       ↓
-Role model pool: preferred model → bounded fallback
-```
 
 | Role | Responsibility | Typical use |
 | --- | --- | --- |
