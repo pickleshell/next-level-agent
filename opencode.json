@@ -4,6 +4,11 @@
     "./.opencode/plugins/next-level-agent.js"
   ],
   "default_agent": "nla",
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 32000
+  },
   "agent": {
     "build": {
       "mode": "primary",
