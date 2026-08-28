@@ -1,262 +1,258 @@
-# Next-Level OpenCode Profile — техническое задание и архитектура
+# Next-Level OpenCode Profile — Technical Specification and Architecture
 
-**Статус:** Draft 0.4 — финальный архитектурный аудит, требуется утверждение
-**Дата:** 2026-08-23
-**Репозиторий:** `pickleshell/next-level-agent`
-**Целевая версия:** OpenCode `1.17.9` (stable V1 configuration schema)
+**Status:** Draft 0.4 — final architecture audit, requires approval
+**Date:** 2026-08-23
+**Repository:** `pickleshell/next-level-agent`
+**Target version:** OpenCode `1.17.9` (stable V1 configuration schema)
 
-## 1. Определение продукта
+## 1. Product Definition
 
-Продукт — репозиторий-локальный configuration pack для OpenCode, а не отдельная
-система, daemon, база данных или внешний оркестратор.
+The product is a repository-local configuration pack for OpenCode, not a separate
+system, daemon, database, or external orchestrator.
 
-Поставка должна использовать нативные механизмы OpenCode:
+Delivery must use OpenCode's native mechanisms:
 
-- primary agent и subagents;
-- Task delegation в дочерние сессии;
-- per-agent models, permissions и limits;
-- лениво загружаемые skills;
+- primary agent and subagents;
+- Task delegation to child sessions;
+- per-agent models, permissions, and limits;
+- lazily loaded skills;
 - custom commands;
-- project-local custom tools и plugin hooks;
-- автоматическую compaction и pruning;
-- worktree/diff audit, bounded file/content search, точечный read, опциональный experimental
-  LSP и статистику usage.
+- project-local custom tools and plugin hooks;
+- automatic compaction and pruning;
+- worktree/diff audit, bounded file/content search, targeted read, optional experimental
+  LSP, and usage statistics.
 
-Цель — максимизировать качество принятого результата при минимальной стоимости
-одной принятой задачи (`cost per accepted task`). При конфликте целей приоритеты
-следующие:
+The goal is to maximize the quality of the accepted result at minimal cost per accepted
+task (`cost per accepted task`). When goals conflict, priorities are as follows:
 
-1. безопасность и отсутствие потери данных;
-2. корректность и выполнение Definition of Done;
-3. минимизация fresh input, output, reasoning tokens и фактически списанной стоимости;
-4. скорость выполнения.
+1. security and absence of data loss;
+2. correctness and completion of the Definition of Done;
+3. minimization of fresh input, output, reasoning tokens, and actually billed cost;
+4. execution speed.
 
-Минимальное число токенов само по себе не считается успехом, если результат не
-проходит проверку.
+Minimal token count is not itself considered success if the result fails verification.
 
-## 2. Границы поставки
+## 2. Delivery Boundaries
 
-### 2.1. Входят в первую версию
+### 2.1. Included in the first version
 
-- `opencode.jsonc` (либо adopted existing `opencode.json`) с runtime-настройками
-  и ролевой привязкой моделей;
-- pack-owned `PROFILE_RULES.md` и контракт интеграции с user-owned `AGENTS.md`;
-- prompts для primary agent и специализированных subagents;
-- core skills и правила установки project-specific skills;
-- custom commands для явных workflow;
-- обязательный project-local guard/search plugin как нативное расширение OpenCode;
-- компактные шаблоны долговременного контекста проекта;
-- валидатор конфигурации и permissions;
-- тонкий managed launcher для герметичного config environment и non-LLM profile doctor;
-- безопасный installer/updater/uninstaller с manifest-lock;
-- benchmark-набор для измерения качества, токенов и стоимости;
-- README по установке, привязке моделей и эксплуатации.
+- `opencode.jsonc` (or adopted existing `opencode.json`) with runtime settings and
+  role-to-model binding;
+- pack-owned `PROFILE_RULES.md` and integration contract with user-owned `AGENTS.md`;
+- prompts for the primary agent and specialized subagents;
+- core skills and rules for installing project-specific skills;
+- custom commands for explicit workflows;
+- a mandatory project-local guard/search plugin as a native OpenCode extension;
+- compact long-term project context templates;
+- configuration and permission validator;
+- a thin managed launcher for a sealed config environment and a non-LLM profile doctor;
+- a safe installer/updater/uninstaller with manifest-lock;
+- a benchmark suite for measuring quality, tokens, and cost;
+- a README covering installation, model binding, and operation.
 
-### 2.2. Не входят в первую версию
+### 2.2. Not included in the first version
 
-- собственный runtime или API поверх OpenCode;
-- хранение истории всех сессий;
-- автономное изменение требований пользователя;
-- выбор конкретных провайдеров и названий моделей;
-- хранение API-ключей в репозитории;
-- универсальная интеграция со всеми IDE;
-- production-профиль для OpenCode V2 beta;
-- жёсткая межпроцессная блокировка нескольких OpenCode-сессий;
-- внешний daemon, proxy или отдельный orchestration runtime.
+- a custom runtime or API on top of OpenCode;
+- storage of all session history;
+- autonomous modification of user requirements;
+- selection of specific providers and model names;
+- storage of API keys in the repository;
+- universal integration with all IDEs;
+- a production profile for OpenCode V2 beta;
+- hard inter-process locking of multiple OpenCode sessions;
+- an external daemon, proxy, or separate orchestration runtime.
 
-Project-local plugin не является отдельной системой: он загружается самим OpenCode
-по explicit local entry и закрывает известные ограничения pinned V1 runtime, которые
-невозможно безопасно выразить только permission globs.
-Managed launcher также не оркестрирует задачи и не проксирует provider traffic: он
-только проверяет lock/preflight, задаёт изолированное окружение и выполняет штатный
-OpenCode process.
+The project-local plugin is not a separate system: it is loaded by OpenCode itself via an
+explicit local entry and closes known limitations of the pinned V1 runtime that cannot be
+safely expressed through permission globs alone. The managed launcher also does not
+orchestrate tasks and does not proxy provider traffic: it only verifies lock/preflight,
+establishes an isolated environment, and executes the standard OpenCode process.
 
-## 3. Совместимость и версия OpenCode
+## 3. Compatibility and OpenCode Version
 
-Reference implementation разрабатывается и тестируется на OpenCode `1.17.9`.
-Используется V1 schema:
+The reference implementation is developed and tested on OpenCode `1.17.9`. The V1 schema
+is used:
 
-- `agent`, а не `agents`;
-- `permission`, а не `permissions`;
-- `bash` и `task`, а не `shell` и `subagent`;
+- `agent`, not `agents`;
+- `permission`, not `permissions`;
+- `bash` and `task`, not `shell` and `subagent`;
 - `prompt`, `disable`, `steps`;
-- `compaction.prune` и `compaction.reserved`.
+- `compaction.prune` and `compaction.reserved`.
 
-Reference template V1 запрещено смешивать с native примерами из `/v2/docs`. V2
-может нормализовать часть V1 fields, но имеет собственную schema и migration
-semantics; он тестируется отдельным бинарником `opencode2` и остаётся отдельным
-будущим профилем.
+The reference V1 template must not be mixed with native examples from `/v2/docs`. V2 may
+normalize part of the V1 fields, but it has its own schema and migration semantics; it is
+tested by a separate `opencode2` binary and remains a separate future profile.
 
-Обновление OpenCode выполняется только после прохождения validator и regression
-benchmark. Нормативное значение `autoupdate` — `false`.
+Updating OpenCode is performed only after passing the validator and regression benchmark.
+The normative value of `autoupdate` is `false`.
 
-Reference platform — Linux/macOS на local filesystem с POSIX atomic create/rename;
-Windows поддерживается через WSL. Network filesystems и native Windows требуют
-отдельного lease/path regression profile и до него получают Fail, а не ослабление
+Reference platform — Linux/macOS on local filesystem with POSIX atomic create/rename;
+Windows is supported via WSL. Network filesystems and native Windows require a separate
+lease/path regression profile and, until then, receive Fail rather than a relaxation of
 guard semantics.
-Core managed launch не сосуществует с system-managed OpenCode config: Linux/WSL
-`/etc/opencode`, macOS managed Application Support и MDM plist сначала проверяются
-без импорта кода; наличие любого источника даёт Fail до отдельного organization
-profile. Launcher затем направляет managed-config directory в controlled empty
-`0700` root. На macOS MDM plist этим override не подавляется, поэтому его наличие
-безусловно отключает hard-profile.
+Core managed launch does not coexist with system-managed OpenCode config: Linux/WSL
+`/etc/opencode`, macOS managed Application Support, and MDM plist are first checked
+without importing code; the presence of any such source yields Fail until a separate
+organization profile exists. The launcher then points the managed-config directory at a
+controlled empty `0700` root. On macOS the MDM plist is not suppressed by this override,
+so its presence unconditionally disables the hard-profile.
 
-## 4. Архитектурные принципы
+## 4. Architectural Principles
 
-1. **Native-first.** Используются config, agents, permissions, skills, commands,
-   custom tools и plugin hooks самого OpenCode; внешний runtime не вводится.
-2. **Direct-first.** Простая задача не должна порождать subagents и context packet.
-3. **Risk-based delegation.** Стоимость маршрута зависит от риска и неизвестности,
-   а не только от размера запроса.
-4. **Fresh child context.** Subagent получает самостоятельный краткий контракт,
-   а не копию переписки primary session.
-5. **Least privilege.** Каждая роль получает только необходимые executable tool,
-   skill и subagent catalogs; mixed permission maps остаются видимыми только ролям,
-   которым capability действительно нужна.
-6. **Lazy instructions.** Постоянный prompt минимален; условные процедуры находятся
-   в skills.
-7. **Serialized writers.** Orchestrator обязан последовательно запускать write-задачи;
-   это policy, а не встроенная блокировка OpenCode.
-8. **Evidence before state.** Непроверенный результат не попадает в долговременное
-   состояние.
-9. **Fail-fast.** Отсутствующая модель, skill или некорректный config являются
-   ошибкой, а не поводом для тихого fallback.
-10. **Model-role separation.** Prompts описывают способности роли, а реальные
-    модели привязываются при установке.
-11. **Measurement over intuition.** Экономия подтверждается provider-reported
-    usage и benchmark, а не длиной prompt на глаз.
+1. **Native-first.** Use OpenCode's own config, agents, permissions, skills, commands,
+   custom tools, and plugin hooks; no external runtime is introduced.
+2. **Direct-first.** A simple task must not spawn subagents and a context packet.
+3. **Risk-based delegation.** The cost of a route depends on risk and uncertainty, not
+   only on request size.
+4. **Fresh child context.** A subagent receives a self-contained brief contract, not a
+   copy of the primary session correspondence.
+5. **Least privilege.** Each role receives only the executable tool, skill, and subagent
+   catalogs it needs; mixed permission maps remain visible only to roles that genuinely
+   need the capability.
+6. **Lazy instructions.** The persistent prompt is minimal; conditional procedures live
+   in skills.
+7. **Serialized writers.** The orchestrator must run write tasks sequentially; this is a
+   policy, not a built-in OpenCode lock.
+8. **Evidence before state.** An unverified result never enters long-term state.
+9. **Fail-fast.** A missing model, skill, or invalid config is an error, not grounds for
+   a silent fallback.
+10. **Model-role separation.** Prompts describe a role's capabilities, while actual models
+    are bound at installation.
+11. **Measurement over intuition.** Savings are confirmed by provider-reported usage and
+    benchmark, not by prompt length at a glance.
 
-## 5. Границы технических гарантий
+## 5. Technical Guarantee Boundaries
 
-### 5.1. OpenCode и обязательный project-local guard обеспечивают
+### 5.1. OpenCode and the mandatory project-local guard provide
 
-- выбор primary agent через `default_agent`;
-- детерминированный managed launch без примеси пользовательского global config;
-- запрет source-edit через `edit: deny` и запрет shell там, где он не нужен;
-- allowlist вызываемых subagents через `permission.task`;
-- запрет вложенного делегирования через `task: deny` у каждого subagent;
-- soft finish warning через `steps` и hard LLM/Task-call caps через guard hooks;
-- отдельную модель для каждой роли;
-- скрытие недоступных skills через skill permissions;
-- автоматическую compaction и pruning старых tool outputs;
-- изоляцию command в child session через `subtask: true`;
-- pre/post worktree evidence; rollback выполняется только явным безопасным Git/manual workflow.
+- selection of the primary agent via `default_agent`;
+- deterministic managed launch without mixing in user global config;
+- prohibition of source-edit via `edit: deny` and prohibition of shell where it is not needed;
+- allowlist of callable subagents via `permission.task`;
+- prohibition of nested delegation via `task: deny` for every subagent;
+- soft finish warning via `steps` and hard LLM/Task-call caps via guard hooks;
+- a separate model for each role;
+- hiding of unavailable skills via skill permissions;
+- automatic compaction and pruning of old tool outputs;
+- command isolation in a child session via `subtask: true`;
+- pre/post worktree evidence; rollback is performed only via an explicit safe Git/manual workflow.
 
-Сам V1.17.9 имеет пять существенных пробелов: `grep` permission проверяет regex,
-а не пути; Task может materialize `@file` без child `read` approval; Unix path checks
-лексические и не учитывают symlink target; `apply_patch` проверяет source, но не
-`*** Move to:` destination; built-in `webfetch` не защищает private/link-local targets
-и redirects. Поэтому профиль fail-closed требует pack-owned `profile-guard` plugin,
-который также регистрирует `safe_search` и `safe_fetch` custom tools:
+V1.17.9 itself has five substantial gaps: `grep` permission checks the regex, not paths;
+Task may materialize `@file` without child `read` approval; Unix path checks are lexical
+and ignore symlink targets; `apply_patch` checks the source but not the `*** Move to:`
+destination; the built-in `webfetch` does not protect private/link-local targets and
+redirects. Therefore the fail-closed profile requires a pack-owned `profile-guard` plugin,
+which also registers the `safe_search` and `safe_fetch` custom tools:
 
-- committed base config задаёт root и каждой роли permission wildcard
-  `"*": "deny"`, явно оставляет risk capabilities denied, устанавливает
-  `formatter: false`, `lsp: false` и `disable: true` для всех известных primary/subagent/
-  maintenance agents; до успешного guard activation невозможен даже LLM call;
-- guard является единственным external plugin и через `config` hook последним
-  атомарным присваиванием устанавливает и включает intended six agents + compaction,
-  оставляет остальные agents disabled, фиксирует commands, `mcp: {}` и ordered
-  permission maps; `lsp` остаётся `false`, кроме отдельно валидированного exact profile;
-- built-in `grep` и `glob` запрещены всем ролям, `safe_search` выполняет bounded
-  file/content search через `rg` без shell, `--follow`, `--hidden` и `--no-ignore`,
-  проверяя каждый search root;
-- `safe_search.execute` до enumeration разрешает active role по `sessionID` и первым
-  действием вызывает native `ctx.ask` для permission `safe_search` с exact pattern;
-  unknown/denied role завершается до filesystem access, guard before-hook дублирует gate;
-- built-in `webfetch` запрещён всем, а Scout использует bounded HTTPS-only
-  `safe_fetch` с permission/role gate и SSRF/redirect/DNS validation;
-- hook `tool.execute.before` отклоняет attachment-синтаксис в Task prompt;
-- тот же hook отклоняет `apply_patch` move syntax и проверяет все path arguments;
-- `chat.params` перед каждым logical `LLM.stream` attempt сначала fail-closed сверяет
-  active role, provider/model, approved variant/options с locked model snapshot
-  (включая resume/direct agent/compaction), затем для outer retry того же message
-  атомарно резервирует budget в durable per-root ledger и отклоняет
-  вызов сверх per-role/root cap; main work calls сохраняют AI SDK `maxRetries: 0`.
-  Task hook аналогично резервирует cumulative child call до создания child session;
-- существующий target разрешается через `realpath`, новый target — через `realpath`
-  ближайшего существующего parent; symlink-компоненты запрещены;
-- `lsp.filePath` проходит ту же canonical worktree проверку; отдельного built-in
-  `list` tool в V1.17.9 нет, а guard разрешает built-in `read` только для существующего
-  canonical regular file. Directory и missing target отклоняются до listing/typo
-  suggestions; discovery выполняет только filtered `safe_search mode=files`;
-- resolved path обязан оставаться внутри worktree; guard по `sessionID` разрешает
-  active role и применяет тот же ordered policy: `deny` отклоняется, `ask` передаётся
-  native permission flow, explicit example `allow` сохраняется. `safe_search` не
-  имеет per-match approval и поэтому всегда исключает secret candidates.
+- the committed base config sets root and each role permission wildcard `"*": "deny"`,
+  explicitly leaves risk capabilities denied, sets `formatter: false`, `lsp: false`, and
+  `disable: true` for all known primary/subagent/maintenance agents; until successful guard
+  activation, not even an LLM call is possible;
+- the guard is the only external plugin and, via the `config` hook, performs the final
+  atomic assignment that sets up and enables the intended six agents + compaction, leaves
+  the remaining agents disabled, fixes commands, `mcp: {}`, and ordered permission maps;
+  `lsp` remains `false`, except for a separately validated exact profile;
+- the built-in `grep` and `glob` are forbidden to all roles; `safe_search` performs a
+  bounded file/content search via `rg` without shell, `--follow`, `--hidden`, and
+  `--no-ignore`, checking every search root;
+- `safe_search.execute` resolves the active role by `sessionID` before enumeration and,
+  as its first action, calls native `ctx.ask` for the `safe_search` permission with the
+  exact pattern; an unknown/denied role terminates before filesystem access; the guard
+  before-hook duplicates the gate;
+- the built-in `webfetch` is forbidden to all, while Scout uses bounded HTTPS-only
+  `safe_fetch` with permission/role gate and SSRF/redirect/DNS validation;
+- the `tool.execute.before` hook rejects attachment syntax in the Task prompt;
+- the same hook rejects `apply_patch` move syntax and checks all path arguments;
+- `chat.params` before every logical `LLM.stream` attempt first fail-closed compares the
+  active role, provider/model, approved variant/options against the locked model snapshot
+  (including resume/direct agent/compaction), then atomically reserves budget in a durable
+  per-root ledger for an outer retry of the same message and rejects a call beyond the
+  per-role/root cap; main work calls keep AI SDK `maxRetries: 0`. The Task hook analogously
+  reserves the cumulative child call before creating the child session;
+- an existing target is resolved via `realpath`, a new target via `realpath` of the nearest
+  existing parent; symlink components are forbidden;
+- `lsp.filePath` undergoes the same canonical worktree check; there is no separate built-in
+  `list` tool in V1.17.9, and the guard allows built-in `read` only for an existing
+  canonical regular file. Directories and missing targets are rejected before listing/typo
+  suggestions; discovery is performed only by filtered `safe_search mode=files`;
+- the resolved path must remain inside the worktree; the guard resolves the active role by
+  `sessionID` and applies the same ordered policy: `deny` is rejected, `ask` is passed to
+  the native permission flow, an explicit example `allow` is preserved. `safe_search` has
+  no per-match approval and therefore always excludes secret candidates.
 
-Plugin подключается одним explicit local path из `opencode.jsonc`. Production entry
-point — pack-owned `opencode-profile`, который перед каждым запуском без LLM проверяет
-lock/origin hashes и static preflight, отклоняет `--pure` и config/plugin override
-flags, любые share/auto-share flags, изолирует все XDG roots, `OPENCODE_TEST_HOME` и
-managed-config directory, удаляет все inherited `OPENCODE_*` по deny-by-default
-правилу и запрещает external skill discovery. Затем он выставляет только
-launcher-controlled `OPENCODE_TEST_HOME`, `OPENCODE_TEST_MANAGED_CONFIG_DIR`,
-`OPENCODE_DISABLE_EXTERNAL_SKILLS=true`, `OPENCODE_DISABLE_LSP_DOWNLOAD=true` и явно
-`OPENCODE_DISABLE_MODELS_FETCH=true`, hash-verified `OPENCODE_MODELS_PATH` и явно
-включённый policy feature flag. Единственный optional core feature flag —
-`OPENCODE_EXPERIMENTAL_LSP_TOOL=true`, если LSP profile прошёл проверки; остальные
-`OPENCODE_*` не наследуются. Изолированный persistent runtime находится вне worktree
-в owner-only per-user profile root, имеет
-mode `0700` и закрыт model tools правилами containment/`external_directory`; provider
-auth допускается только через exact deployment allowlist env/API/OAuth credentials.
-Stored auth metadata проверяется без вывода секретов: `type: "wellknown"`, active
-OpenCode account/org remote config и любой иной pre-guard remote-config source дают
-Fail и требуют отдельного conditional profile.
+The plugin is connected by a single explicit local path from `opencode.jsonc`. The
+production entry point is the pack-owned `opencode-profile`, which without LLM before each
+launch checks lock/origin hashes and static preflight, rejects `--pure` and config/plugin
+override flags, any share/auto-share flags, isolates all XDG roots, `OPENCODE_TEST_HOME`,
+and the managed-config directory, removes all inherited `OPENCODE_*` by a deny-by-default
+rule, and prohibits external skill discovery. It then sets only the launcher-controlled
+`OPENCODE_TEST_HOME`, `OPENCODE_TEST_MANAGED_CONFIG_DIR`,
+`OPENCODE_DISABLE_EXTERNAL_SKILLS=true`, `OPENCODE_DISABLE_LSP_DOWNLOAD=true`, and explicitly
+`OPENCODE_DISABLE_MODELS_FETCH=true`, a hash-verified `OPENCODE_MODELS_PATH`, and an
+explicitly enabled policy feature flag. The only optional core feature flag is
+`OPENCODE_EXPERIMENTAL_LSP_TOOL=true` if the LSP profile has passed checks; the remaining
+`OPENCODE_*` are not inherited. The isolated persistent runtime lives outside the worktree
+in an owner-only per-user profile root, has mode `0700`, and is closed off by
+containment/`external_directory` model-tool rules; provider auth is permitted only via an
+exact deployment allowlist of env/API/OAuth credentials. Stored auth metadata is verified
+without emitting secrets: `type: "wellknown"`, an active OpenCode account/org remote
+config, and any other pre-guard remote-config source yield Fail and require a separate
+conditional profile.
 
-Если guard отсутствует или не загружается, launcher не вызывает OpenCode. Если hook
-не активировался внутри уже запущенного процесса, committed `disable: true` не даёт
-выбрать agent или вызвать provider, wildcard denies закрывают tool surface, а config
-среда не содержит foreign MCP/plugin/command/skill sources. Прямой `opencode`,
-`--pure` или запуск с host global config являются unmanaged и не входят в hard
-guarantees: V1.17.9 может подключить merged remote MCP независимо от tool permission.
-Validator обязан различать эти состояния; любой неуспешный guard smoke test блокирует
-managed work.
+If the guard is absent or fails to load, the launcher does not invoke OpenCode. If the hook
+did not activate inside an already-running process, the committed `disable: true` prevents
+selecting an agent or calling a provider, wildcard denies close the tool surface, and the
+config environment contains no foreign MCP/plugin/command/skill sources. A direct `opencode`,
+`--pure`, or launch with the host global config is unmanaged and falls outside the hard
+guarantees: V1.17.9 may attach a merged remote MCP regardless of tool permission. The
+validator must distinguish these states; any unsuccessful guard smoke test blocks managed
+work.
 
-V1.17.9 `resolveTools` schema-фильтр удаляет tool, когда итоговое permission для exact
-pattern `"*"` равно `deny`. Поэтому полностью запрещённые role tools действительно не
-попадают в LLM map; capability с mixed allow/ask/deny rules остаётся видимой и
-проверяется повторно при execution. Validator тестирует оба уровня, а benchmark всё
-равно измеряет фактический cold-input floor вместо расчёта по именам tools.
+V1.17.9 `resolveTools` schema-filter removes a tool when the resulting permission for the
+exact pattern `"*"` equals `deny`. Therefore fully forbidden role tools do not reach the
+LLM map; a capability with mixed allow/ask/deny rules remains visible and is re-checked at
+execution. The validator tests both levels, and the benchmark still measures the actual
+cold-input floor rather than calculating from tool names.
 
-### 5.2. Следующие свойства остаются policy, а не hard guarantee
+### 5.2. The following properties remain policy, not hard guarantees
 
-- корректность классификации сложности и риска;
-- соблюдение размера Task Context Packet;
-- динамическое ограничение Implementer только файлами текущего packet;
-- точный per-task token/dollar budget: guard ограничивает число вызовов, но размер и
-  фактический provider bill отдельного вызова заранее неизвестны;
-- raw provider HTTP retries внутри adapter/network stack: hard cap относится к
-  logical OpenCode stream attempts, фактические requests/cost проверяет telemetry;
-- последовательность `Implement → Verify → Review → Checkpoint`;
-- single-writer даже внутри одной session и отсутствие writers в других процессах;
-- запись Notebook исключительно во время checkpoint;
-- обязательный checkpoint перед прямым `/new`, закрытием или аварийным завершением;
-- полнота и истинность Notebook-записей;
-- отсутствие symlink TOCTOU race между guard pre-check и built-in tool execution:
-  профиль запрещает symlinks, но hard race isolation потребовала бы замены всех
-  filesystem tools или OS sandbox;
-- confidentiality внутреннего indexing LSP server: experimental LSP остаётся
-  optional и отключается для репозиториев с жёсткой secret boundary;
-- безопасная sanitization аргументов native custom command: V1.17.9 выполняет
-  shell/file interpolation до `command.execute.before`, поэтому shipped commands
-  являются zero-argument, а передача им аргументов запрещена operational contract;
-- запрет намеренного прямого `@subagent` вызова пользователем: permissions роли
-  сохраняются, но Orchestrator workflow при таком вызове обходится;
-- confidentiality после явно одобренного shell command или project verification:
-  OpenCode не анализирует произвольные side effects и output такого процесса.
+- correctness of complexity and risk classification;
+- compliance with the Task Context Packet size;
+- dynamic restriction of the Implementer to files of the current packet only;
+- an exact per-task token/dollar budget: the guard limits the number of calls, but the size
+  and the actual provider bill of a single call are unknown in advance;
+- raw provider HTTP retries inside the adapter/network stack: the hard cap applies to
+  logical OpenCode stream attempts; the actual requests/cost are checked by telemetry;
+- the sequence `Implement → Verify → Review → Checkpoint`;
+- single-writer even within a single session and absence of writers in other processes;
+- writing to the Notebook exclusively during checkpoint;
+- a mandatory checkpoint before a direct `/new`, closure, or crash;
+- completeness and truthfulness of Notebook entries;
+- absence of a symlink TOCTOU race between the guard pre-check and built-in tool execution:
+  the profile forbids symlinks, but hard race isolation would require replacing all
+  filesystem tools or an OS sandbox;
+- confidentiality of the internal indexing LSP server: experimental LSP remains optional and
+  is disabled for repositories with a hard secret boundary;
+- safe sanitization of native custom command arguments: V1.17.9 performs shell/file
+  interpolation before `command.execute.before`, so shipped commands are zero-argument and
+  passing arguments to them is forbidden by the operational contract;
+- prohibition of an intentional direct `@subagent` call by the user: role permissions are
+  preserved, but the Orchestrator workflow bypasses such a call;
+- confidentiality after an explicitly approved shell command or project verification:
+  OpenCode does not analyze the arbitrary side effects and output of such a process.
 
-Эти ограничения должны быть отражены в prompts, post-diff проверках, validator и
-документации. Нельзя описывать их как технически гарантированные без более сильной
-изоляции или внешней координации.
+These limitations must be reflected in prompts, post-diff checks, the validator, and
+documentation. They must not be described as technically guaranteed without stronger
+isolation or external coordination.
 
-## 6. Артефактная архитектура и установка
+## 6. Artifact Architecture and Installation
 
-Configuration pack поставляется как installer-managed overlay. Исходный репозиторий
-pack и установленный target layout разделены: служебный benchmark не копируется в
-проект пользователя, а runtime-файлы берутся из явно перечисленных template/script
-sources.
+The configuration pack is delivered as an installer-managed overlay. The source pack
+repository and the installed target layout are separate: the utility benchmark is not copied
+into the user's project, while runtime files come from explicitly enumerated
+template/script sources.
 
-### 6.1. Исходный репозиторий pack
+### 6.1. Source pack repository
 
 ```text
 README.md
@@ -311,573 +307,546 @@ template/
         └── STATE.md
 ```
 
-Agents объявляются в `opencode.jsonc`. Их большие prompts подключаются через
-`{file:./.opencode/prompts/<role>.md}`, а модели — через `{env:...}`. Это позволяет
-валидировать единую schema и не полагаться на подстановку env-переменных в YAML
-frontmatter agent Markdown.
+Agents are declared in `opencode.jsonc`. Their large prompts are attached via
+`{file:./.opencode/prompts/<role>.md}`, and models via `{env:...}`. This allows validating
+a single schema and not relying on env-variable substitution in YAML frontmatter of agent
+Markdown.
 
-Root `plugin` list содержит ровно один explicit local entry для
-`./.opencode/profile/guard.ts`; auto-discovered или global external plugins в core
-profile запрещены. Project-specific plugin требует отдельного audited profile, где
-guard остаётся последним hook и regression probes подтверждают тот же deny-mode.
+The root `plugin` list contains exactly one explicit local entry for
+`./.opencode/profile/guard.ts`; auto-discovered or global external plugins are forbidden in
+the core profile. A project-specific plugin requires a separate audited profile where the
+guard remains the last hook and regression probes confirm the same deny-mode.
 
-Skills всегда используют переносимый формат
-`.opencode/skills/<name>/SKILL.md` с корректным YAML frontmatter.
-Каждый разрешённый skill связан не только с именем, но и с canonical relative origin
-и SHA-256 в lock. Core запрещает `skills.paths`, `skills.urls`, duplicate logical
-names и любой discovered skill вне adopted origin map. Project-specific skill сначала
-проходит явное adoption и получает собственный locked origin/hash; одного совпадения
-имени недостаточно. Единственное core exception — pinned V1.17.9 built-in
-`customize-opencode` с pseudo-origin `<built-in>`: binary/source version и expected
-content hash attested в lock, `permission.skill` для него exact deny у всех ролей,
-а slash alias безопасно shadowed. Он discovered, но никогда не allowed.
+Skills always use the portable format `.opencode/skills/<name>/SKILL.md` with correct YAML
+frontmatter. Each permitted skill is associated not only with a name but also with a
+canonical relative origin and SHA-256 in the lock. Core forbids `skills.paths`,
+`skills.urls`, duplicate logical names, and any discovered skill outside the adopted origin
+map. A project-specific skill first passes explicit adoption and receives its own locked
+origin/hash; a name match alone is insufficient. The only core exception is the pinned
+V1.17.9 built-in `customize-opencode` with pseudo-origin `<built-in>`: binary/source
+version and expected content hash are attested in the lock, `permission.skill` for it is
+exact deny for all roles, and the slash alias is safely shadowed. It is discovered but
+never allowed.
 
-`.opencode/profile/guard.ts`, `.opencode/package.json` и `package-lock.json` являются частью
-одной pinned compatibility unit. Guard одновременно реализует enforcement hooks и
-регистрирует `safe_search`/`safe_fetch`. Package содержит только точную совместимую версию
-`@opencode-ai/plugin`, а npm lock фиксирует resolved artifact и integrity; runtime
-dependency drift запрещён. V1.17.9 config loader использует npm/Arborist и
-`package-lock.json`, не Bun lock. Custom tool запускает `rg` через argv API без shell
-interpolation; наличие поддерживаемой версии `rg` проверяется preflight.
+`.opencode/profile/guard.ts`, `.opencode/package.json`, and `package-lock.json` are part of
+a single pinned compatibility unit. The guard simultaneously implements enforcement hooks and
+registers `safe_search`/`safe_fetch`. The package contains only the exact compatible version
+of `@opencode-ai/plugin`, and the npm lock fixes the resolved artifact and integrity; runtime
+dependency drift is forbidden. The V1.17.9 config loader uses npm/Arborist and
+`package-lock.json`, not a Bun lock. A custom tool runs `rg` via the argv API without shell
+interpolation; the presence of a supported `rg` version is checked at preflight.
 
-`profile/argv-policy.json` — pack-owned strict contract pinned CLI 1.17.9. Launcher
-парсит argv структурно (`--flag=value`, short aliases, `--`, positionals) и принимает
-только mode-specific subcommands/flags; substring filtering запрещён. Production
-разрешает TUI только для canonical current locked worktree без project positional,
-bounded `run` с prompt/`--format`/resume того же isolated session, read-only
-`models`/`agent list`, а также exact isolated `auth` operations. Он запрещает
-`--attach`, `--dir`, file attachment, `--dangerously-skip-permissions`, share,
-model/variant/agent override, remote/server credentials и любой unknown flag.
-`attach`, `plugin`, `upgrade`, `uninstall`, `mcp`, `import`, `github`, `pr`, `acp`,
-server/web и debug verbs отсутствуют в production allowlist. Installer/validator и
-benchmark имеют отдельные более узкие internal allowlists; arbitrary forwarding
-никогда не используется.
+`profile/argv-policy.json` — a pack-owned strict contract pinned to CLI 1.17.9. The launcher
+parses argv structurally (`--flag=value`, short aliases, `--`, positionals) and accepts only
+mode-specific subcommands/flags; substring filtering is forbidden. Production permits the TUI
+only for the canonical current locked worktree without a project positional, bounded `run`
+with prompt/`--format`/resume of the same isolated session, read-only `models`/`agent list`,
+and exact isolated `auth` operations. It forbids `--attach`, `--dir`, file attachment,
+`--dangerously-skip-permissions`, share, model/variant/agent override, remote/server
+credentials, and any unknown flag. `attach`, `plugin`, `upgrade`, `uninstall`, `mcp`,
+`import`, `github`, `pr`, `acp`, server/web, and debug verbs are absent from the production
+allowlist. Installer/validator and benchmark have separate, narrower internal allowlists;
+arbitrary forwarding is never used.
 
-`profile/lsp-safe-servers.json` — pack-owned allowlist pinned V1.17.9 server IDs,
-для которых native implementation использует только заранее установленный PATH
-binary и не вызывает `Npm.which`, Global cache, installer или `latest` download.
-Conditional policy может выбрать только эти IDs и фиксирует canonical binary/version/
-SHA; остальные built-ins всегда получают `{ "disabled": true }`.
+`profile/lsp-safe-servers.json` — a pack-owned allowlist of pinned V1.17.9 server IDs for
+which the native implementation uses only a preinstalled PATH binary and does not invoke
+`Npm.which`, the global cache, an installer, or a `latest` download. Conditional policy may
+select only these IDs and fixes the canonical binary/version/SHA; all other built-ins always
+receive `{ "disabled": true }`.
 
-`profile/policy.json` — единственный machine-readable project policy со strict
-schema и `policy_version`. Он содержит только дополнительные relative secret paths,
-exact hidden search allow-roots, optional LSP profile с exact audited server IDs и
-canonical preinstalled binary/version/SHA-256, а также per-role exact verification
-command allowlists, а также bounded per-role LLM calls, root Task calls и compaction
-counts. `instruction_files` содержит только explicitly adopted relative auto-
-instruction origins и expected SHA/size; remote/secret/control origins запрещены.
-Optional `project_skills` содержит только adopted logical name, canonical
-relative `SKILL.md`, exact allowed agents и expected SHA-256; он не принимает URLs,
-resources или arbitrary discovery paths. `provider_env_names` и `project_env_names`
-— non-secret exact-name allowlists;
-values никогда не попадают в policy/lock/logs. Имена обязаны соответствовать
-`[A-Z][A-Z0-9_]{0,63}`, не могут начинаться с `OPENCODE_`/`OC_MODEL_` и не могут быть
+`profile/policy.json` — the single machine-readable project policy with a strict schema and
+`policy_version`. It contains only additional relative secret paths, exact hidden search
+allow-roots, an optional LSP profile with exact audited server IDs and canonical preinstalled
+binary/version/SHA-256, per-role exact verification command allowlists, and bounded per-role
+LLM calls, root Task calls, and compaction counts. `instruction_files` contains only
+explicitly adopted relative auto-instruction origins and expected SHA/size; remote/secret/
+control origins are forbidden. Optional `project_skills` contains only an adopted logical
+name, canonical relative `SKILL.md`, exact allowed agents, and expected SHA-256; it accepts
+no URLs, resources, or arbitrary discovery paths. `provider_env_names` and `project_env_names`
+are non-secret exact-name allowlists; values never enter policy/lock/logs. Names must match
+`[A-Z][A-Z0-9_]{0,63}`, must not start with `OPENCODE_`/`OC_MODEL_`, and must not be
 process-loader/shell variables (`LD_*`, `DYLD_*`, `NODE_OPTIONS`, `BUN_OPTIONS`,
-`PYTHONPATH`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`,
-`_JAVA_OPTIONS`, `NPM_CONFIG_*`, `GIT_CONFIG_*`, `BASH_ENV`, `ENV`, `SHELLOPTS`,
-`CDPATH`, `IFS`, `PROMPT_COMMAND` и versioned validator denylist). Generic readers,
-interpreters, command substitutions и shell
-control operators запрещены schema/semantic validator; fixed audited interpreter +
-script invocation может быть отдельным exact entry. Guard читает policy напрямую
-через filesystem API до изменения config; missing, invalid или contract-incompatible
-policy оставляет base deny-mode. Markdown никогда не парсится как permission source.
+`PYTHONPATH`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`,
+`NPM_CONFIG_*`, `GIT_CONFIG_*`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `CDPATH`, `IFS`,
+`PROMPT_COMMAND`, and the versioned validator denylist). Generic readers, interpreters,
+command substitutions, and shell control operators are forbidden by the schema/semantic
+validator; a fixed audited interpreter + script invocation may be a separate exact entry. The
+guard reads policy directly via the filesystem API before changing config; a missing,
+invalid, or contract-incompatible policy leaves base deny-mode. Markdown is never parsed as a
+permission source.
 
-Guard создаёт `<managed-runtime-root>/budgets/` только для minimal
-append-only counters: root/session IDs, reservation ID, role, event kind и timestamp;
-prompts/tool outputs там запрещены. Перед каждым `chat.params`, Task и compaction
-guard берёт atomic per-root filesystem lease, append+fsync reservation и лишь затем
-разрешает call. Runtime root проходит отдельный containment check относительно
-выбранного per-user state base и no-symlink/owner/mode checks; files
-открываются exclusive/no-follow там, где это поддерживает platform. Это сериализует
-budget reservations даже для parallel children и
-нескольких OpenCode-процессов, но не является общим worktree writer lock. Crash после
-reservation может только завысить usage; reservation не возвращается автоматически.
-Stale lease или corrupt ledger даёт deny до явного recovery через profile doctor.
-Runtime root определяется как platform-specific per-user state base плюс SHA-256 от
-canonical worktree path и random install UUID из lock; raw path в имени не хранится.
-Он обязан находиться вне worktree, принадлежать текущему uid, не иметь symlink
-components и не наследовать host OpenCode directories. Runtime ledger user-owned,
-не переносится installer и не удаляется автоматически.
-Если platform default пересекается с worktree (например, репозиторий охватывает
-user-home), managed launch требует явный `OPENCODE_PROFILE_RUNTIME_ROOT` вне обоих
-trees и применяет к нему те же owner/mode/canonical checks; небезопасный fallback
-внутрь проекта запрещён.
-Recovery не зависит от LLM: pack-owned `profile-doctor --audit-budget` выполняет
-read-only проверку, а `--recover-budget <root-id> --apply` после проверки отсутствия
-живого holder и захвата recovery lease сохраняет исходный ledger/lease в quarantine,
-помечает повреждённый root terminal/cap-exhausted и разрешает работу только в новой
-root session. Он никогда не обнуляет cap текущего root и ничего не удаляет молча.
+The guard creates `<managed-runtime-root>/budgets/` only for minimal append-only counters:
+root/session IDs, reservation ID, role, event kind, and timestamp; prompts/tool outputs are
+forbidden there. Before every `chat.params`, Task, and compaction the guard takes an atomic
+per-root filesystem lease, appends + fsyncs a reservation, and only then permits the call. The
+runtime root undergoes a separate containment check against the chosen per-user state base and
+no-symlink/owner/mode checks; files are opened exclusive/no-follow where the platform supports
+it. This serializes budget reservations even for parallel children and multiple OpenCode
+processes, but is not a general worktree writer lock. A crash after reservation can only
+overcount usage; a reservation is not returned automatically. A stale lease or corrupt ledger
+yields deny until explicit recovery via the profile doctor. The runtime root is defined as a
+platform-specific per-user state base plus SHA-256 of the canonical worktree path and a random
+install UUID from the lock; the raw path is not stored in the name. It must lie outside the
+worktree, belong to the current uid, have no symlink components, and not inherit host OpenCode
+directories. The runtime ledger is user-owned, is not transferred by the installer, and is not
+deleted automatically.
+If the platform default intersects the worktree (for example, the repository spans the
+user-home), managed launch requires an explicit `OPENCODE_PROFILE_RUNTIME_ROOT` outside both
+trees and applies the same owner/mode/canonical checks to it; an unsafe fallback inside the
+project is forbidden.
 
-### 6.2. Target layout и ownership
+Recovery is LLM-independent: the pack-owned `profile-doctor --audit-budget` performs a
+read-only check, and `--recover-budget <root-id> --apply` after verifying no live holder and
+capturing a recovery lease saves the original ledger/lease in quarantine, marks the corrupted
+root terminal/cap-exhausted, and permits work only in a new root session. It never zeroes the
+cap of the current root and deletes nothing silently.
 
-В целевом git-репозитории installer создаёт `opencode.jsonc`, `.opencode/*` из
-template, копирует canonical validator в
-`.opencode/profile/bin/validate-config.sh`, managed launcher и non-LLM profile doctor,
-а также создаёт `.opencode/profile-lock.json`.
-Lock содержит версию pack, config-contract version, source revision, ownership и
-SHA-256 каждого pack-owned файла, а также logical origin registry для agents,
-commands, prompts, instructions и skills и random non-secret install UUID для вывода внешнего
-runtime path. Он также хранит canonical path/version/SHA-256 registry для OpenCode,
-`rg`, materializer npm/runtime, validated shell и benchmark/verification Git, где
-они используются pack code. Guard вызывает `rg` только по locked absolute path;
-launcher не пере-resolve OpenCode через изменившийся PATH. Сам lock является
-installer-owned control artifact и не включает
-собственный hash в ownership map.
+### 6.2. Target layout and ownership
 
-Installer также генерирует pack-controlled
-`.opencode/profile/models.snapshot.json` и
-`.opencode/profile/dependencies.manifest.json`. Они не являются hand-edited policy:
-первый меняется только model binding transaction, второй — exact dependency
-materialization transaction; оба hash-locked и committed/visible для review.
+In the target git repository the installer creates `opencode.jsonc`, `.opencode/*` from the
+template, copies the canonical validator to `.opencode/profile/bin/validate-config.sh`, the
+managed launcher and non-LLM profile doctor, and creates `.opencode/profile-lock.json`.
+The lock contains the pack version, config-contract version, source revision, ownership, and
+SHA-256 of each pack-owned file, plus a logical origin registry for agents, commands, prompts,
+instructions, and skills, and a random non-secret install UUID for the external runtime path.
+It also stores a canonical path/version/SHA-256 registry for OpenCode, `rg`, the materializer
+npm/runtime, the validated shell, and the benchmark/verification Git where they are used by
+pack code. The guard invokes `rg` only by locked absolute path; the launcher does not
+re-resolve OpenCode through a changed PATH. The lock itself is an installer-owned control
+artifact and does not include its own hash in the ownership map.
 
-Pack-owned являются PROFILE_RULES, prompts, commands, skills, profile guard,
-argv/LSP-safe policies, launcher, profile doctor, generated model/dependency manifests,
-`.opencode/package.json`, `package-lock.json`, validator и созданный с нуля
-`opencode.jsonc`.
-`.opencode/.gitignore`, `profile/policy.json`, `MANIFEST.md`, `INDEX.md`,
-`DECISIONS.md` и `STATE.md` являются seed files: installer создаёт отсутствующие,
-но сразу помечает user-owned, не
-включает их hashes в update ownership и никогда не перезаписывает. Lock хранит их
-observed hashes и schema/contract versions только для drift detection. Существующие
-policy/Notebook сохраняются и проходят strict schema validation. Корневой
-`AGENTS.md`, adopted root config и любые другие файлы вне pack-owned map также
-user-owned.
+The installer also generates the pack-controlled `.opencode/profile/models.snapshot.json` and
+`.opencode/profile/dependencies.manifest.json`. These are not hand-edited policy: the first
+changes only on a model binding transaction, the second only on an exact dependency
+materialization transaction; both are hash-locked and committed/visible for review.
 
-Generic правила pack находятся в `.opencode/PROFILE_RULES.md` и подключаются через
-`instructions` в `opencode.jsonc`. Поэтому существующий `AGENTS.md` не копируется и
-не перезаписывается. Project facts остаются в user-owned `AGENTS.md` и/или в
-`MANIFEST.md`.
+Pack-owned are PROFILE_RULES, prompts, commands, skills, the profile guard, the argv/LSP-safe
+policies, the launcher, the profile doctor, the generated model/dependency manifests,
+`.opencode/package.json`, `package-lock.json`, the validator, and the `opencode.jsonc` created
+from scratch.
+`.opencode/.gitignore`, `profile/policy.json`, `MANIFEST.md`, `INDEX.md`, `DECISIONS.md`, and
+`STATE.md` are seed files: the installer creates missing ones but immediately marks them
+user-owned, does not include their hashes in the update ownership, and never overwrites them.
+The lock stores their observed hashes and schema/contract versions only for drift detection.
+Existing policy/Notebook are preserved and pass strict schema validation. The root `AGENTS.md`,
+the adopted root config, and any other files outside the pack-owned map are also user-owned.
 
-Pack command names являются reserved. Managed profile не объединяет их с host или
-неучтёнными project commands: launcher/guard требуют exact origin registry и hashes,
-а guard final assignment заменяет effective command map целиком. То же правило
-применяется к exact agent definitions и всем `{file:}` prompt/instruction refs.
+Generic pack rules live in `.opencode/PROFILE_RULES.md` and are attached via `instructions` in
+`opencode.jsonc`. Therefore the existing `AGENTS.md` is not copied and not overwritten.
+Project facts remain in user-owned `AGENTS.md` and/or in `MANIFEST.md`.
 
-### 6.3. Нормативный контракт installer
+Pack command names are reserved. The managed profile does not merge them with host or
+unaccounted project commands: the launcher/guard require an exact origin registry and hashes,
+and the guard final assignment replaces the effective command map entirely. The same rule
+applies to exact agent definitions and all `{file:}` prompt/instruction refs.
 
-1. `install-profile.sh <target>` по умолчанию выполняет только dry-run. Запись
-   разрешена лишь с `--apply`.
-2. Target должен быть git-репозиторием с чистым worktree. Иначе installer завершает
-   работу без изменений; обход проверки требует отдельной будущей функции, не
-   скрытого flag.
-3. Installer сначала строит полный staging tree и transaction manifest: pre-image
-   hashes, создаваемые paths, заменяемые paths и прежний lock. Ни один target path не
-   меняется до успешных staging validation и smoke tests.
-4. Fresh install создаёт только отсутствующие pack paths. Любое совпадение с
-   user-owned не-seed файлом является conflict и останавливает транзакцию.
-   `.opencode/.gitignore`, policy и Notebook seed paths являются исключением:
-   существующие сохраняются и валидируются, отсутствующие создаются user-owned из
-   консервативного template. Gitignore обязан содержать required runtime-artifact
-   entry `node_modules/` и не должен игнорировать
-   package/lock/guard либо иной
-   pack-owned path; исправление требует явного adopted candidate.
-5. Если ровно один из `opencode.jsonc`/`opencode.json` уже существует, dry-run
-   сохраняет его path/format и выводит merge plan с candidate во временный каталог
-   без изменения target. Наличие обоих файлов — conflict до явного решения
-   пользователя. Пользователь передаёт итоговый файл через
-   `--adopt-config <path> --apply`; installer помещает его и все остальные runtime
-   files в один staging tree, проверяет resolved references и применяет одной
-   транзакцией. Adopted config записывается в lock как `ownership: user` с observed
-   hash и config-contract version.
-6. При update новый config-contract сравнивается с lock. Pack-owned config обновляется
-   только при совпадении текущего hash. Для adopted config изменение контракта всегда
-   останавливает update и создаёт новый candidate; `--re-adopt-config <path> --apply`
-   валидирует и применяет merged config вместе со всеми pack updates одной
-   транзакцией. Если контракт не менялся, user config только валидируется и его
-   observed hash обновляется в lock. Изменение policy-contract аналогично требует
-   валидного `--re-adopt-policy <path> --apply`; policy никогда не переписывается
-   молча. Provider env name добавляется/удаляется только явными
-   `--allow-provider-env <NAME> --apply` / `--remove-provider-env <NAME> --apply`:
-   dry-run показывает policy candidate и non-secret lock diff, значение не читается
-   и не сохраняется installer. Launcher позднее копирует только exact listed key и
-   только если runtime value непустое; wildcard/prefix passthrough запрещён. Для
-   non-secret build/toolchain passthrough симметрично используются
-   `--allow-project-env`/`--remove-project-env`; тот же dangerous-name denylist
-   обязателен. Изменение canonical pack executable path/version/hash требует
-   `--rebind-runtime-tools --apply`, full validation и не принимается launcher молча.
-   Existing root `AGENTS.md` является единственным implicit user instruction origin:
-   install dry-run показывает его hash/size и provider-visible status. Любой nested
-   `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` или иной configured instruction требует
-   `--adopt-instruction <relative-path> --apply`; изменение —
-   `--re-adopt-instruction`. Source обязан быть existing canonical regular non-symlink
-   UTF-8 file, пройти aggregate prompt budget/secret scan и попасть в
-   `policy.instruction_files` + lock. Пересечение с baseline/project secret/control
-   path даёт безусловный Fail, а не approval bypass. Adoption явно означает, что
-   содержимое будет отправляться provider тем ролям, которым OpenCode его injects.
-7. Project-specific skill добавляется только через
-   `--adopt-skill <name>=<source-SKILL.md> --agents <exact-role-list> --apply`. Dry-run
-   показывает staged copy и точечный `policy.project_skills` candidate. Source должен
-   быть одним regular non-symlink UTF-8 Markdown file ≤ 32 KiB, иметь matching strict
-   frontmatter, не пересекать reserved names/plugin/tool/command paths и не содержать
-   secrets. Resources/scripts в V1 project-skill adoption не поддерживаются: skill
-   обязан быть self-contained. Apply атомарно
-   копирует skill, обновляет exact role skill maps, policy и lock origin registry.
-   Изменение требует `--re-adopt-skill` с теми же проверками; collision или drift
-   останавливает всю транзакцию. При uninstall adopted skill по умолчанию сохраняется
-   как user-owned project skill; uninstall report предупреждает, что обычный OpenCode
-   может продолжить auto-discovery. Удаление его файлов требует
-   отдельного exact `--remove-adopted-skill <name> --apply` и dependency audit.
-8. Остальные updates заменяют только pack-owned файл, чей текущий hash равен hash из
-   lock. Modified, missing и colliding paths дают conflict report; частичное
-   обновление запрещено.
-9. `--uninstall` сначала строит полный retained-reference closure. Если adopted,
-   user-owned или modified root config/instruction продолжает ссылаться на pack
-   plugin, prompts, commands, skills или другие удаляемые paths, операция без изменений
-   завершается conflict. Installer выдаёт de-adoption candidate; пользователь явно
-   передаёт проверенный итог через `--adopt-uninstall-config <path> --apply`. Candidate,
-   удаления и lock входят в одну rollback-able транзакцию и проверяются на sanitized
-   post-uninstall tree до первой записи. Неизменённый pack-owned root config удаляется;
-   retained config допускается только если dependency audit доказывает отсутствие
-   pack refs и reserved profile stanzas. Затем удаляются только неизменённые
-   pack-owned файлы. Seed, изменённые и user-owned файлы сохраняются и перечисляются.
-   Policy автоматически не удаляется. После успешного удаления валидный unmodified
-   installer lock удаляется как последний control artifact; modified или malformed
-   lock останавливает uninstall до удаления любых paths и сохраняется с conflict report.
-10. После записи итоговые hashes сверяются, а validation/smoke tests повторяются на
-   минимальной sanitized reconstruction из transaction manifest, config refs и
-   synthetic fixture, а не на копии всего target. Baseline/policy secret paths,
-   unrelated ignored/untracked data и остальные project files не копируются. При
-   ошибке rollback восстанавливает все
-   pre-images, удаляет каждый path, созданный этой транзакцией, удаляет ставшие
-   пустыми созданные directories и восстанавливает либо удаляет lock. Targets берутся
-   только из transaction manifest; broad recursive delete запрещён. Fresh-install
-   rollback fixture обязан подтвердить byte-for-byte исходный tree.
-11. Installer не изменяет global config и не устанавливает OpenCode или providers.
-    Temporary roots создаются с mode `0700`, известные secrets исключаются, cleanup
-    выполняется при success/error/signal, а logs не содержат copied content. Git
-    остаётся дополнительным recovery механизмом, но не заменяет transactional rollback.
+### 6.3. Normative installer contract
 
-До любого вызова OpenCode installer и перед каждым managed launch выполняют
-non-executing static preflight всех project, host, system-managed и isolated-auth
-config sources. Core profile отклоняет
-любые external plugin specs кроме pack guard, auto-discovered `{plugin,plugins}/*`,
-remote instructions, auto-discovered executable `{tool,tools}/*.{js,ts}`, любой
-непустой effective `mcp` entry — local или remote, `skills.paths`, `skills.urls`,
-foreign/duplicate agent, skill (кроме attested denied built-in exception) и command origins, `lsp.*.command`,
-`formatter.*.command` и иные process integrations, а также абсолютные, `~/` и
-выходящие за copied root `{file:...}` refs. Reserved commands и все разрешённые
-skills/prompts обязаны иметь canonical origin и SHA-256, совпадающие с lock;
-foreign commands в core не допускаются вовсе. Любой реальный system-managed config,
-macOS MDM plist, stored `wellknown` auth или active account/org remote config также
-даёт Fail; checker читает только schema/type/origin metadata и никогда не логирует
-credential values.
+1. `install-profile.sh <target>` by default performs a dry-run only. Writing is permitted
+   only with `--apply`.
+2. The target must be a git repository with a clean worktree. Otherwise the installer exits
+   without changes; bypassing the check requires a separate future feature, not a hidden flag.
+3. The installer first builds a full staging tree and transaction manifest: pre-image hashes,
+   paths to be created, paths to be replaced, and the previous lock. No target path changes
+   until staging validation and smoke tests succeed.
+4. A fresh install creates only missing pack paths. Any match with a user-owned non-seed file
+   is a conflict and stops the transaction. `.opencode/.gitignore`, policy, and Notebook seed
+   paths are exceptions: existing ones are preserved and validated, missing ones are created
+   user-owned from a conservative template. Gitignore must contain the required runtime-artifact
+   entry `node_modules/` and must not ignore package/lock/guard or any other pack-owned path;
+   fixing this requires an explicit adopted candidate.
+5. If exactly one of `opencode.jsonc`/`opencode.json` already exists, dry-run preserves its
+   path/format and outputs a merge plan with a candidate in a temporary directory without
+   changing the target. The presence of both files is a conflict until an explicit user
+   decision. The user passes the final file via `--adopt-config <path> --apply`; the installer
+   places it and all remaining runtime files in a single staging tree, checks resolved
+   references, and applies in one transaction. The adopted config is written to the lock as
+   `ownership: user` with the observed hash and config-contract version.
+6. On update the new config-contract is compared with the lock. Pack-owned config is updated
+   only when the current hash matches. For an adopted config, a contract change always stops
+   the update and creates a new candidate; `--re-adopt-config <path> --apply` validates and
+   applies the merged config together with all pack updates in one transaction. If the contract
+   did not change, the user config is only validated and its observed hash is updated in the
+   lock. A policy-contract change analogously requires a valid `--re-adopt-policy <path>
+   --apply`; policy is never rewritten silently. A provider env name is added/removed only via
+   explicit `--allow-provider-env <NAME> --apply` / `--remove-provider-env <NAME> --apply`:
+   dry-run shows the policy candidate and non-secret lock diff; the value is neither read nor
+   stored by the installer. The launcher later copies only the exact listed key and only if the
+   runtime value is non-empty; wildcard/prefix passthrough is forbidden. For non-secret
+   build/toolchain passthrough, `--allow-project-env`/`--remove-project-env` are used
+   symmetrically; the same dangerous-name denylist is mandatory. Changing the canonical pack
+   executable path/version/hash requires `--rebind-runtime-tools --apply`, full validation, and
+   is not accepted silently by the launcher. The existing root `AGENTS.md` is the only implicit
+   user instruction origin: install dry-run shows its hash/size and provider-visible status. Any
+   nested `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, or other configured instruction requires
+   `--adopt-instruction <relative-path> --apply`; a change requires `--re-adopt-instruction`.
+   The source must be an existing canonical regular non-symlink UTF-8 file, pass an aggregate
+   prompt budget/secret scan, and land in `policy.instruction_files` + lock. Intersection with
+   baseline/project secret/control paths yields an unconditional Fail, not an approval bypass.
+   Adoption explicitly means the content will be sent to the provider by the roles to which
+   OpenCode injects it.
+7. A project-specific skill is added only via
+   `--adopt-skill <name>=<source-SKILL.md> --agents <exact-role-list> --apply`. Dry-run shows
+   the staged copy and the targeted `policy.project_skills` candidate. The source must be a
+   single regular non-symlink UTF-8 Markdown file ≤ 32 KiB, have matching strict frontmatter,
+   not intersect reserved names/plugin/tool/command paths, and contain no secrets. Resources/
+   scripts are not supported in V1 project-skill adoption: the skill must be self-contained.
+   Apply atomically copies the skill, updates the exact role skill maps, policy, and lock origin
+   registry. A change requires `--re-adopt-skill` with the same checks; collision or drift
+   stops the whole transaction. On uninstall an adopted skill is by default preserved as a
+   user-owned project skill; the uninstall report warns that ordinary OpenCode may continue
+   auto-discovery. Deleting its files requires a separate exact `--remove-adopted-skill <name>
+   --apply` and a dependency audit.
+8. Other updates replace only the pack-owned file whose current hash equals the hash in the
+   lock. Modified, missing, and colliding paths yield a conflict report; partial update is
+   forbidden.
+9. `--uninstall` first builds a full retained-reference closure. If an adopted, user-owned, or
+   modified root config/instruction still references the pack plugin, prompts, commands, skills,
+   or other deletable paths, the operation completes without changes as a conflict. The installer
+   emits a de-adoption candidate; the user explicitly passes a verified result via
+   `--adopt-uninstall-config <path> --apply`. The candidate, deletions, and lock enter a single
+   rollback-able transaction and are checked against a sanitized post-uninstall tree before the
+   first write. An unchanged pack-owned root config is deleted; a retained config is permitted
+   only if a dependency audit proves the absence of pack refs and reserved profile stanzas. Then
+   only unchanged pack-owned files are deleted. Seed, modified, and user-owned files are
+   preserved and listed. Policy is not deleted automatically. After a successful deletion a valid
+   unmodified installer lock is deleted as the last control artifact; a modified or malformed
+   lock stops uninstall before deleting any paths and is preserved with a conflict report.
+10. After writing, final hashes are reconciled and validation/smoke tests are repeated on a
+    minimal sanitized reconstruction from the transaction manifest, config refs, and a synthetic
+    fixture, not on a copy of the whole target. Baseline/policy secret paths, unrelated
+    ignored/untracked data, and remaining project files are not copied. On error, rollback
+    restores all pre-images, deletes every path created by this transaction, deletes any
+    directories that became empty, and restores or deletes the lock. Targets come only from the
+    transaction manifest; broad recursive delete is forbidden. A fresh-install rollback fixture
+    must confirm a byte-for-byte original tree.
+11. The installer does not modify global config and does not install OpenCode or providers.
+    Temporary roots are created with mode `0700`, known secrets are excluded, cleanup runs on
+    success/error/signal, and logs contain no copied content. Git remains an additional recovery
+    mechanism but does not replace transactional rollback.
 
-Preflight отдельно воспроизводит V1.17.9 auto-instruction discovery для root/nested
-`AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` и configured `instructions`. Разрешены только
-pack `PROFILE_RULES.md`, observed root `AGENTS.md` и exact adopted origins; каждый
-path canonical/regular/non-symlink, hash/size совпадает, aggregate context budget
-проходит. Secret/control overlap блокирует launch до чтения content. Эти файлы
-являются намеренно provider-visible system context и не защищаются `read` permission.
-Разрешённые relative file refs сначала canonicalize, проверяются на containment и
-копируются в тот же disposable tree. Только sanitized plugin-free global copy плюс
-hash-verified pack guard допускаются к `opencode debug config`; чужой JavaScript
-никогда не импортируется для «проверки».
+Before any OpenCode invocation, the installer and, before each managed launch, the launcher
+perform a non-executing static preflight of all project, host, system-managed, and
+isolated-auth config sources. The core profile rejects any external plugin specs except the
+pack guard, auto-discovered `{plugin,plugins}/*`, remote instructions, auto-discovered
+executable `{tool,tools}/*.{js,ts}`, any non-empty effective `mcp` entry — local or remote,
+`skills.paths`, `skills.urls`, foreign/duplicate agent, skill (except the attested denied
+built-in exception) and command origins, `lsp.*.command`, `formatter.*.command`, and other
+process integrations, as well as absolute, `~/`, and copied-root-escaping `{file:...}` refs.
+Reserved commands and all permitted skills/prompts must have a canonical origin and SHA-256
+matching the lock; foreign commands are not permitted in core at all. Any real system-managed
+config, macOS MDM plist, stored `wellknown` auth, or active account/org remote config also
+yields Fail; the checker reads only schema/type/origin metadata and never logs credential
+values.
 
-После static preflight команды OpenCode внутри installer/validator и production
-OpenCode внутри launcher работают в изолированном процессе: отдельные
-`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`,
-`OPENCODE_TEST_HOME` и sanitized config tree. Installer/validator используют temporary
-roots и минимальную reconstruction; launcher — persistent owner-only roots вне
-worktree, чтобы
-сохранять sessions/cache/auth без чтения host OpenCode state. Inherited
-environment не наследуется целиком. Launcher строит его заново из фиксированного
-validated OS baseline (`PATH`, canonical `USER`/`LOGNAME`, locale/terminal/temp и
-validated shell), controlled XDG roots и `HOME` внутри owner-only managed runtime,
-exact `OC_MODEL_*`, exact policy
-`provider_env_names`/`project_env_names` и probe keys. Переменные с prefix
-`OPENCODE_` сначала удаляются все без исключения, после чего launcher выставляет
-только перечисленные controlled isolation/catalog variables и optional audited LSP
-flag.
-Это исключает, в частности, auto-share, disable-autocompact/prune, DB, model
-path/URL, config/content/plugin и experimental overrides. `OC_MODEL_*` и
-provider/project keys не относятся к этому namespace, но неизвестный inherited key
-не передаётся. Credential values не логируются; shell-capable role после explicit
-command approval остаётся residual confidentiality boundary §5.2. Shipped JSONC уже
-содержит `$schema`. Launcher принудительно задаёт `npm_config_ignore_scripts=true`;
-остальные inherited npm/Node/Bun loader options не проходят baseline.
-Host home dotfiles, credential chains и `~/.opencode` поэтому не видны process;
-filesystem-based provider auth требует отдельного explicit conditional profile.
-Это изолирует обычные записи V1.17.9 config loader, который может создавать global config,
-`.gitignore` и dependency artifacts. Ни `opencode debug config`, ни discovery/smoke
-команды не запускаются непосредственно против реального global config или target.
-XDG/temp isolation не называется sandbox для произвольного plugin code; доверенным
-исполняемым кодом остаётся только проверенный pack guard. Настоящая проверка чужого
-plugin потребовала бы OS sandbox и не входит в core.
+Preflight separately reproduces the V1.17.9 auto-instruction discovery for root/nested
+`AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, and configured `instructions`. Only the pack
+`PROFILE_RULES.md`, the observed root `AGENTS.md`, and exact adopted origins are permitted;
+each path is canonical/regular/non-symlink, hash/size matches, and the aggregate context
+budget passes. A secret/control overlap blocks launch before reading content. These files are
+intentionally provider-visible system context and are not protected by `read` permission.
+Permitted relative file refs are first canonicalized, checked for containment, and copied into
+the same disposable tree. Only a sanitized plugin-free global copy plus a hash-verified pack
+guard are admitted to `opencode debug config`; foreign JavaScript is never imported for
+"verification".
 
-Locked plugin dependency сначала разрешается и проверяется config loader в
-disposable tree. `.opencode/node_modules/` является ignored runtime artifact и не
-pack-owned; package/lock и generated `dependencies.manifest.json` pack-owned/hash
-controlled. Materializer в `0700` staging устанавливает exact lock с controlled
-runtime `HOME`, empty owner-only `npm_config_userconfig` и
-`npm_config_globalconfig`, `npm_config_ignore_scripts=true`, audit/fund/notifier off
-и exact `npm_config_registry`, без inherited proxy/auth/cafile variables. Core lock разрешает только HTTPS
-tarballs exact audited public registry host с integrity; `git`, `file`, workspace,
-plain HTTP, redirect на иной host и arbitrary resolved URL запрещены. Materializer
-запрещает symlinks и lifecycle scripts, затем
-фиксирует полный sorted tree manifest: relative path, type, mode, size и SHA-256
-каждого regular file. Только после проверки он атомарно меняет runtime tree, сохраняя
-предыдущий в quarantine.
+After static preflight, OpenCode commands inside the installer/validator and production
+OpenCode inside the launcher run in an isolated process: separate `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `OPENCODE_TEST_HOME`, and a sanitized
+config tree. The installer/validator use temporary roots and minimal reconstruction; the
+launcher uses persistent owner-only roots outside the worktree to preserve sessions/cache/auth
+without reading host OpenCode state. The inherited environment is not inherited wholesale. The
+launcher rebuilds it from a fixed validated OS baseline (`PATH`, canonical `USER`/`LOGNAME`,
+locale/terminal/temp, and validated shell), controlled XDG roots, and `HOME` inside the
+owner-only managed runtime, exact `OC_MODEL_*`, exact policy `provider_env_names`/
+`project_env_names`, and probe keys. Variables with the `OPENCODE_` prefix are first removed
+all without exception, after which the launcher sets only the listed controlled
+isolation/catalog variables and the optional audited LSP flag. This excludes, in particular,
+auto-share, disable-autocompact/prune, DB, model path/URL, config/content/plugin, and
+experimental overrides. `OC_MODEL_*` and provider/project keys are not in this namespace, but
+an unknown inherited key is not forwarded. Credential values are not logged; a shell-capable
+role after explicit command approval remains a residual confidentiality boundary per §5.2.
+Shipped JSONC already contains `$schema`. The launcher forcibly sets
+`npm_config_ignore_scripts=true`; other inherited npm/Node/Bun loader options fail the
+baseline.
+Host home dotfiles, credential chains, and `~/.opencode` are therefore invisible to the
+process; filesystem-based provider auth requires a separate explicit conditional profile. This
+isolates ordinary V1.17.9 config-loader writes, which may create global config, `.gitignore`,
+and dependency artifacts. Neither `opencode debug config` nor discovery/smoke commands are run
+directly against the real global config or target. XDG/temp isolation is not called a sandbox
+for arbitrary plugin code; the only trusted executable code remains the verified pack guard.
+Real verification of foreign plugins would require an OS sandbox and is out of core.
 
-Перед каждым OpenCode process launcher под cooperative lease сверяет отсутствие
-missing/extra/symlink entries и весь manifest; только потом допускает pre-guard import.
-Mismatch или недоступный exact artifact останавливает launch без OpenCode и предлагает
-non-LLM `profile-doctor --materialize-deps --apply`; версия не подменяется, старый tree
-не удаляется молча. Это обязательно, потому что V1.17.9 при существующем
-`node_modules` не проверяет extracted file contents по lock integrity.
+The locked plugin dependency is first resolved and checked by the config loader in a
+disposable tree. `.opencode/node_modules/` is an ignored runtime artifact and not pack-owned;
+package/lock and the generated `dependencies.manifest.json` are pack-owned/hash-controlled.
+The materializer in a `0700` staging installs the exact lock with a controlled runtime `HOME`,
+empty owner-only `npm_config_userconfig` and `npm_config_globalconfig`,
+`npm_config_ignore_scripts=true`, audit/fund/notifier off, and an exact `npm_config_registry`,
+without inherited proxy/auth/cafile variables. The core lock permits only HTTPS tarballs of an
+exact audited public registry host with integrity; `git`, `file`, workspace, plain HTTP,
+redirect to a different host, and arbitrary resolved URL are forbidden. The materializer
+forbids symlinks and lifecycle scripts, then fixes a full sorted tree manifest: relative path,
+type, mode, size, and SHA-256 of every regular file. Only after verification does it atomically
+change the runtime tree, preserving the previous one in quarantine.
 
-Validator делает два resolved-config audit: чистый pack и отрицательный fixture с
-предварительно sanitized hostile global config. Второй доказывает, что launcher не
-наследует host agents/permissions/MCP/commands/skills; любой foreign executable или
-origin collision уже даёт Fail на static preflight. После установки managed запуск
-может создавать runtime cache artifacts; dependency tree остаётся exact-manifest
-runtime artifact и повторно проверяется на следующем launch.
-Платные provider smoke calls выполняются только отдельной явной командой, с показом
-ожидаемого числа вызовов.
+Before each OpenCode process the launcher, under cooperative lease, reconciles the absence of
+missing/extra/symlink entries and the whole manifest; only then does it admit pre-guard import.
+A mismatch or unavailable exact artifact stops launch without OpenCode and suggests the non-LLM
+`profile-doctor --materialize-deps --apply`; the version is not substituted, the old tree is not
+deleted silently. This is mandatory because V1.17.9, when `node_modules` exists, does not
+verify extracted file contents against lock integrity.
 
-`profiles/models.env.example` — документация переменных, а не автоматически
-загружаемый env-файл. Пользователь экспортирует значения через shell/direnv либо
-явно подключает свой wrapper; реальные значения не коммитятся. Installer и validator
-завершаются с ошибкой, если обязательная binding-переменная отсутствует.
+The validator performs two resolved-config audits: the clean pack and a negative fixture with a
+pre-sanitized hostile global config. The second proves the launcher does not inherit host
+agents/permissions/MCP/commands/skills; any foreign executable or origin collision already
+yields Fail at static preflight. After installation, a managed launch may create runtime cache
+artifacts; the dependency tree remains an exact-manifest runtime artifact and is re-checked at
+the next launch.
 
-## 7. Постоянный контекст
+Paid provider smoke calls are performed only by a separate explicit command, showing the
+expected number of calls.
+
+`profiles/models.env.example` — documentation of variables, not an automatically loaded
+env-file. The user exports values via shell/direnv or explicitly wires their own wrapper; real
+values are not committed. The installer and validator fail if a required binding variable is
+missing.
+
+## 7. Long-Term Context
 
 ### 7.1. `AGENTS.md`
 
-User-owned root `AGENTS.md` загружается вне tool permissions и отправляется provider
-как system context, поэтому в нём разрешены только non-secret project instructions:
-только:
+User-owned root `AGENTS.md` is loaded outside tool permissions and sent to the provider as
+system context, so only non-secret project instructions are permitted:
 
-- краткие инварианты безопасности;
-- неочевидные project-wide conventions;
-- ссылку на canonical `MANIFEST.md` и условные skills без автоматического чтения
-  всех файлов.
+- brief security invariants;
+- non-obvious project-wide conventions;
+- a reference to canonical `MANIFEST.md` and conditional skills without automatically reading
+  all files.
 
-Canonical executable verification allowlists, secret paths и search roots хранятся
-в `profile/policy.json`; `MANIFEST.md` даёт человеку краткую карту и ссылку на них.
-`AGENTS.md` не дублирует эти списки.
+Canonical executable verification allowlists, secret paths, and search roots are stored in
+`profile/policy.json`; `MANIFEST.md` gives a human a brief map and a link to them. `AGENTS.md`
+does not duplicate these lists.
 
-Целевой размер `AGENTS.md` — до 2 000 символов, максимум без явного waiver — 4 000.
-Большие style guides и справочники запрещено подключать широкими instruction globs.
-Nested/legacy instruction files без exact adoption запрещены; изменение adopted hash
-требует re-adoption перед managed launch.
+The target size of `AGENTS.md` is up to 2,000 characters, with a maximum without explicit
+waiver of 4,000. Large style guides and references must not be attached via broad instruction
+globs. Nested/legacy instruction files without exact adoption are forbidden; a change to the
+adopted hash requires re-adoption before managed launch.
 
 ### 7.2. Notebook
 
-Notebook — компактное состояние проекта, а не архив сессий.
+The Notebook is a compact project state, not a session archive.
 
-`MANIFEST.md` содержит:
+`MANIFEST.md` contains:
 
-- цель и границы проекта;
-- стек и структуру;
-- назначение canonical commands/protected paths из `profile/policy.json`;
-- ключевые термины.
+- project goal and boundaries;
+- stack and structure;
+- the purpose of canonical commands/protected paths from `profile/policy.json`;
+- key terms.
 
-`INDEX.md` содержит:
+`INDEX.md` contains:
 
-- карту модулей и ключевые entry points;
-- маршрутизационные ключевые слова;
-- ссылки на релевантные разделы Decisions;
-- дату или revision последней проверки.
+- a module map and key entry points;
+- routing keywords;
+- references to relevant Decisions sections;
+- the date or revision of the last check.
 
-`DECISIONS.md` хранит ADR со следующими полями:
+`DECISIONS.md` stores ADRs with the following fields:
 
-- ID и дата;
-- статус `proposed | accepted | superseded | rejected`;
-- контекст;
-- решение;
-- последствия и rollback;
-- `supersedes` или `superseded_by`;
+- ID and date;
+- status `proposed | accepted | superseded | rejected`;
+- context;
+- decision;
+- consequences and rollback;
+- `supersedes` or `superseded_by`;
 - evidence/reference.
 
-`STATE.md` хранит только актуальное проверенное состояние:
+`STATE.md` stores only current verified state:
 
-- milestone и active task;
+- milestone and active task;
 - base branch/revision;
-- подтверждённо завершённое;
-- изменённые файлы;
-- выполненные проверки и их результаты;
-- риски и blockers;
-- конкретный следующий шаг;
-- ID и время последнего checkpoint.
+- confirmed completed;
+- changed files;
+- checks performed and their results;
+- risks and blockers;
+- the concrete next step;
+- ID and time of the last checkpoint.
 
-В Notebook запрещены transcript, raw tool outputs, секреты и неподтверждённые
-предположения. Завершённая история остаётся в git и OpenCode sessions. STATE должен
-оставаться кратким; старые решения не удаляются молча, а помечаются `superseded`.
+The Notebook forbids transcript, raw tool outputs, secrets, and unconfirmed assumptions.
+Completed history remains in git and OpenCode sessions. STATE must stay brief; old decisions are
+not deleted silently but marked `superseded`.
 
-## 8. Ролевые модели
+## 8. Role Models
 
-Реальные provider/model IDs не являются частью архитектуры. Установка связывает
-следующие capability slots:
+Actual provider/model IDs are not part of the architecture. Installation binds the following
+capability slots:
 
-| Переменная | Назначение | Минимальные качества |
+| Variable | Purpose | Minimum qualities |
 | --- | --- | --- |
-| `OC_MODEL_COORDINATOR` | Orchestrator | надёжный tool use, instruction following, умеренная цена |
-| `OC_MODEL_EXPLORER` | Explorer | минимальная цена и задержка при надёжных read/search tools |
-| `OC_MODEL_SCOUT` | Scout | поиск, чтение документации, длинный контекст |
-| `OC_MODEL_ARCHITECT` | Architect | сильнейшее reasoning, контракты и trade-offs |
-| `OC_MODEL_IMPLEMENTER` | Implementer | сильное coding/tool use, точные изменения и тесты |
-| `OC_MODEL_REVIEWER` | Reviewer | независимая критика, поиск дефектов, reasoning |
-| `OC_MODEL_COMPACTOR` | `compaction` | faithful summarization, достаточное usable input window, низкая цена |
+| `OC_MODEL_COORDINATOR` | Orchestrator | reliable tool use, instruction following, moderate price |
+| `OC_MODEL_EXPLORER` | Explorer | minimal price and latency with reliable read/search tools |
+| `OC_MODEL_SCOUT` | Scout | search, reading documentation, long context |
+| `OC_MODEL_ARCHITECT` | Architect | strongest reasoning, contracts and trade-offs |
+| `OC_MODEL_IMPLEMENTER` | Implementer | strong coding/tool use, precise changes and tests |
+| `OC_MODEL_REVIEWER` | Reviewer | independent criticism, defect finding, reasoning |
+| `OC_MODEL_COMPACTOR` | `compaction` | faithful summarization, sufficient usable input window, low price |
 
-Несколько slots могут ссылаться на одну модель: это роли качества/стоимости, а не
-требование иметь семь разных провайдеров или подписок.
+Several slots may reference one model: these are quality/cost roles, not a requirement to have
+seven different providers or subscriptions.
 
-Reviewer желательно назначать из другого model family, чем Implementer, если это
-не ухудшает benchmark. Это рекомендация для независимости ошибок, а не требование
-к провайдеру.
+The Reviewer is preferably assigned from a different model family than the Implementer, if this
+does not worsen the benchmark. This is a recommendation for error independence, not a provider
+requirement.
 
-Каждая модель до включения проходит role smoke tests. Во время explicit install/model
-rebind изолированный resolver строит `.opencode/profile/models.snapshot.json` только
-для семи slots; dry-run показывает provider/model, bundled adapter ID, exact API URL,
-limits, capabilities, pricing и variants без credentials. `--bind-models --apply` или
-`--rebind-models --apply` принимает snapshot, чей SHA и значения каждого `OC_MODEL_*`
-записываются в lock. Core допускает только bundled providers OpenCode 1.17.9;
-nonbundled/custom `api.npm` adapter возможен лишь в отдельном conditional profile с
-exact version/integrity/module-manifest audit.
+Each model passes role smoke tests before being enabled. During explicit install/model rebind
+an isolated resolver builds `.opencode/profile/models.snapshot.json` only for the seven slots;
+dry-run shows provider/model, bundled adapter ID, exact API URL, limits, capabilities, pricing,
+and variants without credentials. `--bind-models --apply` or `--rebind-models --apply` accepts
+the snapshot, whose SHA and the values of each `OC_MODEL_*` are written to the lock. Core
+permits only the bundled providers of OpenCode 1.17.9; non-bundled/custom `api.npm` adapter is
+possible only in a separate conditional profile with exact version/integrity/module-manifest
+audit.
 
-На каждом managed launch выставляются controlled
-`OPENCODE_DISABLE_MODELS_FETCH=true` и `OPENCODE_MODELS_PATH` на hash-verified snapshot;
-mutable catalog/cache не используется. Launcher до process сверяет семь bindings,
-provider/model/API/adapter/limits/capabilities и selected variant с lock. Пустая или
-изменённая env-переменная, catalog drift, `latest`, arbitrary npm/API override или
-неизвестные limits дают Fail без network/fallback. Resolved-profile audit также
-фиксирует reasoning options, temperature/top_p и pricing snapshot.
-Тот же exact role→provider/model/variant/options contract проверяется guard на каждом
-`chat.params`; TUI/session-stored model switch, stale resumed session или silent
-fallback отклоняются до budget reservation/provider. Direct selection другой locked
-role допустим только с его собственными permissions и binding.
+On every managed launch the controlled `OPENCODE_DISABLE_MODELS_FETCH=true` and
+`OPENCODE_MODELS_PATH` are set to the hash-verified snapshot; a mutable catalog/cache is not
+used. Before the process the launcher reconciles the seven bindings, provider/model/API/adapter/
+limits/capabilities, and selected variant with the lock. An empty or changed env variable,
+catalog drift, `latest`, arbitrary npm/API override, or unknown limits yield Fail without
+network/fallback. The resolved-profile audit also records reasoning options, temperature/top_p,
+and the pricing snapshot. The same exact role→provider/model/variant/options contract is checked
+by the guard on every `chat.params`; a TUI/session-stored model switch, a stale resumed session,
+or a silent fallback are rejected before budget reservation/provider. Direct selection of
+another locked role is permitted only with its own permissions and binding.
 
-Provider-specific variants и reasoning effort разрешены только в deployment
-profile после проверки их существования. Core prompts остаются provider-agnostic.
+Provider-specific variants and reasoning effort are permitted only in a deployment profile after
+verifying their existence. Core prompts remain provider-agnostic.
 
 ## 9. Agents
 
-`orchestrator` имеет `mode: primary` и задаётся в `default_agent`. `explorer`,
-`scout`, `architect`, `implementer` и `reviewer` имеют `mode: subagent`.
-Все `steps` ниже — soft finish seeds. Соответствующие hard call caps задаются policy,
-валидируются отдельно и не выводятся автоматически из `steps`.
+`orchestrator` has `mode: primary` and is set in `default_agent`. `explorer`, `scout`,
+`architect`, `implementer`, and `reviewer` have `mode: subagent`. All `steps` below are soft
+finish seeds. The corresponding hard call caps are set by policy, validated separately, and are
+not auto-derived from `steps`.
 
 ### 9.1. Orchestrator
 
-Primary agent и единственная пользовательская точка входа по умолчанию.
+The primary agent and the only default user entry point.
 
-Обязанности:
+Responsibilities:
 
-- классифицировать задачу по сложности и риску;
-- выполнять простые задачи напрямую;
-- создавать отдельный минимальный contract для каждого subagent;
-- сериализовать write-задачи;
-- принимать только evidence-backed результат;
-- запускать checkpoint для существенного проверенного milestone.
+- classify the task by complexity and risk;
+- perform simple tasks directly;
+- create a separate minimal contract for each subagent;
+- serialize write tasks;
+- accept only evidence-backed results;
+- run a checkpoint for a substantial verified milestone.
 
-Orchestrator имеет статически ограниченный edit-доступ для fast lane, но не должен
-делегировать ради самого делегирования. Он может вызывать только перечисленные в
-allowlist subagents.
+The Orchestrator has statically bounded edit access for the fast lane, but must not delegate for
+delegation's sake. It may call only the subagents listed in the allowlist.
 
-Benchmark seed: `steps: 20`; это стартовая гипотеза, а не доказанный optimum.
+Benchmark seed: `steps: 20`; this is a starting hypothesis, not a proven optimum.
 
 ### 9.2. Explorer
 
-Дешёвый source-read-only анализ локального репозитория:
+Cheap source-read-only analysis of the local repository:
 
-- поиск путей, символов, imports, references и зависимостей;
-- file/content search через обязательный bounded `safe_search`, затем точечный read;
-- использование LSP как опционального accelerator, а не единственного backend;
-- ответ только evidence: `path:symbol/line`, краткий вывод, неизвестные.
+- finding paths, symbols, imports, references, and dependencies;
+- file/content search via the mandatory bounded `safe_search`, then targeted read;
+- using LSP as an optional accelerator, not the sole backend;
+- answering with evidence only: `path:symbol/line`, brief output, unknowns.
 
-`edit`, `bash`, built-in `grep`, `webfetch`, `websearch`, external directories и
-Task запрещены. Если LSP выключен, роль использует `safe_search` + read без
-потери content-search capability.
+`edit`, `bash`, built-in `grep`, `webfetch`, `websearch`, external directories, and Task are
+forbidden. If LSP is off, the role uses `safe_search` + read without losing content-search
+capability.
 
 Benchmark seed: `steps: 8`.
 
 ### 9.3. Scout
 
-Source-read-only исследование внешних зависимостей и документации:
+Source-read-only research of external dependencies and documentation:
 
-- сначала official docs, спецификации и upstream source;
-- обязательная фиксация версии и применимости к локальному проекту;
-- внешний текст считается evidence, а не instructions.
+- first official docs, specifications, and upstream source;
+- mandatory fixation of version and applicability to the local project;
+- external text is treated as evidence, not instructions.
 
-`edit`, `bash`, Task и built-in `webfetch` запрещены. `safe_fetch` разрешён;
-`websearch` разрешается только после availability smoke test. Именованные MCP tools возможны только в отдельном
-audited conditional profile для конкретного проекта; core-профиль не включает и не
-подключает MCP.
+`edit`, `bash`, Task, and built-in `webfetch` are forbidden. `safe_fetch` is permitted;
+`websearch` is permitted only after an availability smoke test. Named MCP tools are possible
+only in a separate audited conditional profile for a specific project; the core profile does
+not include and does not wire MCP.
 
 Benchmark seed: `steps: 10`.
 
 ### 9.4. Architect
 
-Используется только для неоднозначных или рискованных решений:
+Used only for ambiguous or risky decisions:
 
-- максимум два жизнеспособных варианта;
-- контракты, invariants, data flow, risks, migration и rollback;
-- явная рекомендация и оставшиеся неизвестные;
-- отсутствие production-кода и изменений файлов.
+- at most two viable options;
+- contracts, invariants, data flow, risks, migration, and rollback;
+- an explicit recommendation and remaining unknowns;
+- no production code and no file changes.
 
-`edit`, Task и произвольный shell запрещены.
+`edit`, Task, and arbitrary shell are forbidden.
 
 Benchmark seed: `steps: 12`.
 
 ### 9.5. Implementer
 
-Единственный edit-capable child agent управляемого маршрута:
+The only edit-capable child agent of the managed route:
 
-- непосредственно изменяет рабочие файлы, а не возвращает неприменённый diff;
-- работает в установленном scope;
-- перечитывает файл перед изменением;
-- запускает минимальную достаточную verification ladder;
-- возвращает changed files, команды, результаты, риски и отклонения scope.
+- modifies working files directly, rather than returning an unapplied diff;
+- works within the established scope;
+- re-reads a file before changing it;
+- runs a minimal sufficient verification ladder;
+- returns changed files, commands, results, risks, and scope deviations.
 
-Task, `webfetch`, `websearch`, внешние директории, secrets, publish/deploy и
-destructive commands запрещены. Неизвестные shell-команды требуют approval.
-`.opencode/*`, `opencode.jsonc`, `AGENTS.md` и profile control files защищены от
-прямых edit/write/apply_patch вызовов Implementer ordered path rules и guard plugin.
-Shell side effects этим механизмом не sandboxed и контролируются allowlist плюс audit.
+Task, `webfetch`, `websearch`, external directories, secrets, publish/deploy, and destructive
+commands are forbidden. Unknown shell commands require approval. `.opencode/*`, `opencode.jsonc`,
+`AGENTS.md`, and profile control files are protected from direct edit/write/apply_patch calls by
+the Implementer's ordered path rules and the guard plugin. Shell side effects are not sandboxed
+by this mechanism and are controlled by the allowlist plus audit.
 
 Benchmark seed: `steps: 32`.
 
 ### 9.6. Reviewer
 
-Независимый source-edit-denied quality gate после готового diff и проверок:
+An independent source-edit-denied quality gate after a finished diff and checks:
 
-- проверяет Definition of Done, Key Decisions и фактический diff;
-- сообщает findings с severity и `file:line` evidence;
-- различает Blocker, Major, Minor, Note и residual risk;
-- возвращает только `Pass` или `Fail` с обоснованием;
-- не исправляет найденные проблемы.
+- verifies the Definition of Done, Key Decisions, and the actual diff;
+- reports findings with severity and `file:line` evidence;
+- distinguishes Blocker, Major, Minor, Note, and residual risk;
+- returns only `Pass` or `Fail` with justification;
+- does not fix the found problems.
 
-`edit` и Task запрещены. Shell ограничен точными hardened Git argv: locked binary,
-`--no-pager`, `-c core.fsmonitor=false`, `-c diff.external=`, для diff также
-`--no-ext-diff --no-textconv --ignore-submodules=all`, controlled
-`GIT_OPTIONAL_LOCKS=0`; generic `git diff`/`git status` не allowlisted. Остальное —
-утверждённые в `profile/policy.json` verification commands. До и после review фиксируется
-worktree state. Новое изменение tracked source является Fail; новые build artifacts
-перечисляются и не удаляются автоматически.
+`edit` and Task are forbidden. Shell is limited to exact hardened Git argv: locked binary,
+`--no-pager`, `-c core.fsmonitor=false`, `-c diff.external=`, and for diff also
+`--no-ext-diff --no-textconv --ignore-submodules=all`, controlled `GIT_OPTIONAL_LOCKS=0`; generic
+`git diff`/`git status` are not allowlisted. The rest are verification commands approved in
+`profile/policy.json`. The worktree state is recorded before and after review. A new change to
+tracked source is a Fail; new build artifacts are listed and not deleted automatically.
 
 Benchmark seed: `steps: 12`.
 
 ### 9.7. Maintenance agents
 
-В committed base config `orchestrator`, пять child roles, `compaction`, `title`,
-`summary`, `build`, `general`, `explore` и `plan` имеют `disable: true`. Только
-успешный final guard assignment включает intended six roles и `compaction`.
-Built-in `title` и после activation нормативно имеет `disable: true`: автоматические названия сессий не
-оправдывают отдельный LLM call. Hidden `summary` в V1.17.9 runtime не вызывается и не
-настраивается. `compaction` использует `OC_MODEL_COMPACTOR`, не получает рабочие
-tools и проходит отдельный resume-fidelity benchmark.
+In the committed base config `orchestrator`, the five child roles, `compaction`, `title`,
+`summary`, `build`, `general`, `explore`, and `plan` have `disable: true`. Only a successful
+final guard assignment enables the intended six roles and `compaction`.
+The built-in `title` after activation normatively has `disable: true`: automatic session naming
+does not justify a separate LLM call. The hidden `summary` is not invoked and not configured in
+the V1.17.9 runtime. `compaction` uses `OC_MODEL_COMPACTOR`, receives no working tools, and
+passes a separate resume-fidelity benchmark.
 
-Все альтернативные selectable built-ins — `build`, `general`, `explore` и `plan` —
-нормативно имеют `disable: true`. Это исключает обход Orchestrator через прямой вызов
-этих built-ins. Validator перечисляет каждый effective agent и отклоняет неизвестную
-primary/subagent роль или роль с более широкими permissions.
+All alternative selectable built-ins — `build`, `general`, `explore`, and `plan` — normatively
+have `disable: true`. This excludes bypassing the Orchestrator via direct calls to these
+built-ins. The validator lists every effective agent and rejects an unknown primary/subagent
+role or a role with broader permissions.
 
-## 10. Permissions matrix
+## 10. Permissions Matrix
 
-Таблица ниже — intended effective permissions после успешного guard `config` hook.
-В committed base config root и каждая роль начинаются с `"*": "deny"`; guard строит
-карты локально, проверяет contract/hash и присваивает их config только последней
-операцией. Частично активированного состояния быть не должно.
+The table below is the intended effective permissions after a successful guard `config` hook.
+In the committed base config root and each role start with `"*": "deny"`; the guard builds the
+maps locally, checks contract/hash, and assigns them to config only as the final operation. A
+partially activated state must not exist.
 
 | Capability | Orchestrator | Explorer | Scout | Architect | Implementer | Reviewer |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -897,94 +866,89 @@ primary/subagent роль или роль с более широкими permiss
 | external directory | deny | deny | deny | deny | deny | deny |
 | Notebook paths | allow by path; checkpoint-only is policy | deny | deny | deny | deny | deny |
 
-Общие правила:
+General rules:
 
-- baseline secret globs включают `*.env`, `*.env.*` и root+nested pairs: `.env` +
-  `*/.env`, `.env.*` + `*/.env.*`, `id_rsa*` + `*/id_rsa*`, `id_ed25519*` + `*/id_ed25519*`, `.npmrc` +
-  `*/.npmrc`, `.pypirc` + `*/.pypirc`, `credentials.json` +
-  `*/credentials.json`, а также `*.pem` и `*.key`; Orchestrator получает
-  `read: ask`, child roles — `deny`,
-  edit запрещён всем ролям; `.env.example`/`.env.sample` явно разрешены;
-- `profile/policy.json` может добавлять project-specific secret paths, но не ослаблять baseline
-  без явного пользовательского scope;
-- каждый существующий secret-matching path, кроме явно разрешённых examples, должен
-  быть подтверждён `git check-ignore`; tracked/unignored path блокирует установку до
-  явной reclassification;
-- `git push`, publish, deploy, destructive filesystem/database operations запрещены
-  или требуют явного approval;
-- любой MCP в core запрещён; conditional profile использует exact server/tool allowlist;
-- direct `@agent` invocation не должна давать роли больше прав, чем Task invocation;
-- permission `deny` важнее prompt-инструкции.
+- baseline secret globs include `*.env`, `*.env.*`, and root+nested pairs: `.env` + `*/.env`,
+  `.env.*` + `*/.env.*`, `id_rsa*` + `*/id_rsa*`, `id_ed25519*` + `*/id_ed25519*`, `.npmrc` +
+  `*/.npmrc`, `.pypirc` + `*/.pypirc`, `credentials.json` + `*/credentials.json`, as well as
+  `*.pem` and `*.key`; the Orchestrator gets `read: ask`, child roles get `deny`, edit is
+  forbidden to all roles; `.env.example`/`.env.sample` are explicitly allowed;
+- `profile/policy.json` may add project-specific secret paths but not weaken the baseline
+  without an explicit user scope;
+- each existing secret-matching path, except explicitly allowed examples, must be confirmed by
+  `git check-ignore`; a tracked/unignored path blocks installation until explicit
+  reclassification;
+- `git push`, publish, deploy, destructive filesystem/database operations are forbidden or
+  require explicit approval;
+- any MCP in core is forbidden; the conditional profile uses an exact server/tool allowlist;
+- a direct `@agent` invocation must not give a role more rights than a Task invocation;
+- a `deny` permission outweighs a prompt instruction.
 
-`safe_search` имеет собственный exact permission key. Он разрешён только ролям из
-матрицы, принимает `mode: "files" | "content"`, regex/literal для content mode, до
-восьми validated relative roots и optional file globs. Files mode возвращает только
-разрешённые relative paths; content mode — structured matches. Общий output не более
-200 matches/paths, 500 lines и 32 768 bytes. Hard limits:
-20 000 candidates, 4 MiB суммарных candidate-path bytes и 10 s wall time на весь
-call. Enumeration использует NUL-delimited paths; files mode возвращает bounded
-filtered candidate list, а content results — structured JSON. Только в content mode
-разрешённые files передаются `rg` без shell batches максимум по 256 paths и 64 KiB
-argv, только после `--`; timeout/abort завершает child process. Сначала tool
-строит candidate list без model-supplied globs, с ignore/hidden/symlink policy;
-затем canonicalizes и фильтрует каждый candidate по immutable deny rules. Только
-после этого model file globs применяются в памяти, а `rg` получает явный bounded
-список уже разрешённых файлов. Это важно: положительный `rg --glob` способен
-переопределить `.gitignore`. Model input никогда не попадает в traversal flags или
-safety excludes. Hidden root допускается только как exact project allow-root из
-`profile/policy.json` после тех же canonical/secret checks; модель не может включить `--hidden`.
-Truncation, timeout, candidate cap и skipped roots указываются в metadata;
-unlimited output и silent fallback к built-in `grep`/`glob` запрещены.
-Custom-tool registration сама по себе permission не применяет. Поэтому первой
-операцией `execute` — до path resolution, enumeration и spawn — является role lookup
-по `sessionID` и `ctx.ask({ permission: "safe_search", patterns: ["*"], ... })`;
-ошибка lookup, deny или ask без approval завершает call без side effect. Guard
-`tool.execute.before` независимо проверяет ту же exact role allowlist.
+`safe_search` has its own exact permission key. It is permitted only to the roles in the matrix,
+accepts `mode: "files" | "content"`, regex/literal for content mode, up to eight validated
+relative roots, and optional file globs. Files mode returns only permitted relative paths;
+content mode returns structured matches. Total output is no more than 200 matches/paths, 500
+lines, and 32,768 bytes. Hard limits: 20,000 candidates, 4 MiB total candidate-path bytes, and
+10 s wall time per whole call. Enumeration uses NUL-delimited paths; files mode returns a
+bounded filtered candidate list, and content results are structured JSON. Only in content mode
+are permitted files passed to `rg` in shell-free batches of at most 256 paths and 64 KiB argv,
+only after `--`; timeout/abort terminates the child process. First the tool builds a candidate
+list without model-supplied globs, with ignore/hidden/symlink policy; then canonicalizes and
+filters each candidate by immutable deny rules. Only then are model file globs applied in memory,
+and `rg` receives an explicit bounded list of already-permitted files. This is important: a
+positive `rg --glob` can override `.gitignore`. Model input never enters traversal flags or
+safety excludes. A hidden root is permitted only as an exact project allow-root from
+`profile/policy.json` after the same canonical/secret checks; the model cannot enable
+`--hidden`. Truncation, timeout, candidate cap, and skipped roots are reported in metadata;
+unlimited output and silent fallback to built-in `grep`/`glob` are forbidden. Custom-tool
+registration itself does not apply permission. Therefore the first operation of `execute` — before
+path resolution, enumeration, and spawn — is a role lookup by `sessionID` and
+`ctx.ask({ permission: "safe_search", patterns: ["*"], ... })`; a lookup error, deny, or ask
+without approval terminates the call without side effect. The guard `tool.execute.before`
+independently checks the same exact role allowlist.
 
-`safe_fetch` имеет отдельный exact permission key и доступен только Scout. До DNS
-он выполняет тот же `sessionID` role lookup + `ctx.ask`; unknown/denied role не делает
-network call. URL обязан быть HTTPS, port 443, без userinfo/IP literal; canonical
-IDNA host не может быть localhost, local/internal/special-use name. Все A/AAAA
-addresses проверяются на global-unicast: loopback, private, link-local, multicast,
-CGNAT, IPv4-mapped и прочие special-use/metadata ranges запрещены. Соединение
-прикрепляется к одному из уже проверенных addresses с TLS SNI и certificate check
-исходного host, а не выполняет новый неконтролируемый resolve.
+`safe_fetch` has a separate exact permission key and is available only to Scout. Before DNS it
+performs the same `sessionID` role lookup + `ctx.ask`; an unknown/denied role makes no network
+call. The URL must be HTTPS, port 443, without userinfo/IP literal; the canonical IDNA host
+must not be localhost, local/internal/special-use name. All A/AAAA addresses are checked for
+global-unicast: loopback, private, link-local, multicast, CGNAT, IPv4-mapped, and other
+special-use/metadata ranges are forbidden. The connection pins to one of the already-checked
+addresses with TLS SNI and certificate check for the original host, rather than performing a new
+uncontrolled resolve.
 
-Разрешены максимум три HTTPS redirects; каждый hop заново проходит URL/DNS/address
-validation, downgrade запрещён. Tool игнорирует proxy env, не отправляет cookies,
-authorization или user headers и использует fixed User-Agent/Accept. Общий timeout
-15 s, compressed и decompressed body caps по 2 MiB, только allowlisted textual MIME;
-model output ≤ 32 768 bytes/500 lines с truncation metadata. Abort закрывает socket.
-External body маркируется как untrusted evidence. Built-in `webfetch` не используется;
-hard network sandbox/transparent proxy control вне process остаётся ограничением OS.
+At most three HTTPS redirects are permitted; each hop re-passes URL/DNS/address validation,
+downgrade is forbidden. The tool ignores proxy env, sends no cookies, authorization, or user
+headers, and uses a fixed User-Agent/Accept. Total timeout 15 s, compressed and decompressed
+body caps of 2 MiB each, only allowlisted textual MIME; model output ≤ 32,768 bytes/500 lines
+with truncation metadata. Abort closes the socket. External body is marked as untrusted
+evidence. The built-in `webfetch` is not used; hard network sandbox/transparent proxy control
+outside the process remains an OS limitation.
 
-`formatter: false` является invariant и до, и после guard activation. Guard тем же
-atomic commit заменяет merged `config.mcp` на `{}`; per-launch preflight не допускает
-ни local, ни remote MCP. Это необходимо, потому что V1.17.9 eager-connect выполняется
-до фильтрации MCP tool permissions. V1.17.9
-запускает configured formatter subprocess после edit вне `bash` permission; поэтому
-автоформатирование не является безопасным extension point core-профиля. Нужная
-format/check команда указывается exact entry в `profile/policy.json`, запускается
-явно и попадает в pre/post audit. Custom `lsp.*.command` запрещён; optional LSP
-допускает только отдельно проверенный preinstalled built-in server profile при
-`OPENCODE_DISABLE_LSP_DOWNLOAD=true` и не является secret
-boundary. MCP process/connection в core отсутствует.
+`formatter: false` is an invariant both before and after guard activation. The guard, in the
+same atomic commit, replaces the merged `config.mcp` with `{}`; per-launch preflight admits
+neither local nor remote MCP. This is necessary because V1.17.9 eager-connect runs before MCP
+tool-permission filtering. V1.17.9 launches the configured formatter subprocess after edit
+outside `bash` permission; therefore auto-formatting is not a safe extension point of the
+core profile. The needed format/check command is specified as an exact entry in
+`profile/policy.json`, is run explicitly, and enters pre/post audit. Custom `lsp.*.command` is
+forbidden; optional LSP permits only a separately verified preinstalled built-in server profile
+with `OPENCODE_DISABLE_LSP_DOWNLOAD=true` and is not a secret boundary. There is no MCP
+process/connection in core.
 
-Для каждой intended agent ruleset guard добавляет explicit `external_directory`
-`deny` с pattern, в точности равным runtime
-`path.join(Global.Path.data, "tool-output", "*")`. Generic `deny`/`"*"` недостаточен:
-V1.17.9 иначе автоматически дописывает allow для Truncate.GLOB. Guard вычисляет
-resolved pattern при config hook; validator проверяет final rule и фактический deny.
-В missing-guard base mode возможный runtime-added external allow остаётся инертным,
-поскольку root/per-role wildcard запрещает сам `read` tool.
+For each intended agent ruleset the guard adds an explicit `external_directory` `deny` with a
+pattern exactly equal to the runtime `path.join(Global.Path.data, "tool-output", "*")`. A generic
+`deny`/`"*"` is insufficient: V1.17.9 otherwise automatically appends an allow for
+Truncate.GLOB. The guard computes the resolved pattern at the config hook; the validator checks
+the final rule and the actual deny. In missing-guard base mode a possible runtime-added external
+allow remains inert, since root/per-role wildcard forbids the `read` tool itself.
 
-`permission.task` Orchestrator разрешает только `explorer`, `scout`, `architect`,
-`implementer` и `reviewer`; wildcard fallback — `deny`. У всех пяти subagents
+`permission.task` of the Orchestrator permits only `explorer`, `scout`, `architect`,
+`implementer`, and `reviewer`; the wildcard fallback is `deny`. All five subagents have
 `task: deny`.
 
-OpenCode применяет последнее совпавшее правило, а `*` в permission pattern может
-пересекать path separators. Поэтому config generator обязан эмитировать ordered
-maps именно в следующем порядке:
+OpenCode applies the last matching rule, and `*` in a permission pattern may cross path
+separators. Therefore the config generator must emit ordered maps exactly in the following
+order:
 
 ```text
 READ Orchestrator
@@ -1069,114 +1033,109 @@ EDIT Implementer
   <project-specific secrets>     deny
 ```
 
-У остальных ролей `edit: deny` без исключений. `ASK_SECRET` означает `ask` только
-для Orchestrator. Project-specific secret rules всегда эмитируются последними и не
-могут быть ослаблены Notebook/control/example allow. Если такой path делает
-обязательный profile artifact недоступным, validator требует явной reclassification
-и не запускает частично рабочий профиль.
+The remaining roles have `edit: deny` without exceptions. `ASK_SECRET` means `ask` only for the
+Orchestrator. Project-specific secret rules are always emitted last and cannot be weakened by
+Notebook/control/example allows. If such a path makes a mandatory profile artifact unavailable,
+the validator requires explicit reclassification and does not launch a partially working
+profile.
 
-Task и skill maps также строго ordered: первым идёт `"*": "deny"`, затем exact
-`"<allowed-name>": "allow"`. Для Orchestrator разрешены ровно пять Task names выше.
-Для каждого agent разрешены ровно skills из §13.3; отсутствие exact match всегда
-даёт deny; final exact `customize-opencode: deny` фиксирует built-in exception. Name
-allowlist не является origin check: guard до atomic activation
-сверяет каждый allowed skill с canonical origin/SHA из lock, отвергает duplicates и
-запрещает activation при любом расхождении.
+Task and skill maps are also strictly ordered: first `"*": "deny"`, then exact
+`"<allowed-name>": "allow"`. For the Orchestrator exactly the five Task names above are
+permitted. For each agent exactly the skills from §13.3 are permitted; absence of an exact match
+always yields deny; the final exact `customize-opencode: deny` fixes the built-in exception. A
+name allowlist is not an origin check: before atomic activation the guard reconciles each
+allowed skill with the canonical origin/SHA from the lock, rejects duplicates, and forbids
+activation on any mismatch.
 
-Overlap probes обязательны для `.opencode/profile-lock.json`,
-`<managed-runtime-root>/budgets/canary`,
-`.opencode/notebook/.env`, root/nested `prod.env`, `.env.example`, `AGENTS.md`,
-`opencode.json`, `opencode.jsonc`, неизвестного Task и неизвестного skill.
-Built-in `grep` полностью запрещён и schema-hidden: в V1.17.9 его permission матчит regex запроса, а не
-file path, после чего ripgrep ищет включая hidden files; `read` deny его не защищает.
-Built-in `glob` также полностью запрещён и schema-hidden: permission матчит model pattern, а не `path`, и
-положительный glob способен вернуть ignored/hidden filenames. File discovery идёт
-через bounded `safe_search mode=files` с теми же immutable path/secret denies.
-Автоматические bash allowlists не включают `rg`, `grep`, `cat`, `sed`, `awk`,
-`head`, `tail`, shell/interpreter launchers или другие generic file-read bypasses.
-Unknown shell остаётся `ask`, поэтому явно одобренный пользователем command уже не
-является hard security boundary.
+Overlap probes are mandatory for `.opencode/profile-lock.json`,
+`<managed-runtime-root>/budgets/canary`, `.opencode/notebook/.env`, root/nested `prod.env`,
+`.env.example`, `AGENTS.md`, `opencode.json`, `opencode.jsonc`, an unknown Task, and an unknown
+skill. The built-in `grep` is fully forbidden and schema-hidden: in V1.17.9 its permission matches
+the regex of the query, not the file path, after which ripgrep searches including hidden files;
+a `read` deny does not protect it. The built-in `glob` is also fully forbidden and
+schema-hidden: the permission matches the model pattern, not `path`, and a positive glob can
+return ignored/hidden filenames. File discovery goes through bounded `safe_search mode=files`
+with the same immutable path/secret denies. Automatic bash allowlists do not include `rg`,
+`grep`, `cat`, `sed`, `awk`, `head`, `tail`, shell/interpreter launchers, or other generic
+file-read bypasses. Unknown shell remains `ask`, so an explicitly approved user command is no
+longer a hard security boundary.
 
-Все path maps в этом разделе управляют только соответствующими OpenCode tools.
-Guard дополнительно проверяет canonical path arguments для `read`, `write`, `edit`,
-`apply_patch` и `lsp.filePath`, запрещает symlink components и
-`*** Move to:`. Это закрывает
-известные lexical/move bypasses в нормальном single-process execution; межпроцессный
-symlink race остаётся ограничением §5.2. `edit`/`read` и `external_directory` не
-sandbox дочернего shell process: даже
-allowlisted build/test script способен читать или менять другие paths. Поэтому для
-shell-capable Orchestrator, Implementer и Reviewer применяются exact command
-allowlists, pre/post tracked+untracked worktree audit и явный residual-risk report;
-hard isolation требует внешнего sandbox и не заявляется core-профилем.
-Для `read` guard после canonicalization выполняет no-follow stat и отклоняет directory,
-missing target и non-regular file до built-in enumeration/`Did you mean`. Это
-предотвращает раскрытие secret/control filenames через разрешённый parent;
-directory/file/typo discovery доступен только через bounded `safe_search mode=files`.
+All path maps in this section govern only the corresponding OpenCode tools. The guard
+additionally checks canonical path arguments for `read`, `write`, `edit`, `apply_patch`, and
+`lsp.filePath`, forbids symlink components and `*** Move to:`. This closes the known
+lexical/move bypasses in normal single-process execution; the inter-process symlink race remains
+a limitation of §5.2. `edit`/`read` and `external_directory` do not sandbox the child shell
+process: even an allowlisted build/test script can read or change other paths. Therefore for the
+shell-capable Orchestrator, Implementer, and Reviewer, exact command allowlists, pre/post
+tracked+untracked worktree audit, and an explicit residual-risk report apply; hard isolation
+requires an external sandbox and is not claimed by the core profile. For `read` the guard after
+canonicalization performs a no-follow stat and rejects directory, missing target, and
+non-regular file before built-in enumeration/`Did you mean`. This prevents disclosure of
+secret/control filenames via a permitted parent; directory/file/typo discovery is available only
+via bounded `safe_search mode=files`.
 
-Условие «Notebook только во время checkpoint» и текущий `Relevant_Files` невозможно
-выразить статической permission; это prompt-policy плюс post-diff audit.
+The condition "Notebook only during checkpoint" and the current `Relevant_Files` cannot be
+expressed by a static permission; this is a prompt-policy plus post-diff audit.
 
-Core base и normal guard output всегда имеют `lsp: false`: experimental tool flag не
-управляет LSP lifecycle, а read/edit могут запускать server независимо. Conditional
-LSP profile допускается только после preflight: launcher принудительно сохраняет
-`OPENCODE_DISABLE_LSP_DOWNLOAD=true`; guard final assignment создаёт exact map с
-`{disabled:true}` для каждого non-selected built-in ID и OMIT selected IDs, чтобы
-использовать только их native definitions. Selected ID обязан присутствовать в
-pack-owned `lsp-safe-servers.json`, уже установленный PATH executable и его canonical
-path/version/SHA-256 совпадают с policy/lock. Built-ins, использующие `Npm.which`,
-Global cache или installer (включая соответствующие TS/Biome paths), не входят в
-allowlist даже при заполненном cache. `lsp: true`, explicit custom command,
-auto-install, `latest`, unknown ID и silent download запрещены. Только после этого optional
-`OPENCODE_EXPERIMENTAL_LSP_TOOL=true` открывает model tool. Без conditional profile
-prompts не упоминают LSP и используют `safe_search` + read.
+Core base and normal guard output always have `lsp: false`: the experimental tool flag does not
+control the LSP lifecycle, while read/edit may launch a server independently. A conditional LSP
+profile is permitted only after preflight: the launcher forcibly keeps
+`OPENCODE_DISABLE_LSP_DOWNLOAD=true`; the guard final assignment creates an exact map with
+`{disabled:true}` for every non-selected built-in ID and OMITS selected IDs, to use only their
+native definitions. The selected ID must be present in the pack-owned `lsp-safe-servers.json`, an
+already-installed PATH executable, and its canonical path/version/SHA-256 must match
+policy/lock. Built-ins using `Npm.which`, the global cache, or an installer (including the
+relevant TS/Biome paths) are not in the allowlist even with a populated cache. `lsp: true`,
+explicit custom command, auto-install, `latest`, unknown ID, and silent download are forbidden.
+Only after this does optional `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` open the model tool. Without
+a conditional profile, prompts do not mention LSP and use `safe_search` + read.
 
-## 11. Маршрутизация
+## 11. Routing
 
-Orchestrator содержит короткий always-on classifier. Полный `task-context` skill
-загружается только для нетривиального делегирования.
+The Orchestrator contains a short always-on classifier. The full `task-context` skill is loaded
+only for non-trivial delegation.
 
-### Tier 0 — ответ или локальное чтение
+### Tier 0 — answer or local read
 
-Признаки: нет изменений, известный scope, низкий риск.
+Signs: no changes, known scope, low risk.
 
-Маршрут: Orchestrator отвечает напрямую или вызывает одного Explorer/Scout только
-при реальной неизвестности. Checkpoint не нужен.
+Route: the Orchestrator answers directly or calls a single Explorer/Scout only on genuine
+unknowns. No checkpoint needed.
 
-### Tier 1 — простая локальная правка
+### Tier 1 — simple local edit
 
-Признаки: понятное решение, обычно 1–2 файла, нет public contract, migration,
-security или persistence риска.
+Signs: obvious solution, usually 1–2 files, no public contract, migration, security, or
+persistence risk.
 
-Маршрут: Orchestrator изменяет напрямую, запускает targeted verification и кратко
-отчитывается. Reviewer необязателен. Checkpoint создаётся только для существенного
-milestone.
+Route: the Orchestrator edits directly, runs targeted verification, and reports briefly.
+Reviewer is optional. A checkpoint is created only for a substantial milestone.
 
-### Tier 2 — управляемая реализация
+### Tier 2 — managed implementation
 
-Признаки: несколько файлов, неизвестный impact, новый behavior или умеренный риск.
+Signs: multiple files, unknown impact, new behavior, or moderate risk.
 
-Маршрут:
+Route:
 
 ```text
 [Explorer] → Implementer → Verification → [Reviewer] → Checkpoint
 ```
 
-Reviewer обязателен, если изменение влияет на несколько модулей или имеет трудно
-обратимые последствия.
+Reviewer is mandatory if the change affects multiple modules or has hard-to-reverse
+consequences.
 
-### Tier 3 — высокий риск или архитектура
+### Tier 3 — high risk or architecture
 
-Автоматические триггеры:
+Automatic triggers:
 
-- auth, permissions, secrets или cryptography;
-- schema/data migration и persistence;
-- concurrency и distributed behavior;
-- public API или совместимость;
+- auth, permissions, secrets, or cryptography;
+- schema/data migration and persistence;
+- concurrency and distributed behavior;
+- public API or compatibility;
 - billing/payments;
-- infrastructure, deploy или необратимые операции;
-- неоднозначное cross-module решение.
+- infrastructure, deploy, or irreversible operations;
+- ambiguous cross-module decision.
 
-Маршрут:
+Route:
 
 ```text
 Explorer || Scout → Architect → Decision Gate
@@ -1187,38 +1146,36 @@ Explorer || Scout → Architect → Decision Gate
   └─ impossible/out of scope → BLOCKED
 ```
 
-Параллельно разрешены только независимые read-only исследования. Reviewer запускается
-только после завершения writer. После двух циклов `Fail → Rework` автоматический
-цикл прекращается и формируется blocker report.
+Only independent read-only research may run in parallel. Reviewer runs only after the writer
+completes. After two `Fail → Rework` cycles the automatic loop stops and forms a blocker report.
 
 ### 11.1. Decision Gate
 
-Orchestrator самостоятельно выбирает обратимые implementation details внутри явно
-одобренного Task Goal, Constraints и accepted ADR. Повторное подтверждение уже
-принятого решения не требуется.
+The Orchestrator independently selects reversible implementation details within the explicitly
+approved Task Goal, Constraints, and accepted ADR. Re-confirming an already accepted decision is
+not required.
 
-Явное решение пользователя обязательно до реализации, если предлагается:
+Explicit user decision is mandatory before implementation if proposed:
 
-- изменить scope или Definition of Done;
-- необратимая/destructive операция или data migration;
-- breaking public API либо compatibility contract;
-- изменение auth, security или privacy policy;
+- change scope or Definition of Done;
+- irreversible/destructive operation or data migration;
+- breaking public API or compatibility contract;
+- change of auth, security, or privacy policy;
 - billing/payment behavior;
 - production infrastructure/deploy;
-- новая платная, лицензионно ограниченная или externally hosted dependency;
-- существенный trade-off, не определённый требованиями или accepted ADR.
+- new paid, license-restricted, or externally hosted dependency;
+- substantial trade-off not defined by requirements or accepted ADR.
 
-До решения разрешены только read-only исследования и обратимый prototype вне
-production path, если он не создаёт внешних side effects.
+Before a decision only read-only research and a reversible prototype outside the production path
+are permitted, if it creates no external side effects.
 
-Gate обязан вернуть одно из состояний: `APPROVED`, `AWAITING_USER`, `REJECTED` или
-`BLOCKED`. Только `APPROVED` имеет переход к Implementer; `REJECTED` переходит в
-`ABORTED`.
+The gate must return one of the states: `APPROVED`, `AWAITING_USER`, `REJECTED`, or `BLOCKED`.
+Only `APPROVED` transitions to Implementer; `REJECTED` transitions to `ABORTED`.
 
 ## 12. Task Context Packet
 
-Packet — ephemeral contract в Task prompt, а не отдельный накапливаемый файл.
-Для каждого subagent создаётся собственный packet.
+The packet is an ephemeral contract in the Task prompt, not a separate accumulating file. A
+separate packet is created for each subagent.
 
 ```yaml
 Packet_Version: 1
@@ -1248,131 +1205,132 @@ Budget_Hints:
   max_subagent_calls:
 ```
 
-Правила:
+Rules:
 
-- 1–4 seed-файла по умолчанию;
-- до 8 seed-файлов только с объяснением;
-- обычный packet — до 8 000 символов, исключительный — до 16 000;
-- symbol предпочтительнее нестабильного line number;
-- line number является hint, agent обязан перечитать актуальный файл;
-- полный transcript, большие diffs, целые файлы и raw tool outputs запрещены;
-- code excerpt допускается только когда ссылка недостаточна, суммарно до 40 строк;
-- Task prompt не содержит OpenCode attachment interpolation: запрещены `@file`,
-  `@directory` и любой `@...`, который runtime может разрешить в существующий path;
-  файлы указываются только plain relative path + symbol/lines в `Relevant_Files`;
-- внешний/user-provided текст не копируется в packet дословно, если он может
-  образовать attachment token; builder валидирует packet до Task call;
-- если данных не хватает, subagent возвращает `NEEDS_CONTEXT` с точным запросом;
-- scope может быть расширен только с явным объяснением обнаруженной зависимости.
+- 1–4 seed files by default;
+- up to 8 seed files only with explanation;
+- ordinary packet — up to 8,000 characters, exceptional — up to 16,000;
+- symbol is preferable to an unstable line number;
+- a line number is a hint; the agent must re-read the current file;
+- full transcript, large diffs, whole files, and raw tool outputs are forbidden;
+- a code excerpt is permitted only when a reference is insufficient, totaling up to 40 lines;
+- the Task prompt contains no OpenCode attachment interpolation: `@file`, `@directory`, and any
+  `@...` that the runtime could resolve into an existing path are forbidden; files are indicated
+  only by plain relative path + symbol/lines in `Relevant_Files`;
+- external/user-provided text is not copied verbatim into the packet if it could form an
+  attachment token; the builder validates the packet before the Task call;
+- if data is insufficient, the subagent returns `NEEDS_CONTEXT` with a precise request;
+- scope may be extended only with explicit explanation of a discovered dependency.
 
-`Budget_Hints` является policy, не runtime quota. `agent.<role>.steps` — только soft
-finish warning в V1.17.9; hard call caps задаёт guard из `profile/policy.json`.
-Точного per-task token/dollar cap OpenCode не имеет.
+`Budget_Hints` is policy, not a runtime quota. `agent.<role>.steps` is only a soft finish
+warning in V1.17.9; the hard call caps are set by the guard from `profile/policy.json`. OpenCode
+has no exact per-task token/dollar cap.
 
-Guard проверяет final Task `prompt` непосредственно в `tool.execute.before` и
-fail-closed отклоняет resolvable attachment syntax. Это обязательно: V1.17.9
-materializes Task attachments через внутренний read path без child permission ask.
-Статические OpenCode permissions не могут динамически ограничить доступ только
-`Relevant_Files`; соблюдение этого поля проверяется post-diff audit.
+The guard checks the final Task `prompt` directly in `tool.execute.before` and fail-closed
+rejects resolvable attachment syntax. This is mandatory: V1.17.9 materializes Task attachments
+via an internal read path without child permission ask. Static OpenCode permissions cannot
+dynamically limit access to `Relevant_Files` only; compliance with this field is checked by
+post-diff audit.
 
-## 13. Необходимые skills
+## 13. Required Skills
 
-Agent identity не должна дублироваться skill. Роль живёт в agent prompt, а skill
-описывает условно вызываемую процедуру.
+Agent identity must not be duplicated by a skill. The role lives in the agent prompt, while the
+skill describes a conditionally invoked procedure.
 
 ### 13.1. Core skills
 
 #### `task-context`
 
-Триггер: Tier 2/3 или явное делегирование.
+Trigger: Tier 2/3 or explicit delegation.
 
-- читает только нужные части Manifest/Index/State/Decisions;
-- формирует role-specific Task Context Packet;
-- рассчитывает scope, exclusions и budget hints;
-- не вызывается для fast lane.
+- reads only the needed parts of Manifest/Index/State/Decisions;
+- forms a role-specific Task Context Packet;
+- calculates scope, exclusions, and budget hints;
+- is not invoked for the fast lane.
 
-Доступ: только Orchestrator; Architect получает уже собранный packet и не читает Notebook.
+Access: Orchestrator only; Architect receives an already-assembled packet and does not read the
+Notebook.
 
 #### `verification`
 
-Триггер: любое изменение behavior или кода.
+Trigger: any change of behavior or code.
 
-- строит лестницу `targeted → module → full suite`;
-- выбирает минимальный достаточный уровень по риску;
-- фиксирует точную команду, exit status и краткий результат;
-- запрещает объявлять успех без evidence.
+- builds the ladder `targeted → module → full suite`;
+- selects the minimal sufficient level by risk;
+- records the exact command, exit status, and brief result;
+- forbids declaring success without evidence.
 
-Доступ: Orchestrator, Implementer и Reviewer.
+Access: Orchestrator, Implementer, and Reviewer.
 
 #### `checkpoint`
 
-Триггер: проверенный milestone, преднамеренный handoff или длительная пауза.
+Trigger: verified milestone, intentional handoff, or long pause.
 
-- требует успешной verification и необходимого Reviewer Pass;
-- обновляет STATE;
-- при необходимости обновляет INDEX и DECISIONS;
-- проверяет запись повторным чтением;
-- не требует автоматически выполнять `/new`.
+- requires successful verification and the necessary Reviewer Pass;
+- updates STATE;
+- updates INDEX and DECISIONS if needed;
+- checks the write by re-reading;
+- does not require automatically running `/new`.
 
-Доступ: только Orchestrator.
+Access: Orchestrator only.
 
 #### `debugging`
 
-Триггер: неизвестная причина дефекта или падение проверки.
+Trigger: unknown cause of a defect or a check failure.
 
 - `reproduce → isolate → hypotheses → discriminating checks → fix → regression`;
-- разделяет диагноз и реализацию;
-- не допускает speculative fixes без воспроизведения или evidence.
+- separates diagnosis and implementation;
+- forbids speculative fixes without reproduction or evidence.
 
-Доступ: Orchestrator и Implementer.
+Access: Orchestrator and Implementer.
 
 #### `architecture-decision`
 
-Триггер: Tier 3, новый контракт или durable trade-off.
+Trigger: Tier 3, new contract, or durable trade-off.
 
-- максимум два варианта;
-- invariants, trade-offs, migration, rollback и recommendation;
-- создаёт ADR только после принятия решения;
-- связывает superseded decisions.
+- at most two options;
+- invariants, trade-offs, migration, rollback, and recommendation;
+- creates an ADR only after the decision is accepted;
+- links superseded decisions.
 
-Architect возвращает ADR candidate в ответе и не пишет Notebook; после принятия
-Orchestrator сохраняет его на checkpoint. Доступ: Architect и Orchestrator.
+Architect returns the ADR candidate in the response and does not write the Notebook; after
+acceptance the Orchestrator stores it at checkpoint. Access: Architect and Orchestrator.
 
 #### `profile-doctor`
 
-Триггер: установка, смена модели, изменение config или обновление OpenCode.
+Trigger: installation, model change, config change, or OpenCode update.
 
-- проверяет exact OpenCode version;
-- resolved config и schema;
-- model bindings и tool support;
-- effective variants, limits, pricing и compaction model;
-- locked model snapshot и extracted dependency manifest;
+- checks exact OpenCode version;
+- resolved config and schema;
+- model bindings and tool support;
+- effective variants, limits, pricing, and compaction model;
+- locked model snapshot and extracted dependency manifest;
 - discovery agents/skills;
-- policy schema/semantics, guard loaded/deny-mode state, `safe_search` и effective permissions;
-- Notebook schema, aggregate prompt budget и tool-output limits.
+- policy schema/semantics, guard loaded/deny-mode state, `safe_search`, and effective
+  permissions;
+- Notebook schema, aggregate prompt budget, and tool-output limits.
 
-Доступ: только Orchestrator для интерпретации отчёта. Canonical проверки и budget
-recovery выполняет deterministic non-LLM `.opencode/profile/bin/profile-doctor`;
-skill не является recovery dependency.
+Access: Orchestrator only, for interpreting the report. Canonical checks and budget recovery are
+performed by the deterministic non-LLM `.opencode/profile/bin/profile-doctor`; the skill is not
+a recovery dependency.
 
 ### 13.2. Conditional skills
 
 #### `dependency-research`
 
-Фиксирует version, official source, локальную применимость и ссылки. Доступен Scout.
+Records version, official source, local applicability, and references. Available to Scout.
 
 #### `security-review`
 
-Подключается только для auth, secrets, permissions, crypto, network boundaries и
-untrusted parsing. Доступен Reviewer и Architect.
+Attached only for auth, secrets, permissions, crypto, network boundaries, and untrusted parsing.
+Available to Reviewer and Architect.
 
 #### Project-specific skills
 
-Добавляются только после анализа конкретного репозитория: database migration,
-public API compatibility, mobile build, deployment и т. п. Большой универсальный
-skill «на все случаи» запрещён. Установка выполняется только нормативным
-`--adopt-skill ... --agents ...` workflow §6.3; ручное копирование блокирует managed
-launch как unknown/collision origin.
+Added only after analysis of a specific repository: database migration, public API
+compatibility, mobile build, deployment, etc. A large universal "catch-all" skill is forbidden.
+Installation is performed only by the normative `--adopt-skill ... --agents ...` workflow of
+§6.3; manual copying blocks managed launch as an unknown/collision origin.
 
 ### 13.3. Skill allowlists
 
@@ -1385,52 +1343,50 @@ launch как unknown/collision origin.
 | Implementer | `verification`, `debugging`, project-specific |
 | Reviewer | `verification`, `security-review`, project-specific |
 
-Все остальные skills скрываются через `permission.skill`.
-Дополнительно launcher, static preflight и guard связывают каждый exact allowed name
-с одним canonical origin и SHA-256 из lock. `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`
-подавляет `.claude`/`.agents` discovery, но не считается достаточной защитой без
-origin registry и collision scan.
-Diff-first review checklist, единая severity `Blocker | Major | Minor | Note` и
-Pass/Fail являются частью reviewer prompt. Отдельный `code-review` skill не создаётся:
-он не ленивый для этой роли и добавил бы лишний tool call.
+All other skills are hidden via `permission.skill`. Additionally the launcher, static preflight,
+and guard bind each exact allowed name to one canonical origin and SHA-256 from the lock.
+`OPENCODE_DISABLE_EXTERNAL_SKILLS=true` suppresses `.claude`/`.agents` discovery, but is not
+considered sufficient protection without an origin registry and collision scan. The
+diff-first review checklist, the unified severity `Blocker | Major | Minor | Note`, and
+Pass/Fail are part of the reviewer prompt. A separate `code-review` skill is not created: it is
+not lazy for this role and would add an extra tool call.
 
-## 14. Custom commands
+## 14. Custom Commands
 
-| Command | `agent` | `subtask` | Назначение |
+| Command | `agent` | `subtask` | Purpose |
 | --- | --- | --- | --- |
-| `/route` | `orchestrator` | `false` | повторно маршрутизировать текущую active task |
-| `/review` | `reviewer` | `true` | изолированно проверить текущий diff |
-| `/diagnose` | `orchestrator` | `false` | выполнить debugging workflow без автоматического fix |
-| `/checkpoint` | `orchestrator` | `false` | сохранить подтверждённый milestone |
-| `/handoff` | `orchestrator` | `false` | checkpoint, readback STATE и короткий resume prompt |
-| `/status` | `orchestrator` | `false` | показать verified status, blockers и next step |
+| `/route` | `orchestrator` | `false` | re-route the current active task |
+| `/review` | `reviewer` | `true` | review the current diff in isolation |
+| `/diagnose` | `orchestrator` | `false` | run the debugging workflow without automatic fix |
+| `/checkpoint` | `orchestrator` | `false` | save the verified milestone |
+| `/handoff` | `orchestrator` | `false` | checkpoint, readback STATE, and a short resume prompt |
+| `/status` | `orchestrator` | `false` | show verified status, blockers, and next step |
 
-Commands являются ergonomic entry points, а не security boundary. Нельзя
-переопределять `/new` или `/compact`. Поле `model` во всех command отсутствует:
-команда наследует model выбранного agent. Command не расширяет permissions agent.
-Все shipped commands строго zero-argument: templates не содержат `$ARGUMENTS`,
-positional placeholders, shell blocks, `@file` или `@directory`. Задача передаётся
-обычным user message; commands работают только с текущей active task/diff/state.
-Guard отклоняет command с непустым `arguments` в `command.execute.before`, но этот
-hook вызывается после native interpolation, поэтому защита является detection, а
-не sandbox; README явно запрещает вставлять untrusted text в command arguments.
-Reserved command catalog разрешается только из pack-owned canonical origins с hashes
-из lock. Host/config-dir commands изолированы launcher, а любой project command вне
-registry или collision имени блокирует managed launch до OpenCode process.
+Commands are ergonomic entry points, not a security boundary. `/new` or `/compact` must not be
+overridden. The `model` field is absent from all commands: the command inherits the selected
+agent's model. A command does not extend the agent's permissions. All shipped commands are
+strictly zero-argument: templates contain no `$ARGUMENTS`, positional placeholders, shell
+blocks, `@file`, or `@directory`. The task is passed by an ordinary user message; commands work
+only with the current active task/diff/state. The guard rejects a command with non-empty
+`arguments` in `command.execute.before`, but this hook is invoked after native interpolation, so
+the protection is detection, not a sandbox; the README explicitly forbids inserting untrusted
+text into command arguments. The reserved command catalog is permitted only from pack-owned
+canonical origins with hashes from the lock. Host/config-dir commands are isolated by the
+launcher, and any project command outside the registry or with a name collision blocks managed
+launch before the OpenCode process.
 
-V1.17.9 всегда добавляет built-in `/init`, `/review`, built-in skill
-`customize-opencode` и slash aliases для всех discovered skills; skill permission не
-фильтрует эти aliases, а shell/file interpolation идёт до hook. Поэтому guard final
-command map целиком содержит шесть intended commands выше и pack-owned inert
-zero-argument shadows для `init`, `customize-opencode` и каждого locked core/project
-skill name, кроме names из intended command set. Intended `review` безопасно shadow-ит
-built-in, а intended `checkpoint` — одноимённый core-skill alias. Shadows не содержат
-arguments, shell или attachments. `command.execute.before` разрешает только шесть
-intended names и отклоняет все shadows/unknown names; static audit exact
-`Command.list` не допускает иной effective command. Adoption skill с collision
-command name запрещён.
+V1.17.9 always adds built-in `/init`, `/review`, the built-in skill `customize-opencode`, and
+slash aliases for all discovered skills; skill permission does not filter these aliases, and
+shell/file interpolation runs before the hook. Therefore the guard final command map wholly
+contains the six intended commands above and pack-owned inert zero-argument shadows for `init`,
+`customize-opencode`, and each locked core/project skill name except names from the intended
+command set. Intended `review` safely shadows the built-in, and intended `checkpoint` shadows
+the same-named core-skill alias. Shadows contain no arguments, shell, or attachments.
+`command.execute.before` permits only the six intended names and rejects all shadows/unknown
+names; the static audit of exact `Command.list` admits no other effective command. Adopting a
+skill with a colliding command name is forbidden.
 
-## 15. Нормативный workflow
+## 15. Normative Workflow
 
 ```text
 INTAKE
@@ -1444,83 +1400,81 @@ TRIAGE
        ├─ AWAITING_USER → APPROVED ─────────────────────┤
        ├─ REJECTED → ABORTED                            │
        └─ BLOCKED                                       │
-                                                       ↓
-                                                     VERIFY
-       ┌─ FAIL → REWORK_BUDGET ── remaining → WRITE ────┘
-       │                         └─ exhausted → BLOCKED
-       └─ PASS → review required?
-                    ├─ no → [CHECKPOINT] → DONE
-                    └─ yes → REVIEW
-                               ├─ PASS → CHECKPOINT → DONE
-                               └─ FAIL → REWORK_BUDGET
-                                          ├─ remaining → WRITE → VERIFY → REVIEW
-                                          └─ exhausted → BLOCKED
+                                                        ↓
+                                                      VERIFY
+        ┌─ FAIL → REWORK_BUDGET ── remaining → WRITE ────┘
+        │                         └─ exhausted → BLOCKED
+        └─ PASS → review required?
+                     ├─ no → [CHECKPOINT] → DONE
+                     └─ yes → REVIEW
+                                ├─ PASS → CHECKPOINT → DONE
+                                └─ FAIL → REWORK_BUDGET
+                                           ├─ remaining → WRITE → VERIFY → REVIEW
+                                           └─ exhausted → BLOCKED
 ```
 
-`WRITE` означает Direct Edit или Implementer исходного маршрута. Общий budget — не
-более двух циклов rework после initial write, суммарно для VERIFY и REVIEW failures;
-каждый rework обязательно снова проходит VERIFY и, если он required, REVIEW. Из
-любого состояния возможны `BLOCKED` и `ABORTED` с явной причиной.
+`WRITE` means the Direct Edit or the Implementer of the original route. The total budget is no
+more than two rework cycles after the initial write, summed for VERIFY and REVIEW failures; each
+rework must pass VERIFY again and, if it is required, REVIEW. From any state `BLOCKED` and
+`ABORTED` with an explicit reason are possible.
 
-Reviewer получает исходный DoD, принятые decisions, Base Revision и verification
-evidence, а не только пересказ Implementer. Большой diff не встраивается в packet:
-Reviewer сам читает его из worktree относительно Base Revision. Checkpoint запрещён
-при Reviewer Fail, непройденной обязательной проверке или неизвестном состоянии
-worktree.
+The Reviewer receives the original DoD, accepted decisions, Base Revision, and verification
+evidence, not merely the Implementer's retelling. A large diff is not embedded in the packet:
+the Reviewer reads it from the worktree relative to the Base Revision. Checkpoint is forbidden
+on Reviewer Fail, a failed mandatory check, or an unknown worktree state.
 
-## 16. Экономия токенов и стоимости
+## 16. Token and Cost Savings
 
-### 16.1. Контекст
+### 16.1. Context
 
-Во всех полях `estimated tokens` нормативный estimator совпадает с pinned runtime:
-`Math.round(text.length / 4)`, где `text.length` — длина точной JavaScript UTF-16
-строки. Validator сохраняет также chars/bytes. Provider-reported input/output/
-reasoning tokens измеряются отдельно, никогда не заменяются этим estimator и не
-сравниваются с ним как одна величина.
+In all `estimated tokens` fields the normative estimator matches the pinned runtime:
+`Math.round(text.length / 4)`, where `text.length` is the length of the exact JavaScript
+UTF-16 string. The validator also stores chars/bytes. Provider-reported input/output/reasoning
+tokens are measured separately, never replaced by this estimator and not compared with it as a
+single quantity.
 
-- авторитетный budget — сумма всего pack-provided persistent text, реально видимого
-  конкретной роли: PROFILE_RULES, role prompt, agent descriptions и descriptions
-  доступных skills; target ≤ 1 500, hard maximum ≤ 2 000 estimated tokens;
-- component limits подчинены aggregate budget: role prompt ≤ 2 500 символов,
-  skill descriptions ≤ 200 estimated tokens на роль;
-- user-owned AGENTS/project instructions измеряются отдельно; превышение 4 000
-  символов требует явного waiver и отображается как cost risk;
-- validator измеряет реальный cold input floor каждой роли, включая native system
-  prompt и tool schemas, и сравнивает его с baseline;
-- Task Context Packet p95: до 1 200 estimated tokens;
-- checkpoint: до 800 estimated tokens;
-- большие файлы читаются диапазонами или по символам;
-- failure output сокращается до релевантных строк;
-- `@file`/`@directory` attachment interpolation никогда не используется внутри
-  Task или shipped custom-command prompts; subagents получают только plain paths.
+- the authoritative budget is the sum of all pack-provided persistent text actually visible to a
+  specific role: PROFILE_RULES, role prompt, agent descriptions, and descriptions of available
+  skills; target ≤ 1,500, hard maximum ≤ 2,000 estimated tokens;
+- component limits are subordinate to the aggregate budget: role prompt ≤ 2,500 characters,
+  skill descriptions ≤ 200 estimated tokens per role;
+- user-owned AGENTS/project instructions are measured separately; exceeding 4,000 characters
+  requires an explicit waiver and is shown as a cost risk;
+- the validator measures the real cold input floor of each role, including the native system
+  prompt and tool schemas, and compares it with the baseline;
+- Task Context Packet p95: up to 1,200 estimated tokens;
+- checkpoint: up to 800 estimated tokens;
+- large files are read by ranges or by symbol;
+- failure output is reduced to relevant lines;
+- `@file`/`@directory` attachment interpolation is never used inside Task or shipped
+  custom-command prompts; subagents receive only plain paths.
 
-### 16.2. Agents и tools
+### 16.2. Agents and tools
 
-- fast lane избегает фиксированной цены child session;
-- дорогие модели вызываются только для сложного reasoning, coding и quality gate;
-- `steps` даёт ранний MAX_STEPS finish prompt, но не считается runtime cap;
-- guard hard-caps LLM calls, Task calls и compactions до provider/tool execution;
-- полностью denied tools schema-hidden через exact `* deny`; foreign tools/MCP
-  отсутствуют, skill/Task catalogs сужены;
-- между LSP и targeted read выбирается источник с меньшим ожидаемым ответом;
-- параллельность применяется ради latency, а не считается экономией токенов.
+- the fast lane avoids the fixed price of a child session;
+- expensive models are called only for complex reasoning, coding, and quality gate;
+- `steps` gives an early MAX_STEPS finish prompt but is not a runtime cap;
+- the guard hard-caps LLM calls, Task calls, and compactions before provider/tool execution;
+- fully denied tools are schema-hidden via exact `* deny`; foreign tools/MCP are absent, and
+  skill/Task catalogs are narrowed;
+- between LSP and targeted read, the source with the smaller expected response is chosen;
+- parallelism is applied for latency, not counted as token savings.
 
-Hard counter не хранится только в памяти plugin. На каждом gate guard определяет root
-по persisted parent tree, берёт atomic lease и резервирует именно attempt — каждое
-срабатывание `chat.params`, включая outer retry незавершённого assistant message,
-считается отдельно. Durable reservations и session evidence сверяются; resume/restart
-не обнуляет budget, parallel calls не могут одновременно занять последний slot.
-Текущий ещё не отправленный logical stream attempt резервируется до provider call.
-Для main work path validator фиксирует AI SDK `maxRetries: 0`; provider-internal
-transport retry не считается отдельным hook event и остаётся telemetry boundary. Если
-ledger/evidence недоступен, неоднозначен, stale-locked или tree invalid, gate
-закрывается; abandoned reservation остаётся использованной до явного audited
-recovery. Soft `agent.steps` настраивается ниже либо равным hard limit, чтобы модель
-успела вернуть результат до технического отказа. Fixture с намеренно непослушной
-моделью и retryable provider error доказывает остановку LLM-only/retry loop; одного
-`tool.execute.before` для этого недостаточно.
+The hard counter is not stored only in plugin memory. At each gate the guard determines the root
+by the persisted parent tree, takes an atomic lease, and reserves precisely the attempt — each
+firing of `chat.params`, including the outer retry of an unfinished assistant message, is counted
+separately. Durable reservations and session evidence are reconciled; resume/restart does not
+zero the budget, and parallel calls cannot simultaneously take the last slot. The current not-yet
+sent logical stream attempt is reserved before the provider call. For the main work path the
+validator records AI SDK `maxRetries: 0`; provider-internal transport retry is not a separate
+hook event and remains a telemetry boundary. If the ledger/evidence is unavailable, ambiguous,
+stale-locked, or the tree is invalid, the gate closes; an abandoned reservation remains used
+until explicit audited recovery. Soft `agent.steps` is set below or equal to the hard limit so
+the model has time to return a result before the technical failure. A fixture with a deliberately
+disobedient model and a retryable provider error proves the LLM-only/retry loop stops; a single
+`tool.execute.before` is insufficient for this.
 
-Нормативный стартовый truncation profile:
+Normative starting truncation profile:
 
 ```json
 {
@@ -1531,27 +1485,24 @@ recovery. Soft `agent.steps` настраивается ниже либо рав
 }
 ```
 
-Runtime может сохранить полный output в truncation storage вне worktree, но core
-profile не выдаёт model общий доступ к этому host path. Если обрезка скрыла нужные
-строки, agent повторяет команду с более узким scope/range. Thresholds являются
-benchmark seeds. Return budgets в prompts:
-Explorer ≤ 2 000, Scout/Implementer ≤ 4 000, Architect/Reviewer ≤ 6 000 символов;
-превышение допускается только для Blocker evidence. Это policy, поскольку Task
-может вернуть полный финальный текст child session в parent.
+The runtime may keep the full output in truncation storage outside the worktree, but the core
+profile does not give the model general access to this host path. If truncation hid needed
+lines, the agent repeats the command with a narrower scope/range. Thresholds are benchmark
+seeds. Return budgets in prompts: Explorer ≤ 2,000, Scout/Implementer ≤ 4,000,
+Architect/Reviewer ≤ 6,000 characters; exceeding is permitted only for Blocker evidence. This is
+policy, since Task may return the full final text of the child session to the parent.
 
-### 16.3. Сессии
+### 16.3. Sessions
 
-- одна сессия продолжается внутри связного milestone;
-- после проверенного checkpoint и смены задачи рекомендуется `/new`;
-- `/new` не выполняется автоматически после каждого шага;
-- fork используется только для настоящей альтернативной ветки и не считается чистым
-  контекстом;
-- manual `/compact` используется внутри длинного незавершённого этапа, а не после
-  каждой задачи.
+- one session continues within a coherent milestone;
+- after a verified checkpoint and a task switch, `/new` is recommended;
+- `/new` is not run automatically after every step;
+- fork is used only for a genuine alternative branch and is not counted as clean context;
+- manual `/compact` is used within a long unfinished stage, not after every task.
 
 ### 16.4. Compaction
 
-Нормативный начальный профиль:
+Normative starting profile:
 
 ```json
 {
@@ -1568,489 +1519,464 @@ Explorer ≤ 2 000, Scout/Implementer ≤ 4 000, Architect/Reviewer ≤ 6 000 с
 }
 ```
 
-`preserve_recent_tokens` намеренно отсутствует: V1.17.9 выбирает адаптивный budget
-25% usable input в пределах 2k–8k. `reserved` также отсутствует в базовом template.
-В этой версии он вычитается только когда provider metadata задаёт `model.limit.input`;
-иначе overflow threshold равен `context - maxOutputTokens`, и explicit `reserved`
-не влияет. Profile doctor вычисляет effective threshold для каждой модели по
-resolved `context/input/output` limits. Для каждой пары active role → compactor он
-проверяет инвариант: usable input compactor не меньше максимального payload при
-compaction trigger active role плюс prompt/output margin. Near-limit resume test
-обязателен для каждой пары; недостаточный compactor делает profile invalid, silent
-fallback на active model запрещён. Override `reserved` или
-`preserve_recent_tokens` разрешён только единым profile после resume/cost benchmark,
-а не по грубой таблице context windows.
+`preserve_recent_tokens` is intentionally absent: V1.17.9 selects an adaptive budget of 25% usable
+input within 2k–8k. `reserved` is also absent in the base template. In this version it is
+subtracted only when provider metadata sets `model.limit.input`; otherwise the overflow threshold
+equals `context - maxOutputTokens`, and explicit `reserved` has no effect. The profile doctor
+computes the effective threshold for each model from the resolved `context/input/output` limits.
+For each active role → compactor pair it checks the invariant: the compactor's usable input is no
+less than the maximum payload at compaction trigger of the active role plus prompt/output margin.
+A near-limit resume test is mandatory for each pair; an insufficient compactor makes the profile
+invalid, and silent fallback to the active model is forbidden. Overriding `reserved` or
+`preserve_recent_tokens` is permitted only by a single profile after a resume/cost benchmark, not
+by a crude table of context windows.
 
-Compaction является lossy fallback. Критический промежуточный результат должен быть
-кратко зафиксирован в проверенном STATE до pruning или длительной паузы. Стоимость
-compaction включается в полную стоимость задачи.
+Compaction is a lossy fallback. Critical intermediate results must be briefly recorded in verified
+STATE before pruning or a long pause. The cost of compaction is included in the full task cost.
 
 ### 16.5. Cache
 
-- стабильные prompts и AGENTS не меняются внутри active milestone;
-- provider `setCacheKey` включается только при официальной поддержке;
-- модели и providers не переключаются без причины внутри одной роли;
-- cache effectiveness измеряется не объёмом cache read/write сам по себе, а net cost
-  с ценой fresh input, cache read и cache write из зафиксированного pricing snapshot.
+- stable prompts and AGENTS are not changed within an active milestone;
+- provider `setCacheKey` is enabled only with official support;
+- models and providers are not switched without reason within a single role;
+- cache effectiveness is measured not by cache read/write volume itself, but by net cost with the
+  price of fresh input, cache read, and cache write from the fixed pricing snapshot.
 
-## 17. Безопасность изменений
+## 17. Change Safety
 
-- core устанавливает `snapshot: false`: V1.17.9 snapshot вызывает `git add --all`,
-  а repository/global attributes и clean/process filters способны выполнить процесс
-  вне `bash` permission;
-- recovery опирается на clean base revision, pre/post tracked+untracked audit и
-  явный user-approved Git/manual rollback без destructive automation;
-- перед edit фиксируется base revision и проверяется dirty worktree;
-- пользовательские изменения не перезаписываются;
-- Orchestrator по policy не запускает writers параллельно;
-- Implementer не изменяет Notebook и configuration control files без отдельного
-  пользовательского scope;
-- publish, deploy, git push, destructive migrations и удаление данных требуют явного
-  разрешения;
-- `share` устанавливается в `"disabled"`;
-- remote instructions не подключаются автоматически;
-- core не подключает MCP; exact MCP возможен только в отдельном audited conditional profile;
-- built-in `grep` недоступен, content search идёт только через `safe_search`;
-- Task attachments, symlink paths и apply-patch moves fail-closed в guard;
-- автоматические shell allowlists не содержат generic readers/interpreters; явно
-  approved shell и verification scripts остаются residual-risk boundary §5.2.
+- core sets `snapshot: false`: V1.17.9 snapshot invokes `git add --all`, and repository/global
+  attributes and clean/process filters can execute a process outside `bash` permission;
+- recovery relies on a clean base revision, pre/post tracked+untracked audit, and an explicit
+  user-approved Git/manual rollback without destructive automation;
+- before edit the base revision is recorded and the dirty worktree is checked;
+- user changes are not overwritten;
+- the Orchestrator does not launch writers in parallel by policy;
+- the Implementer does not change the Notebook and configuration control files without a separate
+  user scope;
+- publish, deploy, git push, destructive migrations, and data deletion require explicit
+  permission;
+- `share` is set to `"disabled"`;
+- remote instructions are not attached automatically;
+- core does not wire MCP; exact MCP is possible only in a separate audited conditional profile;
+- built-in `grep` is unavailable, content search goes only via `safe_search`;
+- Task attachments, symlink paths, and apply-patch moves are fail-closed in the guard;
+- automatic shell allowlists contain no generic readers/interpreters; an explicitly approved shell
+  and verification scripts remain a residual-risk boundary per §5.2.
 
-Отдельный conditional snapshot profile возможен только после non-executing audit
-всех Git config include chains, attributes files и filter/process/fsmonitor surfaces,
-canonical version/hash pin Git binary и no-execution fixture. До реализации этого
-профиля `snapshot:true` является validation Fail.
+A separate conditional snapshot profile is possible only after a non-executing audit of all Git
+config include chains, attributes files, and filter/process/fsmonitor surfaces, a canonical
+version/hash-pinned Git binary, and a no-execution fixture. Until this profile is implemented,
+`snapshot:true` is a validation Fail.
 
-Core не гарантирует single writer даже внутри одной Orchestrator session/worktree.
-Hard guarantee требует будущего lease plugin или внешней блокировки; до этого
-используются policy, pre/post worktree audit и организационный запрет параллельных
-OpenCode-процессов на одном worktree.
+Core does not guarantee a single writer even within a single Orchestrator session/worktree. A hard
+guarantee requires a future lease plugin or external locking; until then policy, pre/post worktree
+audit, and an organizational prohibition of parallel OpenCode processes on one worktree are used.
 
-## 18. Ошибки и восстановление
+## 18. Errors and Recovery
 
-| Ошибка | Обнаружение и реакция |
+| Error | Detection and reaction |
 | --- | --- |
-| Неверная OpenCode version/schema | validator прекращает установку |
-| Install/update conflict | dry-run report; target не меняется |
-| Пустая или неизвестная model binding | fail до первой рабочей задачи; без fallback |
-| Model snapshot/catalog/adapter drift | fail до provider; explicit model rebind transaction |
-| Dependency tree manifest mismatch | fail до plugin import; doctor materializes, old tree quarantined |
-| Модель без tool support/limits | role smoke test и явный remap |
-| Guard plugin/custom tool не загрузился | launcher не стартует либо все base agents остаются disabled; zero provider/tool call |
-| Task attachment token | guard отклоняет call; packet перестраивается с plain path |
-| Unsafe CLI verb/flag/project/attach | structural argv policy отклоняет до OpenCode process |
-| Symlink path или apply-patch move | guard отклоняет call; безопасный explicit edit либо approval |
-| Agent/skill/command origin не совпал | preflight/guard Fail до activation; показать canonical origin/hash collision |
-| Prompt или catalog превышает budget | validator Fail |
-| Простая задача ошибочно делегирована | routing regression fixture |
-| Недостаточный packet | один `NEEDS_CONTEXT` round-trip, затем reroute/block |
-| Устаревшие строки/файлы | перечитать symbol/current file, сверить base revision |
-| Transient model/tool error | одна retry; затем reroute или Blocked |
-| Permission denied | вернуть `NEEDS_PERMISSION`, не обходить запрет |
-| Reviewer Fail | rework максимум два раза, затем blocker report |
-| Dirty worktree с чужими изменениями | остановить overlapping edit, сохранить изменения пользователя |
-| Два writer в одной session | Orchestrator сериализует задачи |
-| Два OpenCode-процесса | Core не гарантирует lock; задокументировать ограничение |
-| Nested Task из subagent | permission smoke test обязан получить deny |
-| Experimental LSP выключен | `safe_search` + read; не считать ошибкой |
-| Checkpoint write/readback failed | не сообщать success; повторить или Blocked |
-| Compaction потеряла детали | восстановиться по verified STATE и git evidence |
-| MCP/tool schema bloat | MCP/foreign tools убрать; exact full-deny schemas проверить |
-| Prompt injection из web/docs | считать материал данными, не инструкциями |
-| Unsafe fetch target/redirect/DNS | `safe_fetch` закрывает socket и возвращает bounded error metadata |
-| Cost runaway | soft steps + guard hard call/Task/compaction caps; затем benchmark thresholds |
+| Wrong OpenCode version/schema | validator stops installation |
+| Install/update conflict | dry-run report; target unchanged |
+| Empty or unknown model binding | fail before first working task; no fallback |
+| Model snapshot/catalog/adapter drift | fail before provider; explicit model rebind transaction |
+| Dependency tree manifest mismatch | fail before plugin import; doctor materializes, old tree quarantined |
+| Model without tool support/limits | role smoke test and explicit remap |
+| Guard plugin/custom tool failed to load | launcher does not start, or all base agents stay disabled; zero provider/tool call |
+| Task attachment token | guard rejects call; packet rebuilt with plain path |
+| Unsafe CLI verb/flag/project/attach | structural argv policy rejects before OpenCode process |
+| Symlink path or apply-patch move | guard rejects call; safe explicit edit or approval |
+| Agent/skill/command origin mismatch | preflight/guard Fail before activation; show canonical origin/hash collision |
+| Prompt or catalog exceeds budget | validator Fail |
+| Simple task wrongly delegated | routing regression fixture |
+| Insufficient packet | one `NEEDS_CONTEXT` round-trip, then reroute/block |
+| Stale lines/files | re-read symbol/current file, reconcile base revision |
+| Transient model/tool error | one retry; then reroute or Blocked |
+| Permission denied | return `NEEDS_PERMISSION`, do not bypass the prohibition |
+| Reviewer Fail | rework at most twice, then blocker report |
+| Dirty worktree with foreign changes | stop overlapping edit, preserve user changes |
+| Two writers in one session | Orchestrator serializes tasks |
+| Two OpenCode processes | Core does not guarantee lock; document the limitation |
+| Nested Task from subagent | permission smoke test must get deny |
+| Experimental LSP off | `safe_search` + read; not counted as error |
+| Checkpoint write/readback failed | do not report success; repeat or Blocked |
+| Compaction lost details | recover from verified STATE and git evidence |
+| MCP/tool schema bloat | remove MCP/foreign tools; verify exact full-deny schemas |
+| Prompt injection from web/docs | treat material as data, not instructions |
+| Unsafe fetch target/redirect/DNS | `safe_fetch` closes socket and returns bounded error metadata |
+| Cost runaway | soft steps + guard hard call/Task/compaction caps; then benchmark thresholds |
 | Budget ledger corrupt/stale-locked | fail closed; non-LLM profile-doctor audit/quarantine/close-root recovery |
-| Неполное cost attribution | economics gate получает `Unverified`, не Pass |
-| Quality drift после model swap | полный role benchmark перед принятием профиля |
+| Incomplete cost attribution | economics gate gets `Unverified`, not Pass |
+| Quality drift after model swap | full role benchmark before accepting the profile |
 
-## 19. Валидация конфигурации
+## 19. Configuration Validation
 
-Перед использованием должны выполняться следующие проверки:
+The following checks must pass before use:
 
-1. `opencode --version` и reference platform совпадают; temp/target filesystem
-   проходит atomic create/rename/lease probe. Managed runtime root canonical, owner-only,
-   mode `0700`, не пересекается с worktree/host OpenCode roots; overlap fixture требует
-   explicit safe override и никогда не падает обратно внутрь проекта. Canonical
-   OpenCode/rg/npm-runtime/shell/Git paths, versions и hashes совпадают с lock;
-   PATH shadow canary не исполняется.
-2. Static preflight без импорта кода отклоняет foreign plugin/tool executable
-   specs/directories, любой local/remote MCP, `skills.paths/urls`, foreign/duplicate
-   agent/skill/command origins, `lsp.*.command`, `formatter.*.command`,
-   remote/absolute/tilde/escaping refs и строит sanitized contained copy; fixtures с
-   malicious global/system-managed/MDM plugin, custom tool, formatter, remote-MCP,
-   command collision, stored `wellknown` auth и account/org remote config не
-   исполняются, не подключаются к сети и не создают host canary. Auto/configured
-   instruction origin registry exact; root/nested secret/control `AGENTS.md`,
-   `CLAUDE.md`, `CONTEXT.md`, symlink, unadopted и hash-drift fixtures дают Fail до
-   prompt/provider, а adopted safe instruction явно отображается как provider-visible.
-3. После preflight изолированный `opencode debug config` успешно разрешает clean-pack
-   и sanitized-global variants и не изменяет реальные global/target paths. Hostile
-   `OPENCODE_AUTO_SHARE`, DB/model/config/plugin/compaction/prune variables не попадают
-   в child env; unknown credential/build key и loader/shell-injection key также не
-   проходят, а exact adopted provider/project key проходит без логирования значения;
-   `HOME`/XDG/TEST_HOME указывают только в managed owner-only runtime, а host
-   `~/.opencode`, credential/dotfile canaries не читаются. Controlled managed-config
-   override указывает на empty `0700` root;
-   structural argv fixtures отвергают `--attach`, `--dir`/project positional,
-   file/remote/server attach, `--dangerously-skip-permissions`, share/auto-share,
-   `--pure`, model/variant/agent и config/plugin overrides, unknown flags и все
-   non-allowlisted verbs до OpenCode process.
-4. Npm lock integrity разрешается без drift в disposable config tree; effective external-plugin
-   list содержит только explicit `profile-guard`, а `safe_search` реально обнаружен.
-   Canonical origins/SHA каждого agent, command, prompt и allowed skill совпадают с
-   lock; duplicates отсутствуют. Effective LLM tool IDs не содержат unknown custom
-   tools или fully denied built-ins; mixed permissions остаются schema-visible и
-   отдельно проверяются на execution.
-   Install и managed launch подтверждают
-   `npm_config_ignore_scripts=true`; lifecycle canary не выполняется. Ошибка
-   import/hook/tool schema даёт Fail. Missing/extra/modified/symlink file в ignored
-   `node_modules` не импортируется: exhaustive dependency manifest даёт Fail, а
-   explicit doctor re-materialization сохраняет прежний tree в quarantine. Hostile
-   host `~/.npmrc`/global npm config/proxy/auth canaries не читаются и не получают
-   network; git/file/http/foreign-registry lock source получает Fail.
-   Effective `Command.list` содержит ровно шесть intended commands плюс inert shadows
-   для `init`, `customize-opencode` и каждого locked skill alias вне intended command
-   set; intended `review`/`checkpoint` имеют явный winning precedence. Built-in/skill
-   interpolation canaries не исполняют shell и не materialize attachment.
-5. Отдельные `--pure`, missing-guard и throwing-config-hook probes подтверждают
-   `disable: true` для всех base agents, zero `chat.params`/provider reach, root/per-role
-   wildcard deny для каждого known и synthetic unknown tool ID, `formatter: false`,
-   `lsp: false`, пустой MCP surface и отсутствие частично применённых intended allow maps. Managed
-   launcher отклоняет `--pure` до запуска OpenCode.
-6. Normal SessionTools integration harness (не `debug agent --tool`, который обходит
-   before-hook) и direct hook unit fixtures подтверждают: обычный Task packet проходит,
-   Task с resolvable `@file` отклоняется до child read; `apply_patch` с `*** Move to:` отклоняется;
-   read/edit/LSP через internal/external symlink, external managed runtime и
-   non-existing child symlink-parent отклоняются. Root/nested directory-read fixtures
-   завершаются до listing и не раскрывают secret/control names; equivalent allowed
-   paths выдаёт только filtered `safe_search mode=files`; guessed missing read не
-   возвращает `Did you mean`. Shipped command templates проходят static scan на attachment,
-   shell blocks, `$ARGUMENTS` и positional placeholders; non-empty command-argument
-   fixture фиксируется как запрещённый operational path. Uncooperative-model fixture
-   и retryable-provider fixture подтверждают atomic hard LLM-attempt/Task/compaction
-   caps до provider/tool call, serial reservation для parallel children и отсутствие
-   reset после resume/restart; main work path подтверждает `maxRetries: 0`.
-7. `safe_search` в обоих modes на fixture находит разрешённый path/symbol, уважает caps/truncation,
-   не выдаёт root/nested secret, ignored/hidden deny path или symlink target и не
-   принимает search root вне worktree. Huge-tree/slow-rg fixtures подтверждают
-   candidate/path/argv/time caps и process kill. Built-in `grep` и `glob` фактически
-   получают deny. Scout и synthetic unknown role вызывают `safe_search`, но
-   `ctx.ask`/guard gate отклоняет их до enumeration/spawn; denied-role canary path не
-   открывается.
-8. Нет смешения V1/V2 fields, неизвестного `subagent_depth` и deprecated
-   `tools`/`maxSteps`.
-9. Все model env bindings непусты, exact-match accepted
-   `models.snapshot.json`/lock и присутствуют в managed `models`; resolver/launch
-   используют `OPENCODE_DISABLE_MODELS_FETCH=true` и hash-verified
-   `OPENCODE_MODELS_PATH`. Provider/model/API URL/bundled adapter, variants, options,
-   limits, capabilities и pricing зафиксированы; mutable catalog network canary,
-   custom/unversioned npm adapter и drift дают Fail до provider call. TUI-selected,
-   session-stored/resumed и compaction model/variant/options tamper отклоняются
-   `chat.params` до budget reservation/provider; каждая locked role проходит.
-10. Managed `agent list` содержит только разрешённые selectable роли; `build`,
-   `general`, `explore`, `plan` отключены.
-11. Isolated validator `debug agent <role>` показывает правильные model, steps и permissions.
-12. Isolated validator `debug skill` обнаруживает все skills и точные skill allowlists; collision
-    fixtures из host config-dir, `.claude`, `.agents` и `skills.paths/urls` получают
-    Fail, а каждый allowed name разрешается только в locked canonical origin/SHA.
-    Единственный extra discovered skill — attested `<built-in>`
-    `customize-opencode`; он denied/not offered каждой роли и его alias inert-shadowed.
-13. Explorer, Scout, Architect и Reviewer не получают edit/write/apply_patch;
-   Explorer/Scout/Architect также не получают bash. Reviewer shell side effects
-   проверяются отдельным pre/post audit, а не считаются hard-denied.
-14. Все subagents имеют `task: deny`; Orchestrator — точный Task allowlist; реальная
-   nested-Task probe получает deny.
-15. Root и nested secret/control canaries подтверждают ordered read/edit denies,
-    Orchestrator secret `ask`, child secret `deny`, explicit example `allow`, `ask`
-    для Orchestrator на `AGENTS.md`/root config, exact Notebook allow и deny/ask для
-    `.git`, `.opencode`, lock, package dependencies у каждой роли. Generic bash-read
-    command strings не входят в automatic allowlist. При включённом LSP
-    project-specific secret canary не должен появляться в LSP output. Это проверяет
-    tool rules, но не обещает sandbox side effects allowlisted/approved shell.
-    Каждый agent имеет exact runtime Truncate.GLOB external-directory deny; generic
-    wildcard и trailing auto-allow считаются Fail.
-16. Reviewer pre/post worktree probe обнаруживает source side effects verification.
-17. Scout проходит `safe_fetch` public HTTPS fixture; built-in `webfetch` full-denied/
-    schema-hidden. Localhost, RFC1918/link-local/IPv6-mapped/cloud-metadata, DNS
-    rebinding, redirect-to-private, downgrade, credential/proxy/header и decompression-
-    bomb fixtures завершаются без unsafe connect/output; denied role не делает DNS.
-    `websearch` либо проходит availability probe, либо получает exact full deny и
-    schema-hidden. Core remote/local MCP no-connect canary проходит; MCP проверяется
-    только отдельным conditional-profile benchmark.
-18. Core/base resolved config имеет `lsp: false` и
-    `OPENCODE_DISABLE_LSP_DOWNLOAD=true`; read/edit fixture не запускает/download server.
-    Conditional LSP обнаруживается только при feature flag: every non-selected ID
-    имеет `{disabled:true}`, selected safe ID omitted и совпадает с pack allowlist +
-    PATH binary version/hash. `true`, custom command, `latest`, Npm/cache/project-first
-    resolver, unknown server или missing binary дают Fail; empty-cache/no-network
-    canary не скачивает code. `safe_search` fallback проходит без LSP.
+1. `opencode --version` and the reference platform match; the temp/target filesystem passes an
+   atomic create/rename/lease probe. The managed runtime root is canonical, owner-only, mode
+   `0700`, and does not intersect the worktree/host OpenCode roots; an overlap fixture requires an
+   explicit safe override and never falls back inside the project. Canonical OpenCode/rg/
+   npm-runtime/shell/Git paths, versions, and hashes match the lock; the PATH shadow canary is
+   not executed.
+2. Static preflight without code import rejects foreign plugin/tool executable specs/directories,
+   any local/remote MCP, `skills.paths/urls`, foreign/duplicate agent/skill/command origins,
+   `lsp.*.command`, `formatter.*.command`, remote/absolute/tilde/escaping refs, and builds a
+   sanitized contained copy; fixtures with malicious global/system-managed/MDM plugin, custom
+   tool, formatter, remote-MCP, command collision, stored `wellknown` auth, and account/org remote
+   config are not executed, not connected to the network, and create no host canary. The
+   auto/configured instruction origin registry is exact; root/nested secret/control `AGENTS.md`,
+   `CLAUDE.md`, `CONTEXT.md`, symlink, unadopted, and hash-drift fixtures yield Fail before
+   prompt/provider, and an adopted safe instruction is explicitly shown as provider-visible.
+3. After preflight an isolated `opencode debug config` successfully resolves the clean-pack and
+   sanitized-global variants and does not change real global/target paths. Hostile
+   `OPENCODE_AUTO_SHARE`, DB/model/config/plugin/compaction/prune variables do not enter the child
+   env; an unknown credential/build key and loader/shell-injection key also fail, while an exact
+   adopted provider/project key passes without logging the value; `HOME`/XDG/TEST_HOME point only
+   to the managed owner-only runtime, and host `~/.opencode`, credential/dotfile canaries are not
+   read. The controlled managed-config override points to an empty `0700` root; structural argv
+   fixtures reject `--attach`, `--dir`/project positional, file/remote/server attach,
+   `--dangerously-skip-permissions`, share/auto-share, `--pure`, model/variant/agent and
+   config/plugin overrides, unknown flags, and all non-allowlisted verbs before the OpenCode
+   process.
+4. Npm lock integrity resolves without drift in the disposable config tree; the effective
+   external-plugin list contains only the explicit `profile-guard`, and `safe_search` is actually
+   discovered. Canonical origins/SHA of each agent, command, prompt, and allowed skill match the
+   lock; duplicates are absent. Effective LLM tool IDs contain no unknown custom tools or fully
+   denied built-ins; mixed permissions remain schema-visible and are separately checked at
+   execution. Install and managed launch confirm `npm_config_ignore_scripts=true`; the lifecycle
+   canary is not executed. An import/hook/tool schema error yields Fail. Missing/extra/modified/
+   symlink file in the ignored `node_modules` is not imported: an exhaustive dependency manifest
+   yields Fail, and an explicit doctor re-materialization preserves the previous tree in
+   quarantine. Hostile host `~/.npmrc`/global npm config/proxy/auth canaries are not read and get
+   no network; a git/file/http/foreign-registry lock source yields Fail. Effective `Command.list`
+   contains exactly the six intended commands plus inert shadows for `init`, `customize-opencode`,
+   and each locked skill alias outside the intended command set; intended `review`/`checkpoint`
+   have explicit winning precedence. Built-in/skill interpolation canaries execute no shell and
+   materialize no attachment.
+5. Separate `--pure`, missing-guard, and throwing-config-hook probes confirm `disable: true` for
+   all base agents, zero `chat.params`/provider reach, root/per-role wildcard deny for each known
+   and synthetic unknown tool ID, `formatter: false`, `lsp: false`, an empty MCP surface, and the
+   absence of partially applied intended allow maps. The managed launcher rejects `--pure` before
+   launching OpenCode.
+6. Normal SessionTools integration harness (not `debug agent --tool`, which bypasses the
+   before-hook) and direct hook unit fixtures confirm: an ordinary Task packet passes, a Task with
+   resolvable `@file` is rejected before child read; `apply_patch` with `*** Move to:` is rejected;
+   read/edit/LSP via internal/external symlink, external managed runtime, and non-existing child
+   symlink-parent are rejected. Root/nested directory-read fixtures terminate before listing and do
+   not disclose secret/control names; equivalent allowed paths are returned only by filtered
+   `safe_search mode=files`; a guessed missing read returns no `Did you mean`. Shipped command
+   templates pass a static scan for attachment, shell blocks, `$ARGUMENTS`, and positional
+   placeholders; a non-empty command-argument fixture is recorded as a forbidden operational path.
+   An uncooperative-model fixture and a retryable-provider fixture confirm atomic hard LLM-attempt/
+   Task/compaction caps before provider/tool call, serial reservation for parallel children, and
+   no reset after resume/restart; the main work path confirms `maxRetries: 0`.
+7. `safe_search` in both modes on a fixture finds the permitted path/symbol, respects caps/
+   truncation, emits no root/nested secret, ignored/hidden deny path, or symlink target, and does
+   not accept a search root outside the worktree. Huge-tree/slow-rg fixtures confirm candidate/
+   path/argv/time caps and process kill. The built-in `grep` and `glob` actually get deny. Scout
+   and a synthetic unknown role call `safe_search`, but `ctx.ask`/guard gate rejects them before
+   enumeration/spawn; a denied-role canary path is not opened.
+8. No mixing of V1/V2 fields, no unknown `subagent_depth`, and no deprecated `tools`/`maxSteps`.
+9. All model env bindings are non-empty, exact-match accepted `models.snapshot.json`/lock, and
+   present in managed `models`; the resolver/launch use `OPENCODE_DISABLE_MODELS_FETCH=true` and
+   hash-verified `OPENCODE_MODELS_PATH`. Provider/model/API URL/bundled adapter, variants, options,
+   limits, capabilities, and pricing are fixed; a mutable catalog network canary, custom/unversioned
+   npm adapter, and drift yield Fail before provider call. TUI-selected, session-stored/resumed,
+   and compaction model/variant/options tamper are rejected by `chat.params` before budget
+   reservation/provider; each locked role passes.
+10. Managed `agent list` contains only the permitted selectable roles; `build`, `general`,
+    `explore`, `plan` are disabled.
+11. Isolated validator `debug agent <role>` shows correct model, steps, and permissions.
+12. Isolated validator `debug skill` discovers all skills and exact skill allowlists; collision
+    fixtures from host config-dir, `.claude`, `.agents`, and `skills.paths/urls` yield Fail, and
+    each allowed name resolves only to the locked canonical origin/SHA. The only extra discovered
+    skill is the attested `<built-in>` `customize-opencode`; it is denied/not offered to each role
+    and its alias is inert-shadowed.
+13. Explorer, Scout, Architect, and Reviewer get no edit/write/apply_patch; Explorer/Scout/
+    Architect also get no bash. Reviewer shell side effects are checked by a separate pre/post
+    audit, not counted as hard-denied.
+14. All subagents have `task: deny`; the Orchestrator has an exact Task allowlist; a real
+    nested-Task probe gets deny.
+15. Root and nested secret/control canaries confirm ordered read/edit denies, Orchestrator secret
+    `ask`, child secret `deny`, explicit example `allow`, `ask` for the Orchestrator on
+    `AGENTS.md`/root config, exact Notebook allow, and deny/ask for `.git`, `.opencode`, lock,
+    package dependencies per role. Generic bash-read command strings are not in the automatic
+    allowlist. With LSP enabled, a project-specific secret canary must not appear in LSP output.
+    This checks tool rules, but does not promise sandbox side effects of allowlisted/approved
+    shell. Each agent has an exact runtime Truncate.GLOB external-directory deny; a generic
+    wildcard and trailing auto-allow are Fail.
+16. Reviewer pre/post worktree probe detects source side effects verification.
+17. Scout passes the `safe_fetch` public HTTPS fixture; built-in `webfetch` is full-denied/
+    schema-hidden. Localhost, RFC1918/link-local/IPv6-mapped/cloud-metadata, DNS rebinding,
+    redirect-to-private, downgrade, credential/proxy/header, and decompression-bomb fixtures
+    terminate without unsafe connect/output; a denied role makes no DNS. `websearch` either passes
+    the availability probe or gets exact full deny and schema-hidden. The core remote/local MCP
+    no-connect canary passes; MCP is checked only by a separate conditional-profile benchmark.
+18. Core/base resolved config has `lsp: false` and `OPENCODE_DISABLE_LSP_DOWNLOAD=true`; a
+    read/edit fixture launches/downloads no server. Conditional LSP is discovered only with the
+    feature flag: every non-selected ID has `{disabled:true}`, the selected safe ID is omitted and
+    matches the pack allowlist + PATH binary version/hash. `true`, custom command, `latest`,
+    Npm/cache/project-first resolver, unknown server, or missing binary yield Fail; an
+    empty-cache/no-network canary downloads no code. The `safe_search` fallback passes without LSP.
 19. `share: disabled`, `snapshot: false`, `autoupdate: false`, `title.disable: true`,
-    `formatter: false`; compaction auto/prune, tail settings и
-    `OC_MODEL_COMPACTOR` resolved. Malicious Git clean/process filter fixture не
-    исполняется; core отклоняет `snapshot:true`.
-20. Для всех models вычислен effective overflow threshold; каждая active
-    role→compactor pair проходит usable-input invariant и near-limit resume test.
-21. Aggregate persistent-text budget, cold input floor, packet/return fixtures и
-    `tool_output` thresholds проходят limits; все auto-instruction origins включены
-    в aggregate и origin report.
-22. Installer fixtures покрывают dry-run, adopted config/policy, contract re-adoption,
-    adopt/re-adopt/remove/preserve project skill, user-owned gitignore/policy/Notebook
-    seeds, model bind/rebind snapshot, dependency materialize/tamper recovery,
-    instruction adopt/re-adopt, provider/project env-name adoption/removal, conflict, update, fresh/upgrade
-    rollback и uninstall/de-adoption; retained-reference fixture не допускает удаления
-    pack dependency, подтверждены special lock lifecycle, ownership,
-    required/forbidden ignore behavior и отсутствие partial writes. Non-LLM budget
-    doctor различает live/stale/corrupt ledger, сохраняет quarantine, закрывает старый
-    root без reset cap и допускает только новую root session.
-23. Benchmark ledger fixture запрещает fork/new/background, дожидается quiescence и
-    не удваивает session rollup при reconciliation. Run/db/export/stats проходят
-    одним managed launcher/runtime scope, а manifest фиксирует launcher version,
-    install UUID и runtime-scope ID; baseline arm принимает только embedded locked
-    manifest, включает один Task-denied agent с теми же isolation/safety/accounting
-    controls и equal aggregate call ceiling. Arbitrary baseline config и direct host
-    `opencode` fixtures получают Fail.
+    `formatter: false`; compaction auto/prune, tail settings, and `OC_MODEL_COMPACTOR` resolved.
+    A malicious Git clean/process filter fixture is not executed; core rejects `snapshot:true`.
+20. For all models the effective overflow threshold is computed; each active role→compactor pair
+    passes the usable-input invariant and near-limit resume test.
+21. Aggregate persistent-text budget, cold input floor, packet/return fixtures, and `tool_output`
+    thresholds pass limits; all auto-instruction origins are included in the aggregate and origin
+    report.
+22. Installer fixtures cover dry-run, adopted config/policy, contract re-adoption, adopt/re-adopt/
+    remove/preserve project skill, user-owned gitignore/policy/Notebook seeds, model bind/rebind
+    snapshot, dependency materialize/tamper recovery, instruction adopt/re-adopt, provider/project
+    env-name adoption/removal, conflict, update, fresh/upgrade rollback, and uninstall/de-adoption;
+    a retained-reference fixture does not permit deleting a pack dependency, and special lock
+    lifecycle, ownership, required/forbidden ignore behavior, and absence of partial writes are
+    confirmed. The non-LLM budget doctor distinguishes live/stale/corrupt ledger, preserves
+    quarantine, closes the old root without reset cap, and permits only a new root session.
+23. Benchmark ledger fixture forbids fork/new/background, awaits quiescence, and does not double
+    the session rollup at reconciliation. Run/db/export/stats pass within one managed launcher/
+    runtime scope, and the manifest records launcher version, install UUID, and runtime-scope ID;
+    the baseline arm accepts only the embedded locked manifest, includes one Task-denied agent with
+    the same isolation/safety/accounting controls and an equal aggregate call ceiling. Arbitrary
+    baseline config and direct host `opencode` fixtures get Fail.
 
-## 20. Benchmark и критерии готовности
+## 20. Benchmark and Readiness Criteria
 
 ### 20.1. Benchmark design
 
-Сравниваются baseline и новый profile на одном git snapshot и одинаковых задачах.
-Единица эксперимента — один scenario attempt в отдельной root session.
+The baseline and the new profile are compared on one git snapshot and identical tasks. The unit
+of experiment is one scenario attempt in a separate root session.
 
-- минимум 30 заранее закрытых holdout scenarios: 10 Tier 0/1, 10 Tier 2, 10 Tier 3;
-  tuning scenarios хранятся отдельно и не входят в acceptance gate;
-- минимум три повторения каждого scenario для каждого profile; power analysis может
-  потребовать больше повторений;
-- baseline: отдельный pack-owned/hash-locked монолитный OpenCode agent на той же
-  implementation-quality model, что `OC_MODEL_IMPLEMENTER`;
-- фиксируются OpenCode version, role-model mapping, provider settings и revision;
-- минимум два model-role profiles настраиваются только на tuning set; holdout не
-  используется для выбора победителя;
-- каждый attempt начинается с одного чистого git snapshot; порядок baseline/profile
-  рандомизируется в paired blocks;
-- cold-cache и warm-cache cohorts запускаются, публикуются и проходят production
-  gate независимо; post-hoc выбор выгодной cohort и смешивание результатов запрещены;
-- исключать attempt можно только из-за заранее определённой внешней contamination,
-  симметрично для обоих profiles и до просмотра outcome. Ошибка/нарушение самого
-  agent не является contamination;
-- deterministic checks выполняются автоматически, а human/reviewer rubric оценивается
-  вслепую без имени profile и модели;
-- внутри attempt запрещены `/new`, fork и background subagents. Их обнаружение
-  делает attempt отклонённым: весь связанный spend остаётся в CPAT numerator,
-  accepted denominator не увеличивается; все Task calls должны завершиться;
-- bootstrap unit для качества — scenario cluster со всеми repeats и обоими profiles.
-  Если 95% interval слишком широк, увеличивается прежде всего число независимых
-  scenarios, а не объявляется победа по point estimate.
+- at least 30 pre-closed holdout scenarios: 10 Tier 0/1, 10 Tier 2, 10 Tier 3; tuning scenarios
+  are stored separately and do not enter the acceptance gate;
+- at least three repetitions of each scenario for each profile; a power analysis may require more
+  repetitions;
+- baseline: a separate pack-owned/hash-locked monolithic OpenCode agent on the same
+  implementation-quality model as `OC_MODEL_IMPLEMENTER`;
+- OpenCode version, role-model mapping, provider settings, and revision are fixed;
+- at least two model-role profiles are tuned only on the tuning set; the holdout is not used to
+  pick a winner;
+- each attempt starts from one clean git snapshot; the order of baseline/profile is randomized in
+  paired blocks;
+- cold-cache and warm-cache cohorts are run, published, and pass the production gate
+  independently; post-hoc selection of a favorable cohort and mixing results are forbidden;
+- an attempt may be excluded only for a pre-defined external contamination, symmetrically for both
+  profiles and before viewing the outcome. An error/violation by the agent itself is not
+  contamination;
+- deterministic checks are run automatically, and a human/reviewer rubric is evaluated blind
+  without profile and model name;
+- within an attempt `/new`, fork, and background subagents are forbidden. Detection of them makes
+  the attempt rejected: all associated spend remains in the CPAT numerator, the accepted
+  denominator is not increased; all Task calls must complete;
+- the bootstrap unit for quality is a scenario cluster with all repeats and both profiles. If the
+  95% interval is too wide, increase first the number of independent scenarios, not declare victory
+  by point estimate.
 
-Baseline не является user config override. Release содержит immutable
-`benchmark/profiles/baseline/{opencode.jsonc,baseline-manifest.json}`; benchmark
-harness принимает только exact embedded manifest hash и создаёт отдельный sanitized
-staging tree. Тот же guard implementation активируется в явно скомпилированном
-`baseline` contract mode: один agent, `task: deny`, title/share/MCP/foreign origins
-disabled, тот же safe file/search boundary, verification policy, XDG/system/auth/env
-isolation, output accounting и provider telemetry. Его hard logical-attempt cap равен
-максимальному aggregate LLM-attempt budget profile arm, чтобы safety ceiling не давал
-одной стороне скрытого преимущества. Arbitrary manifest/path flag запрещён.
+The baseline is not a user config override. The release contains an immutable
+`benchmark/profiles/baseline/{opencode.jsonc,baseline-manifest.json}`; the benchmark harness
+accepts only the exact embedded manifest hash and builds a separate sanitized staging tree. The
+same guard implementation is activated in an explicitly compiled `baseline` contract mode: one
+agent, `task: deny`, title/share/MCP/foreign origins disabled, the same safe file/search
+boundary, verification policy, XDG/system/auth/env isolation, output accounting, and provider
+telemetry. Its hard logical-attempt cap equals the maximum aggregate LLM-attempt budget of the
+profile arm, so the safety ceiling does not give one side a hidden advantage. Arbitrary
+manifest/path flag is forbidden.
 
 Formal quality rubric: `DoD correctness`, `behavioral correctness`, `scope discipline`,
-`safety/backward compatibility`, `maintainability/evidence` оцениваются `0 | 1 | 2`.
-Результат принят, только если обязательные deterministic checks прошли, нет
-`Blocker`/`Major`, ни одна категория не равна `0`, а сумма не ниже `8/10`.
+`safety/backward compatibility`, `maintainability/evidence` are scored `0 | 1 | 2`. The result is
+accepted only if the mandatory deterministic checks passed, there is no `Blocker`/`Major`, no
+category equals `0`, and the sum is at least `8/10`.
 
-Метрики качества:
+Quality metrics:
 
 - human accept/reject;
 - deterministic build/lint/typecheck/test pass;
 - first-pass completion rate;
-- Blocker/Major/Minor/Note findings независимого blind review;
-- дефекты после принятия;
-- успешность продолжения после checkpoint/compaction.
+- Blocker/Major/Minor/Note findings of independent blind review;
+- defects after acceptance;
+- success of continuation after checkpoint/compaction.
 
-Метрики экономики:
+Economics metrics:
 
-- provider-billed CPAT и OpenCode-estimated CPAT;
-- `fresh_input`, output, reasoning, cache read/write и `total_prompt`;
-- steps и число subagent calls;
-- число retries, rework и compactions;
-- rejected spend, mean, p50, p95 и max task-tree cost;
-- latency как вторичная метрика.
+- provider-billed CPAT and OpenCode-estimated CPAT;
+- `fresh_input`, output, reasoning, cache read/write, and `total_prompt`;
+- steps and number of subagent calls;
+- number of retries, rework, and compactions;
+- rejected spend, mean, p50, p95, and max task-tree cost;
+- latency as a secondary metric.
 
-В V1.17.9 `tokens.input` трактуется как `fresh_input`; `total_prompt` равен
-`fresh_input + cache.read + cache.write`. OpenCode `cost` обычно является estimate
-из token usage и model pricing metadata, поэтому pricing snapshot сохраняется рядом
-с результатом и не называется invoice.
+In V1.17.9 `tokens.input` is treated as `fresh_input`; `total_prompt` equals
+`fresh_input + cache.read + cache.write`. OpenCode `cost` is usually an estimate from token usage
+and model pricing metadata, so the pricing snapshot is stored alongside the result and is not
+called an invoice.
 
-### 20.2. Атрибуция usage и стоимости по уровню telemetry
+### 20.2. Usage and Cost Attribution by Telemetry Level
 
 Benchmark harness:
 
-1. запускает все operations только через pack-owned
-   production `opencode-profile` для profile arm или pack-owned benchmark entrypoint
-   с embedded baseline-manifest hash для baseline arm; direct binary допустим лишь
-   как внутренний `exec` уже после общего launcher scrub/preflight. Harness фиксирует launcher version,
-   install UUID и один выбранный external runtime/provider scope для всех операций
-   попытки;
-2. извлекает intended root session ID из managed `run --format json`;
-3. через managed read-only `db --format json` и recursive CTE собирает root и всех
-   descendants по `session.parent_id`;
-4. в изолированном benchmark worktree/provider scope находит все sessions, созданные
-   между `started_at` и окончательным `cutoff_at`. Новый несвязанный root помечает
-   attempt как rejected, но он и все descendants включаются в attributable spend;
-5. после возврата intended root повторяет traversal всех обнаруженных roots, пока
-   множество session IDs, их
-   `time_updated`, tokens и cost стабильны два последовательных опроса. Background
-   execution запрещён; поздний descendant до quiescence помечает attempt rejected и
-   учитывается. `cutoff_at` фиксируется только после quiescence;
-6. суммирует session aggregate columns каждого ID ровно один раз, включая
-   Orchestrator, Task children, compaction, retries и rework. Message exports и
-   `step-finish` — только reconciliation channels и не прибавляются к rollup;
-7. ограничивает recursive traversal depth, обнаруживает cycles и требует parent для
-   каждого non-root;
-8. связывает все повторные и отклонённые attempts с scenario ID в benchmark manifest;
-9. сверяет session tree через managed `export <sessionID>`; managed
-   `stats --days <N> --models 20 --project ""` используется только для
-   aggregate reconciliation, не для attribution конкретной задачи.
+1. runs all operations only through the pack-owned production `opencode-profile` for the profile
+   arm, or the pack-owned benchmark entrypoint with embedded baseline-manifest hash for the
+   baseline arm; a direct binary is permitted only as an internal `exec` already after the common
+   launcher scrub/preflight. The harness records launcher version, install UUID, and one chosen
+   external runtime/provider scope for all operations of the attempt;
+2. extracts the intended root session ID from managed `run --format json`;
+3. via managed read-only `db --format json` and a recursive CTE collects the root and all
+   descendants by `session.parent_id`;
+4. in the isolated benchmark worktree/provider scope finds all sessions created between
+   `started_at` and the final `cutoff_at`. A new unlinked root marks the attempt as rejected, but
+   it and all descendants are included in attributable spend;
+5. after the intended root returns, repeats traversal of all discovered roots until the set of
+   session IDs, their `time_updated`, tokens, and cost are stable across two consecutive polls.
+   Background execution is forbidden; a late descendant before quiescence marks the attempt
+   rejected and is counted. `cutoff_at` is fixed only after quiescence;
+6. sums the session aggregate columns of each ID exactly once, including the Orchestrator, Task
+   children, compaction, retries, and rework. Message exports and `step-finish` are only
+   reconciliation channels and are not added to the rollup;
+7. limits recursive traversal depth, detects cycles, and requires a parent for every non-root;
+8. links all repeated and rejected attempts with scenario ID in the benchmark manifest;
+9. reconciles the session tree via managed `export <sessionID>`; managed
+   `stats --days <N> --models 20 --project ""` is used only for aggregate reconciliation, not for
+   attribution of a specific task.
 
-Manifest каждой попытки содержит `attempt_uuid`, scenario/profile/repetition,
-cache cohort, intended root session ID, все attributed session IDs, disposition и
-reason, `started_at`, `root_returned_at`, `cutoff_at`, git SHA, OpenCode version,
-launcher version, install UUID, runtime-scope ID, price-snapshot hash и provider
-scope; baseline arm дополнительно содержит baseline-manifest hash. Production и benchmark configs отключают
-`title`, поэтому неперсистируемого title LLM call нет.
+The manifest of each attempt contains `attempt_uuid`, scenario/profile/repetition, cache cohort,
+intended root session ID, all attributed session IDs, disposition and reason, `started_at`,
+`root_returned_at`, `cutoff_at`, git SHA, OpenCode version, launcher version, install UUID,
+runtime-scope ID, price-snapshot hash, and provider scope; the baseline arm additionally contains
+the baseline-manifest hash. Production and benchmark configs disable `title`, so there is no
+non-persisted title LLM call.
 
-Primary metric для cohort/profile:
+Primary metric for cohort/profile:
 
 ```text
-CPAT = provider-billed cost всех attempts в cohort / число принятых результатов
+CPAT = provider-billed cost of all attempts in cohort / number of accepted results
 ```
 
-В numerator входят успешные, отклонённые, blocked attempts, agent-caused protocol
-violations, retries, rework, служебные calls, cache writes и compaction. При нуле
-принятых результатов CPAT равен infinity. Исключается только заранее объявленная
-внешняя contamination по правилу выше. Для распределения дополнительно публикуется
-полный OpenCode-estimated cost каждого attributed session forest и rejected spend;
-provider-billed forest cost доступен только на Level A.
+The numerator includes successful, rejected, blocked attempts, agent-caused protocol violations,
+retries, rework, service calls, cache writes, and compaction. With zero accepted results CPAT
+equals infinity. Only pre-declared external contamination per the rule above is excluded. For
+distribution, the full OpenCode-estimated cost of each attributed session forest and rejected
+spend are additionally published; provider-billed forest cost is available only at Level A.
 
-Источник истины для денег — provider billing/usage API или invoice. Различаются две
-независимые величины: `billing coverage` — доля provider bill внутри изолированного
-benchmark scope, и `attribution granularity` — доля bill, сопоставленная attempt или
-`paired block × profile arm`. Для economics Pass обе должны быть не ниже 95% на
-требуемом уровне.
+The source of truth for money is the provider billing/usage API or invoice. Two independent
+quantities are distinguished: `billing coverage` — the share of the provider bill inside the
+isolated benchmark scope, and `attribution granularity` — the share of the bill matched to an
+attempt or `paired block × profile arm`. For an economics Pass both must be at least 95% at the
+required level.
 
-| Уровень telemetry | Доступное утверждение |
+| Telemetry level | Available assertion |
 | --- | --- |
-| A: request-level billed records + stable request IDs | per-attempt billed cost, p95 и scenario-cluster bootstrap |
-| B: отдельный закрытый bill для каждого `paired block × profile arm` | cohort CPAT-ratio CI через paired resampling independently billed arm subtotals |
-| C: один изолированный cohort invoice total | только point CPAT; billed CI/p95 = `N/A` |
-| D: OpenCode session rollups + pinned prices | per-attempt estimated distribution, не provider-billed |
-| E: только managed `stats` | aggregate sanity check, не attribution |
+| A: request-level billed records + stable request IDs | per-attempt billed cost, p95, and scenario-cluster bootstrap |
+| B: a separate closed bill for each `paired block × profile arm` | cohort CPAT-ratio CI via paired resampling of independently billed arm subtotals |
+| C: one isolated cohort invoice total | point CPAT only; billed CI/p95 = `N/A` |
+| D: OpenCode session rollups + pinned prices | per-attempt estimated distribution, not provider-billed |
+| E: managed `stats` only | aggregate sanity check, not attribution |
 
-Level A сохраняет request IDs и join к attempt. Level B получает два независимо
-billed subtotal внутри каждого paired block — отдельно для baseline и profile —
-через независимые provider projects/keys или непересекающиеся закрытые billing
-windows; затем arm totals объединяются только в paired contrast для bootstrap.
-Один общий bill на обе arms является Level C, не Level B. Нельзя распределять cohort
-invoice пропорционально OpenCode estimates и затем bootstrap-ировать искусственную
-дисперсию. При Level C–E economics gate получает
-`Unverified`; quality и token gates публикуются отдельно. Недоступные cache/reasoning
-breakdowns получают `N/A`, а не ноль.
+Level A keeps request IDs and joins to attempt. Level B gets two independently billed subtotals
+within each paired block — separately for baseline and profile — via independent provider
+projects/keys or non-overlapping closed billing windows; then arm totals are combined only in
+paired contrast for the bootstrap. A single common bill for both arms is Level C, not Level B.
+One may not distribute the cohort invoice proportionally to OpenCode estimates and then bootstrap
+an artificial variance. At Levels C–E the economics gate gets `Unverified`; quality and token
+gates are published separately. Unavailable cache/reasoning breakdowns get `N/A`, not zero.
 
-Нормативная bootstrap unit для обоих Level A/B — paired scenario cluster: один
-заранее зафиксированный scenario со всеми repeats одной cache cohort и обеими arms.
-Level B биллит каждый `cluster × arm` отдельно. В каждой bootstrap replicate paired
-clusters выбираются с возвращением; затем для каждой arm заново вычисляется
-`CPAT* = Σ billed_cost / Σ accepted`, после чего
-`R* = 1 - CPAT*_profile / CPAT*_baseline`. Усреднять per-block ratios запрещено.
-Нулевой aggregate accepted denominator profile означает Fail (`CPAT = infinity`);
-нулевой denominator baseline или `infinity/infinity` делает contrast undefined и
-economics gate `Unverified`. Point estimate также всегда является ratio of sums.
+The normative bootstrap unit for both Level A/B is the paired scenario cluster: one
+pre-fixed scenario with all repeats of one cache cohort and both arms. Level B bills each
+`cluster × arm` separately. In each bootstrap replicate paired clusters are drawn with
+replacement; then for each arm `CPAT* = Σ billed_cost / Σ accepted` is recomputed, after which
+`R* = 1 - CPAT*_profile / CPAT*_baseline`. Averaging per-block ratios is forbidden. A zero
+aggregate accepted denominator for the profile means Fail (`CPAT = infinity`); a zero baseline
+denominator or `infinity/infinity` makes the contrast undefined and the economics gate
+`Unverified`. The point estimate is also always a ratio of sums.
 
 ### 20.3. Production acceptance gate
 
-- ни одного ухудшения на security/data-loss сценариях;
-- cold-cache и warm-cache cohorts независимо удовлетворяют всем применимым quality,
-  token и economics thresholds ниже;
-- deterministic gates проходят для всех принятых задач;
-- для contrast `success_profile - success_baseline` нижняя односторонняя 95% граница
-  строго больше `-0.05`;
-- economics telemetry имеет Level A или B, а billing coverage и attribution
-  granularity не ниже 95%;
-- для contrast `1 - CPAT_profile / CPAT_baseline` нижняя односторонняя 95% граница
-  не меньше `0.20`. На Level A и B применяется один алгоритм paired
-  scenario-cluster bootstrap выше; Level B использует два independently billed arm
-  subtotals для каждого cluster;
-- fresh input на accepted result и total prompt публикуются раздельно; снижение
-  fresh input не меньше 20% без роста total prompt cost;
-- на Level A billed p95 task-tree cost не выше baseline более чем на 10%; на Level B
-  применяется тот же предел к распределению block CPAT, а billed task p95 = `N/A`;
-- минимум 90% простых fixtures выполняются без subagent;
-- simple-task cost не превышает baseline более чем на 10%;
-- medium route использует не более трёх subagent calls без retry;
-- high-risk route включает Architect и Reviewer;
-- после общего budget в два rework cycles автоматический loop прекращается;
-- resume из checkpoint успешно восстанавливает 9 из 10 контрольных задач.
+- no regression on security/data-loss scenarios;
+- cold-cache and warm-cache cohorts independently satisfy all applicable quality, token, and
+  economics thresholds below;
+- deterministic gates pass for all accepted tasks;
+- for the contrast `success_profile - success_baseline` the lower one-sided 95% bound is strictly
+  greater than `-0.05`;
+- economics telemetry is Level A or B, and billing coverage and attribution granularity are at
+  least 95%;
+- for the contrast `1 - CPAT_profile / CPAT_baseline` the lower one-sided 95% bound is at least
+  `0.20`. At Level A and B the same paired scenario-cluster bootstrap algorithm above is applied;
+  Level B uses two independently billed arm subtotals for each cluster;
+- fresh input per accepted result and total prompt are published separately; reduction of fresh
+  input is at least 20% without growth of total prompt cost;
+- at Level A billed p95 task-tree cost is no higher than baseline by more than 10%; at Level B the
+  same limit applies to the distribution of block CPAT, and billed task p95 = `N/A`;
+- at least 90% of simple fixtures run without subagent;
+- simple-task cost does not exceed baseline by more than 10%;
+- the medium route uses no more than three subagent calls without retry;
+- the high-risk route includes Architect and Reviewer;
+- after the total budget of two rework cycles the automatic loop stops;
+- resume from checkpoint successfully restores 9 of 10 control tasks.
 
-Optimization target после первого tuning cycle:
+Optimization target after the first tuning cycle:
 
-- provider-billed CPAT ниже baseline минимум на 30%;
-- fresh input на accepted result ниже минимум на 40%;
-- simple-task cost ниже минимум на 50%;
-- доля вынужденных escalation с дешёвой модели на дорогую ниже 20%.
+- provider-billed CPAT below baseline by at least 30%;
+- fresh input per accepted result below by at least 40%;
+- simple-task cost below by at least 50%;
+- the share of forced escalation from a cheap model to an expensive one below 20%.
 
-Если production gate не достигнут, configuration pack не называется готовым.
+If the production gate is not reached, the configuration pack is not called ready.
 
-## 21. Этапы поставки
+## 21. Delivery Stages
 
-1. Утвердить это ТЗ и разрешить создание runtime-артефактов.
-2. Создать scaffold конфигурации, guard/search plugin, prompts, skills и Notebook templates.
-3. Реализовать validator и role smoke tests.
-4. Проверить permissions и failure fixtures.
-5. Зафиксировать baseline и выполнить benchmark.
-6. Настроить routing, budgets, steps и role profiles по данным.
-7. Провести независимое ревью и выпустить README/install guide.
+1. Approve this specification and permit creation of runtime artifacts.
+2. Create the configuration scaffold, guard/search plugin, prompts, skills, and Notebook
+   templates.
+3. Implement the validator and role smoke tests.
+4. Verify permissions and failure fixtures.
+5. Fix the baseline and run the benchmark.
+6. Tune routing, budgets, steps, and role profiles from the data.
+7. Conduct an independent review and release the README/install guide.
 
-До явного утверждения этого документа разрешены только его правки, ревью и анализ.
-После утверждения пользователь отдельно разрешает создание runtime-файлов.
+Until explicit approval of this document, only its editing, review, and analysis are permitted.
+After approval the user separately permits creation of runtime files.
 
-## 22. Принятые архитектурные решения
+## 22. Accepted Architectural Decisions
 
-- продукт является OpenCode configuration pack, а не отдельной системой;
-- production target — OpenCode `1.17.9` V1;
-- Router реализован как policy primary Orchestrator, не внешний сервис;
-- простые задачи используют fast lane без обязательного Router skill/subagent;
-- модели и провайдеры сменные и связываются через capability roles;
-- task-specific контекст subagent состоит из Task packet и чтения файлов on demand;
-  кроме него OpenCode добавляет system prompt, role prompt, project instructions,
-  tool schemas и разрешённый skill catalog;
-- full transcript не копируется в child task;
-- Packet является ephemeral contract;
-- core использует один обязательный fail-closed project-local guard/search plugin;
-- recursion guard реализован `permission.task`, а не отсутствующим `subagent_depth`;
-- альтернативные selectable built-in agents отключены;
-- установка является transactional installer-managed overlay с hash ownership;
-- compaction использует отдельную capability-модель, title LLM call отключён;
-- Reviewer обязателен по риску, а не для каждой мелкой правки;
-- checkpoint milestone-based и не требует автоматического `/new`;
-- качество и экономия подтверждаются paired benchmark с полной session-tree usage/
-  estimated-cost attribution и fail-closed provider-billing telemetry levels.
+- the product is an OpenCode configuration pack, not a separate system;
+- production target is OpenCode `1.17.9` V1;
+- the Router is implemented as a policy primary Orchestrator, not an external service;
+- simple tasks use a fast lane without a mandatory Router skill/subagent;
+- models and providers are interchangeable and bound via capability roles;
+- task-specific subagent context consists of the Task packet and on-demand file reading; in
+  addition OpenCode adds the system prompt, role prompt, project instructions, tool schemas, and
+  the permitted skill catalog;
+- full transcript is not copied into the child task;
+- the Packet is an ephemeral contract;
+- core uses one mandatory fail-closed project-local guard/search plugin;
+- the recursion guard is implemented by `permission.task`, not a missing `subagent_depth`;
+- alternative selectable built-in agents are disabled;
+- installation is a transactional installer-managed overlay with hash ownership;
+- compaction uses a separate capability-model, the title LLM call is disabled;
+- Reviewer is mandatory by risk, not for every minor edit;
+- checkpoint is milestone-based and does not require automatic `/new`;
+- quality and savings are confirmed by a paired benchmark with full session-tree usage/
+  estimated-cost attribution and fail-closed provider-billing telemetry levels.
 
-## 23. Оставшиеся вопросы
+## 23. Open Questions
 
 ### Approval gate
 
-- Явное утверждение пользователем перехода от ТЗ к созданию runtime-конфигурации.
+- Explicit user approval to move from specification to creation of runtime configuration.
 
-Draft 0.4 зафиксирован как review checkpoint. Реализация runtime-артефактов не
-начиналась; замечания пользователя войдут в следующую ревизию до approval gate.
+Draft 0.4 is recorded as a review checkpoint. Runtime artifact implementation has not started;
+user comments will enter the next revision before the approval gate.
 
-### Non-blocker, решаются при установке или benchmark
+### Non-blockers, resolved at installation or benchmark
 
-- конкретные provider/model IDs для capability slots;
-- provider-specific variants и cache options;
-- точные project verification commands;
-- необходимость optional lease или telemetry plugin;
-- окончательная настройка steps и budgets после измерений.
+- specific provider/model IDs for capability slots;
+- provider-specific variants and cache options;
+- exact project verification commands;
+- need for an optional lease or telemetry plugin;
+- final tuning of steps and budgets after measurement.
 
-## 24. Официальные источники
+## 24. Official Sources
 
 - OpenCode Config: <https://opencode.ai/docs/config/>
 - OpenCode Agents: <https://opencode.ai/docs/agents/>
