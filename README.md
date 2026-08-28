@@ -6,7 +6,7 @@
 
 > A useful agent should not merely produce code. It should understand the task, choose the right amount of process, finish the work, verify the result, and remember where it was.
 
-NLA is built around a simple idea: skills can change how a general-purpose model works. Roles, gates, independent review, memory, and recovery turn an ordinary coding agent into a small engineering team.
+Next Level Agent (NLA) is built around a simple idea: skills can change how a general-purpose model works. Roles, gates, independent review, memory, and recovery turn an ordinary coding agent into a small engineering team.
 
 The priorities are correctness, evidence, minimal necessary process, bounded context, recovery, and observable execution.
 
