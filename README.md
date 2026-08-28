@@ -3,7 +3,7 @@
 > A skill-driven multi-agent development system for OpenCode that can take a task from the first idea to verified completion.
 
 > [!WARNING]
-> NLA is currently developed and tested specifically for OpenCode. Support for any other coding-agent CLI is not guaranteed.
+> NLA is currently developed and tested specifically for OpenCode. Support for any other coding-agent CLI is not guaranteed. If you need another CLI, you are welcome to complete and test the corresponding integration yourself.
 
 Next Level Agent (NLA) turns an ordinary coding agent into a small engineering team. It keeps one primary coordinator in the conversation, brings in specialized agents only when the task justifies their cost, survives model failures and context compaction, and leaves evidence you can inspect afterward.
 
