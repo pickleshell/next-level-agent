@@ -2,15 +2,23 @@
 
 > A skill-driven multi-agent development system for OpenCode that can take a task from the first idea to verified completion.
 
-> [!WARNING]
-> NLA is currently developed and tested specifically for OpenCode. Support for any other coding-agent CLI is not guaranteed. If you need another CLI, you are welcome to complete and test the corresponding integration yourself.
+## Philosophy
 
-Next Level Agent (NLA) turns an ordinary coding agent into a small engineering team. It keeps one primary coordinator in the conversation, brings in specialized agents only when the task justifies their cost, survives model failures and context compaction, and leaves evidence you can inspect afterward.
+> A useful agent should not merely produce code. It should understand the task, choose the right amount of process, finish the work, verify the result, and remember where it was.
 
-> [!IMPORTANT]
-> **NLA is a managed multi-agent system with one accountable coordinator, specialized roles, independent decision and review gates, role-specific model pools, and durable state recovery. It is not a collection of prompts.** Prompts define role behavior, while the NLA plugin controls delegation, model failover, session relationships, workflow memory, compaction, restoration, and telemetry.
+NLA is built around a simple idea: skills can change the operating system of an agent. The underlying model remains a general-purpose model, but the workflow around it gives the model roles, checkpoints, independent review, recovery paths, and memory. The result behaves much closer to a real multi-agent system than a single chat with a long prompt.
+
+The priorities are:
+
+1. Correctness and evidence before claims.
+2. The smallest workflow that is safe for the task.
+3. Fresh, bounded context for specialized agents.
+4. Recovery from provider and context failures.
+5. Observable behavior instead of invisible orchestration.
 
 ## Why NLA
+
+**NLA is a managed multi-agent system with one accountable coordinator, specialized roles, independent decision and review gates, role-specific model pools, and durable state recovery. It is not a collection of prompts.** Prompts define role behavior, while the NLA plugin controls delegation, model failover, session relationships, workflow memory, compaction, restoration, and telemetry.
 
 - **One accountable coordinator.** NLA owns the user conversation, goal, approvals, sequencing, memory, and final acceptance.
 - **End-to-end delivery.** The workflow continues from clarification and design through implementation, verification, review, and completion.
@@ -25,21 +33,18 @@ Next Level Agent (NLA) turns an ordinary coding agent into a small engineering t
 - **Observable execution.** Structured telemetry records sessions, models, failover, context usage, tools, compaction, and restoration without copying the conversation.
 - **A disciplined development pipeline.** Superpowers skills provide brainstorming, planning, TDD, debugging, worktrees, review, verification, and branch completion.
 
-The design of NLA began independently as the [Next-Level OpenCode Profile specification](TECHNICAL_SPECIFICATION.md). Its current implementation uses [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent and Prime Radiant as a practical starting point: Superpowers already demonstrated the same skills-first idea in a mature development pipeline. NLA keeps that discipline and adds its own OpenCode-native orchestration, risk routing, role-based model pools, architectural and supervisory gates, durable working memory, controlled compaction, and session telemetry.
+## Install
 
-## Philosophy
+> [!WARNING]
+> NLA is currently developed and tested specifically for OpenCode. Support for any other coding-agent CLI is not guaranteed. If you need another CLI, you are welcome to complete and test the corresponding integration yourself.
 
-> A useful agent should not merely produce code. It should understand the task, choose the right amount of process, finish the work, verify the result, and remember where it was.
+Ask your OpenCode or Codex agent to clone this repository, read [`AGENTS.md`](AGENTS.md), and follow [`INSTALL.md`](INSTALL.md). Codex may assist with installation, but the complete NLA runtime currently runs in OpenCode.
 
-NLA is built around a simple idea: skills can change the operating system of an agent. The underlying model remains a general-purpose model, but the workflow around it gives the model roles, checkpoints, independent review, recovery paths, and memory. The result behaves much closer to a real multi-agent system than a single chat with a long prompt.
+Use this prompt:
 
-The priorities are:
-
-1. Correctness and evidence before claims.
-2. The smallest workflow that is safe for the task.
-3. Fresh, bounded context for specialized agents.
-4. Recovery from provider and context failures.
-5. Observable behavior instead of invisible orchestration.
+```text
+Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md completely, and follow INSTALL.md to install and verify NLA for OpenCode. Preserve my existing configuration and credentials. Do not claim success without showing the resolved plugin, default agent, skills path, model pools, and smoke-test evidence.
+```
 
 ## What NLA Is For
 
@@ -236,26 +241,6 @@ NLA saves the complete ledger
 ```
 
 This is one of the main differences between NLA and ordinary context summarization. The system restores not only a prose summary, but also the task goal, acceptance criteria, approvals, evidence, blockers, changed files, and next action.
-
-## Quick Start
-
-NLA currently targets OpenCode and expects provider authentication to be configured in the user's OpenCode profile.
-
-For the supported Alpha installation, external-project launch, verification, updating, and uninstall boundaries, read [`INSTALL.md`](INSTALL.md).
-
-```bash
-git clone https://github.com/pickleshell/next-level-agent.git
-cd next-level-agent
-opencode
-```
-
-A healthy session shows the `nla` agent and automatically loads the `next-level-agent` bootstrap skill.
-
-The checked-in [`opencode.json`](opencode.json) is the source of truth for agents, models, compaction, plugins, and skills. Configure role pools in [`config/model-pools.json`](config/model-pools.json).
-
-For installation details, runtime behavior, tests, and log events, read [`docs/NLA_INSTALL_AND_TEST.md`](docs/NLA_INSTALL_AND_TEST.md).
-
-For current Alpha status, running NLA against another project, requirements, known limitations, data locations, telemetry examples, and the focused roadmap, read [`docs/PROJECT_STATUS_AND_USAGE.md`](docs/PROJECT_STATUS_AND_USAGE.md).
 
 ## Configuration
 
