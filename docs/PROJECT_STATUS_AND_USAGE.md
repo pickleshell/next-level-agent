@@ -1,0 +1,303 @@
+# Project Status and Usage
+
+This document describes the current operational status of Next Level Agent, the supported way to run it against a project, known limitations, data locations, model configuration, telemetry, evidence from real runs, and the focused roadmap for NLA Core.
+
+For architecture and roles, start with the main [README](../README.md). For the original design, read [Draft 0.4](../TECHNICAL_SPECIFICATION.md). For a detailed comparison between that draft and the current implementation, read the [implementation status audit](DRAFT_0_4_IMPLEMENTATION_STATUS.md).
+
+## Status
+
+**Current maturity: Alpha, active development**
+
+The core NLA workflow is operational and has passed real end-to-end tests. NLA can classify work, create specialized child sessions, use role-specific model pools, fail over after model rejection, maintain a private workflow ledger, use Assistant Notebook, run controlled compaction, restore the same primary session, and emit structured telemetry.
+
+NLA is not yet production-ready as a hardened security boundary. Some role restrictions are behavioral contracts in prompts rather than a complete least-privilege permission matrix. The full guard, validator, hard budget enforcement, and managed installation system proposed in Draft 0.4 are not implemented.
+
+## Supported Environment
+
+NLA is currently developed and tested specifically for OpenCode.
+
+| Component | Current status |
+| --- | --- |
+| Runtime | OpenCode |
+| Current locally installed OpenCode | `1.18.9` |
+| Historical Draft 0.4 target | `1.17.9` |
+| Primary development platform | Linux |
+| Persistent TUI/server | Required for controlled post-response compaction |
+| Other coding-agent CLIs | Not tested or guaranteed |
+
+The Draft 0.4 version is historical and should not be interpreted as the current tested runtime version. OpenCode is evolving, so compatibility should be verified after every runtime upgrade.
+
+If you need another coding-agent CLI, you are welcome to implement and test the corresponding integration. Support should not be claimed until the complete NLA workflow, tools, memory, failover, compaction, and restoration have passed an end-to-end test on that CLI.
+
+## Requirements
+
+- OpenCode installed and available on `PATH`;
+- provider authentication configured through OpenCode;
+- at least one working model assigned to the primary `nla` agent;
+- at least one available model in every enabled role pool;
+- a persistent OpenCode TUI or server for controlled compaction;
+- a stable local clone of this repository;
+- Git for repository work and normal Superpowers workflows.
+
+API keys and provider credentials do not belong in this repository, model-pool configuration, ledger, Notebook, or telemetry.
+
+## Running NLA Against a Project
+
+There is no transactional installer in the current NLA Core. The supported development setup uses OpenCode's custom-config mechanism and keeps the NLA clone in a stable location.
+
+Clone NLA once:
+
+```bash
+git clone https://github.com/pickleshell/next-level-agent.git "$HOME/.local/share/nla/next-level-agent"
+```
+
+Run OpenCode against your project with the checked-in NLA configuration:
+
+```bash
+export OPENCODE_CONFIG="$HOME/.local/share/nla/next-level-agent/opencode.json"
+opencode /absolute/path/to/your/project
+```
+
+OpenCode resolves the relative plugin and skill paths from the custom configuration file location. The project passed to `opencode` remains the working project.
+
+OpenCode merges configuration sources. A target project's own `opencode.json`, `.opencode` directory, global configuration, or managed configuration may alter or override NLA settings. The current alpha does not provide the Draft 0.4 validator that proves the final resolved configuration. Inspect the result before relying on it:
+
+```bash
+OPENCODE_CONFIG="$HOME/.local/share/nla/next-level-agent/opencode.json" \
+  opencode debug config
+```
+
+Do not overwrite an existing global or project configuration merely to install NLA. Preserve user configuration and resolve conflicts deliberately.
+
+### Demo inside the NLA repository
+
+For a basic smoke test only:
+
+```bash
+git clone https://github.com/pickleshell/next-level-agent.git
+cd next-level-agent
+opencode
+```
+
+This proves that the checked-in configuration can load. It is not the normal way to work on an unrelated project.
+
+## Healthy Startup
+
+A healthy session should show the `nla` primary agent and load the `next-level-agent` bootstrap skill before answering.
+
+The effective configuration should include:
+
+- `default_agent: nla`;
+- the local `next-level-agent.js` plugin;
+- the repository `skills` path;
+- the configured role catalog;
+- automatic compaction and pruning;
+- the expected model bindings.
+
+## What Controls What
+
+NLA is not implemented by prompts alone.
+
+| Layer | Responsibility |
+| --- | --- |
+| Superpowers skills | Brainstorming, planning, TDD, debugging, review, verification, worktrees, and branch completion discipline |
+| NLA coordinator prompt and bootstrap skill | Role identity, routing policy, gates, sequencing, and behavioral contracts |
+| NLA OpenCode plugin | Child sessions, role model pools, failover, session graph, private ledger, Notebook tools, controlled compaction, restoration, and telemetry |
+| OpenCode runtime | Models, provider access, tools, sessions, permissions, native summarization, and user interface |
+
+Prompts explain what a role should do. The plugin provides the operational mechanisms that make NLA a managed multi-agent system.
+
+## Example Workflow
+
+Consider a request to add resumable uploads to an existing service.
+
+```text
+User describes the feature
+→ NLA classifies it as Tier 3
+→ Explorer maps the current upload path
+→ Scout checks applicable storage or protocol documentation when needed
+→ Architect compares viable designs
+→ NLA discusses the recommendation with the user
+→ the user approves the design
+→ NLA creates the implementation plan
+→ Implementer changes the scoped files and runs checks
+→ Reviewer independently evaluates the diff and evidence
+→ Supervisor checks completion state
+→ NLA checkpoints and reports the accepted result
+```
+
+For a small one-file correction, NLA should select Tier 1, make the bounded edit directly, verify it, and avoid the cost of creating a team.
+
+## Evidence from a Real Compaction Run
+
+A real persistent OpenCode test demonstrated the following sequence:
+
+- one primary NLA session remained the root throughout the task;
+- the primary model was recorded by telemetry;
+- Supervisor and Compactor ran in separate child sessions linked to the same root;
+- effective context before controlled compaction was recorded as 17,762 tokens;
+- native OpenCode compaction completed;
+- the structured ledger was restored into the same primary session;
+- NLA returned the correct remembered README heading without reading the file again.
+
+The validation response began with:
+
+```text
+TELEMETRY_COMPACT_OK
+```
+
+The response also contained the correct legacy README heading. This test verified continuity at that point in project history. The heading has since changed, but the restoration result remains valid evidence for the tested session.
+
+## Model Pools
+
+Model pools are configured in [`config/model-pools.json`](../config/model-pools.json).
+
+```json
+{
+  "architect": {
+    "enabled": true,
+    "models": [
+      "preferred/provider-model",
+      "fallback/provider-model"
+    ],
+    "idle_timeout_ms": 300000,
+    "max_failovers": 1
+  }
+}
+```
+
+Rules:
+
+- models are tried in order;
+- the first entry is preferred;
+- the next entry is the bounded fallback;
+- `max_failovers` prevents retry loops;
+- each role has its own timeout;
+- the same child session is retained across a supported failover;
+- the visible primary NLA session does not silently switch models;
+- every attempt, failure, fallback, and success is logged.
+
+The current Architect pool intentionally starts with `nvidia/qwen/qwen3-coder-480b-a35b-instruct`. That endpoint has returned HTTP 410 and is retained as a live failover probe. It should be replaced with a healthy preferred model for normal use. Model-failure testing should eventually move to a dedicated fixture.
+
+## Local Data and Privacy
+
+### Session ledger
+
+```text
+~/.local/share/nla/sessions/<session-id>.json
+```
+
+The ledger stores the goal, Tier, stage, acceptance criteria, approved decisions, completed and active work, changed files, verification, blockers, pending gate, and exact next step.
+
+### Assistant Notebook
+
+```text
+~/.local/share/nla/assistant-notebook/
+```
+
+Notebook contains compact durable knowledge and retrieval cues. It must not contain transcripts, secrets, raw logs, or speculative completion claims.
+
+### Runtime telemetry
+
+```text
+<project>/.opencode/agent-run.log
+```
+
+Telemetry records lifecycle metadata such as sessions, models, tool events, failover, context usage, and compaction. It does not intentionally copy prompts, model replies, or tool output.
+
+NLA creates private state directories with mode `0700` and state files with mode `0600`. Writes use atomic replacement. Obvious secret assignments are rejected, but this is not a complete secret scanner. Users remain responsible for keeping credentials out of memory and logs.
+
+## Reading Telemetry
+
+Find failed model attempts:
+
+```bash
+rg '"event":"model_attempt_failed"' .opencode/agent-run.log
+```
+
+Find model failover:
+
+```bash
+rg '"event":"model_fallback_started"' .opencode/agent-run.log
+```
+
+Find compaction and restoration:
+
+```bash
+rg '"event":"(compaction_started|context_compacted|context_restored|context_after_compaction)"' \
+  .opencode/agent-run.log
+```
+
+Trace a complete task tree:
+
+```bash
+rg '"root_session_id":"ses_your_root_id"' .opencode/agent-run.log
+```
+
+Distinguish session behavior:
+
+- a new root `session_id` means a new primary session;
+- a child ID with the same `root_session_id` is a subagent;
+- normal compaction retains the primary `session_id`;
+- `session_observed` means the plugin attached to an existing session;
+- `session_model_bound` records the effective provider and model.
+
+## Known Limitations
+
+- NLA is supported only on OpenCode at present.
+- Linux is the primary tested platform.
+- some role boundaries are enforced by prompts rather than a complete hard permission matrix;
+- the mandatory `profile-guard` proposed in Draft 0.4 is not implemented;
+- strict Task Context Packet schema and size validation are not implemented;
+- hard token, call, time, and monetary budgets are not enforced;
+- selectable `build` and `plan` agents can bypass the NLA coordinator;
+- global, project, remote, or managed OpenCode configuration may alter the resolved profile;
+- there is no transactional installer, drift detector, or deterministic profile validator;
+- controlled compaction requires a persistent TUI or server;
+- one-shot `opencode run` may exit before the idle-boundary compaction pipeline completes;
+- the current Architect preferred endpoint is intentionally useful as a failing probe;
+- the inherited Superpowers OpenCode test runner still contains fork-specific assumptions and Node 18 ESM incompatibility in two old tests;
+- role model quality and provider availability are installation-specific;
+- NLA is not a sandbox and does not replace operating-system security boundaries.
+
+For a full requirement-by-requirement analysis, read [Draft 0.4 Implementation Status](DRAFT_0_4_IMPLEMENTATION_STATUS.md).
+
+## Focused Roadmap
+
+The next milestone is reliability of NLA Core, not expansion of the installer.
+
+1. Enforce hard read-only and delegation permissions for specialized roles.
+2. Add a strict Task Context Packet validator to `nla_task`.
+3. Prevent optional agents from bypassing the NLA coordinator in an NLA-only profile.
+4. Machine-check approval, verification, review, checkpoint, and completion transitions.
+5. Exercise Supervisor gates on multiple real Tier 2 and Tier 3 tasks.
+6. Run a small practical benchmark across five to ten representative tasks.
+7. Replace the deliberately failing Architect preferred endpoint with a healthy model.
+8. Add independently tested CLI integrations only when contributors need them.
+
+The installer, managed launcher, immutable snapshots, complete guard, and statistical economic benchmark remain a separate possible product named NLA Managed Profile. They are deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement.
+
+## Contributing
+
+Useful contributions include:
+
+- OpenCode runtime fixes;
+- role-permission hardening;
+- Task Context Packet validation;
+- workflow transition checks;
+- behavioral and end-to-end tests;
+- model-pool integrations and deterministic failure fixtures;
+- telemetry analysis tools;
+- independently tested integrations for other coding-agent CLIs.
+
+Do not claim support for a model, OpenCode version, operating system, or CLI based only on configuration files being present. Provide end-to-end evidence that routing, tools, child sessions, failover, memory, compaction, restoration, and final acceptance work together.
+
+## Updating NLA
+
+The current development installation is a Git clone. Review changes before updating, then pull the desired branch or pinned commit:
+
+```bash
+git -C "$HOME/.local/share/nla/next-level-agent" pull --ff-only
+```
+
+Restart OpenCode after updating plugin, skills, or configuration files. Re-run a startup smoke test and inspect `opencode debug config` after OpenCode upgrades or model changes.
