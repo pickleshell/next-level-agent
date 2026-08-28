@@ -25,17 +25,6 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 Prompts define role behavior. The NLA plugin controls delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
-## Install
-
-> [!WARNING]
-> NLA is currently developed and tested specifically for OpenCode. Support for other coding-agent CLIs is not guaranteed. If you need another CLI, you are welcome to complete and test the integration.
-
-Ask your OpenCode or Codex agent to clone this repository, read [`AGENTS.md`](AGENTS.md), and follow [`INSTALL.md`](INSTALL.md). Codex may assist with installation, but the complete NLA runtime currently runs in OpenCode.
-
-```text
-Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md completely, and follow INSTALL.md to install and verify NLA for OpenCode. Preserve my existing configuration and credentials. Do not claim success without showing the resolved plugin, default agent, skills path, model pools, and smoke-test evidence.
-```
-
 ## Architecture and Roles
 
 Primary NLA is the only user-facing coordinator and the exclusive owner of shared memory. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA.
@@ -109,13 +98,24 @@ NLA saves the ledger
 
 Small tasks do not pay for the full workflow. NLA adds agents and gates only when risk and uncertainty justify them.
 
-## Status
+## Current Development Status
 
 **Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed real end-to-end tests.
 
 Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
 
 Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
+
+## Install
+
+> [!WARNING]
+> NLA is currently developed and tested specifically for OpenCode. Support for other coding-agent CLIs is not guaranteed. If you need another CLI, you are welcome to complete and test the integration.
+
+Ask your OpenCode or Codex agent to clone this repository, read [`AGENTS.md`](AGENTS.md), and follow [`INSTALL.md`](INSTALL.md). Codex may assist with installation, but the complete NLA runtime currently runs in OpenCode.
+
+```text
+Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md completely, and follow INSTALL.md to install and verify NLA for OpenCode. Preserve my existing configuration and credentials. Do not claim success without showing the resolved plugin, default agent, skills path, model pools, and smoke-test evidence.
+```
 
 ## Documentation
 
