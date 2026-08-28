@@ -7,6 +7,9 @@
 
 Next Level Agent (NLA) turns an ordinary coding agent into a small engineering team. It keeps one primary coordinator in the conversation, brings in specialized agents only when the task justifies their cost, survives model failures and context compaction, and leaves evidence you can inspect afterward.
 
+> [!IMPORTANT]
+> **NLA is not a collection of prompts. It is a managed multi-agent system with one accountable coordinator, specialized roles, independent decision and review gates, role-specific model pools, and durable state recovery.** Prompts define role behavior, while the NLA plugin controls delegation, model failover, session relationships, workflow memory, compaction, restoration, and telemetry.
+
 The design of NLA began independently as the [Next-Level OpenCode Profile specification](TECHNICAL_SPECIFICATION.md). Its current implementation uses [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent and Prime Radiant as a practical starting point: Superpowers already demonstrated the same skills-first idea in a mature development pipeline. NLA keeps that discipline and adds its own OpenCode-native orchestration, risk routing, role-based model pools, architectural and supervisory gates, durable working memory, controlled compaction, and session telemetry.
 
 ## Philosophy
@@ -124,7 +127,7 @@ These are mandatory behavioral skills rather than a list of optional suggestions
 
 ## Architecture and Roles
 
-NLA is a supervised multi-agent system with one user-facing coordinator. It is not a loose collection of agents talking to one another. Primary NLA owns the goal, conversation, routing, approvals, durable memory, sequencing, and final acceptance. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA.
+NLA is a supervised multi-agent system with one user-facing coordinator. It is not a prompt pack or a loose collection of agents talking to one another. Primary NLA owns the goal, conversation, routing, approvals, durable memory, sequencing, and final acceptance. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA through controlled gates.
 
 This structure provides four practical advantages:
 
