@@ -10,6 +10,21 @@ Next Level Agent (NLA) turns an ordinary coding agent into a small engineering t
 > [!IMPORTANT]
 > **NLA is a managed multi-agent system with one accountable coordinator, specialized roles, independent decision and review gates, role-specific model pools, and durable state recovery. It is not a collection of prompts.** Prompts define role behavior, while the NLA plugin controls delegation, model failover, session relationships, workflow memory, compaction, restoration, and telemetry.
 
+## Why NLA
+
+- **One accountable coordinator.** NLA owns the user conversation, goal, approvals, sequencing, memory, and final acceptance.
+- **End-to-end delivery.** The workflow continues from clarification and design through implementation, verification, review, and completion.
+- **Risk-based routing.** Simple tasks stay direct, while complex or high-risk work receives the additional roles and gates it needs.
+- **Specialized roles.** Explorer, Scout, Architect, Implementer, Reviewer, Supervisor, and Compactor work in focused child sessions.
+- **Architecture before implementation.** Tier 3 work cannot proceed to planning until Architect has evaluated the design and the user has approved it.
+- **Independent quality control.** Reviewer checks the result, while Supervisor checks workflow alignment, evidence, blockers, loops, and completion state.
+- **Model pools with failover.** Each role can move from a failed or unavailable preferred model to a bounded fallback without losing the child session.
+- **Fresh bounded context.** Subagents receive focused task packets instead of the complete conversation, reducing distraction and duplicated context.
+- **Durable memory.** A private session ledger and Assistant Notebook preserve verified decisions, milestones, blockers, and exact next steps.
+- **Safe context recovery.** Controlled compaction audits state, creates a checkpoint, runs native summarization, restores the ledger, and continues the same session.
+- **Observable execution.** Structured telemetry records sessions, models, failover, context usage, tools, compaction, and restoration without copying the conversation.
+- **A disciplined development pipeline.** Superpowers skills provide brainstorming, planning, TDD, debugging, worktrees, review, verification, and branch completion.
+
 The design of NLA began independently as the [Next-Level OpenCode Profile specification](TECHNICAL_SPECIFICATION.md). Its current implementation uses [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent and Prime Radiant as a practical starting point: Superpowers already demonstrated the same skills-first idea in a mature development pipeline. NLA keeps that discipline and adds its own OpenCode-native orchestration, risk routing, role-based model pools, architectural and supervisory gates, durable working memory, controlled compaction, and session telemetry.
 
 ## Philosophy
