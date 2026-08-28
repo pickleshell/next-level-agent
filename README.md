@@ -122,23 +122,102 @@ NLA retains the core Superpowers workflow: brainstorming, worktree isolation, ex
 
 These are mandatory behavioral skills rather than a list of optional suggestions. They are what allows a general coding model to carry a task through a repeatable engineering process.
 
-## How It Works
+## Architecture and Roles
+
+NLA is a supervised multi-agent system with one user-facing coordinator. It is not a loose collection of agents talking to one another. Primary NLA owns the goal, conversation, routing, approvals, durable memory, sequencing, and final acceptance. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA.
+
+This structure provides four practical advantages:
+
+1. **Clear ownership.** One coordinator remains accountable for the complete task.
+2. **Independent judgment.** Architecture, implementation, review, and workflow audit can use separate contexts and models.
+3. **Controlled cost.** Simple work stays with NLA, while expensive delegation is reserved for tasks that benefit from it.
+4. **Operational resilience.** Model failover, durable state, compaction recovery, and telemetry prevent one provider or context failure from silently destroying the workflow.
+
+### System map
 
 ```text
 User
   ↓
-NLA — primary coordinator, ledger owner, acceptance owner
-  ├─ Explorer — repository and problem discovery
-  ├─ Architect — design alternatives and architecture gate
-  ├─ Implementer — bounded code changes
-  ├─ Reviewer — independent specification and quality review
-  ├─ Supervisor — workflow and evidence audit
-  └─ Compactor — faithful recovery checkpoint
+NLA: primary coordinator, memory owner, acceptance owner
+  ├─ Router: optional Tier classification
+  ├─ Explorer: repository and problem discovery
+  ├─ Scout: external documentation and dependency research
+  ├─ Architect: design alternatives and architecture gate
+  ├─ Implementer: bounded code changes and verification
+  ├─ Reviewer: independent specification and quality review
+  ├─ Supervisor: workflow, evidence, budget, and drift audit
+  └─ Compactor: faithful recovery checkpoint
        ↓
-Model pool — preferred model → bounded fallback
+Role model pool: preferred model → bounded fallback
 ```
 
-NLA keeps the user-facing conversation coherent. Specialized roles return reports to NLA rather than taking over the session. The coordinator remains responsible for approvals, sequencing, acceptance criteria, and the final claim of completion.
+Child sessions carry both `parent_session_id` and `root_session_id`. This makes the full task tree observable without confusing a specialized child with a restarted primary session.
+
+### Role catalog
+
+| Role | Type | Responsibility | Typical use | Writes project files | Shared memory access |
+| --- | --- | --- | --- | --- | --- |
+| **NLA** | Primary | User dialogue, Tier selection, delegation, approvals, sequencing, acceptance, and direct Tier 0/1 work | Every task | Tier 1 direct edits | Exclusive owner |
+| **Router** | Internal subagent | Returns a bounded Tier, route, required roles, gate state, and budget recommendation | Optional routing assistance | No | No |
+| **Explorer** | Subagent | Finds relevant files, symbols, dependencies, facts, and local risks | Tier 2/3 discovery | No | No |
+| **Scout** | Subagent | Researches official documentation, versions, and external dependencies | When local evidence is insufficient | No | No |
+| **Architect** | Subagent | Compares viable designs and defines boundaries, interfaces, data flow, failure handling, risks, and tests | Tier 3 design gate | No | No |
+| **Implementer** | Subagent | Performs a scoped change and returns verification evidence | Approved Tier 2/3 implementation | Yes | No |
+| **Reviewer** | Subagent | Independently checks the requested scope, actual change, evidence, and quality | Risk-based review gate | No | No |
+| **Supervisor** | Subagent | Audits goal alignment, approvals, blockers, repeated loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion | No | No |
+| **Compactor** | Subagent | Converts the current structured state into a faithful recovery checkpoint | Before controlled compaction | No | No |
+
+The table describes each role's NLA contract. Some least-privilege boundaries are still enforced behaviorally by role prompts rather than by the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact current boundary.
+
+Router is available as an internal role, but NLA can classify straightforward requests directly. Supervisor does not become a second coordinator. It returns a verdict, while NLA remains responsible for acting on it. Only primary NLA may read or update Assistant Notebook and the shared session ledger.
+
+### Tier 2 execution
+
+```text
+User request
+→ NLA classification
+→ Explorer
+→ Implementer
+→ Verification
+→ Reviewer when required
+→ Checkpoint
+→ NLA acceptance
+```
+
+Tier 2 is intended for non-trivial implementation with moderate risk. Each specialized role receives only the context needed for its job.
+
+### Tier 3 execution
+
+```text
+User request
+→ NLA clarification
+→ Explorer and optional Scout
+→ Architect
+→ NLA discusses the design with the user
+→ Explicit user approval
+→ Implementation plan
+→ Implementer
+→ Verification
+→ Reviewer
+→ Supervisor completion audit
+→ Checkpoint
+→ NLA acceptance
+```
+
+Architect does not take over the user conversation and does not implement code. It gives NLA a decision packet. NLA cannot proceed to implementation planning until the design is approved.
+
+### Controlled compaction
+
+```text
+NLA saves the complete ledger
+→ Supervisor audits workflow continuity
+→ Compactor creates a recovery checkpoint
+→ OpenCode performs native summarization
+→ NLA restores the structured ledger
+→ the same primary session continues from the exact next step
+```
+
+This is one of the main differences between NLA and ordinary context summarization. The system restores not only a prose summary, but also the task goal, acceptance criteria, approvals, evidence, blockers, changed files, and next action.
 
 ## Quick Start
 
@@ -199,12 +278,12 @@ Real end-to-end checks have covered model rejection and fallback, persistent led
 
 ## Documentation
 
-- [Original technical specification](TECHNICAL_SPECIFICATION.md) — the initial product brief and architectural requirements.
-- [Draft 0.4 implementation status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) — what NLA has achieved, what remains partial or absent, and the recommended practical scope.
-- [Installation and testing](docs/NLA_INSTALL_AND_TEST.md) — current OpenCode setup and operational behavior.
-- [NLA modifications](NLA_MODIFICATIONS.md) — boundary between the Superpowers base and NLA additions.
-- [Superpowers](https://github.com/obra/superpowers) — the upstream project and original methodology.
-- [Assistant Notebook](https://github.com/pickleshell/skills/tree/main/assistant-notebook) — the durable fast-memory skill used by NLA.
+- [Original technical specification](TECHNICAL_SPECIFICATION.md): the initial product brief and architectural requirements.
+- [Draft 0.4 implementation status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md): what NLA has achieved, what remains partial or absent, and the recommended practical scope.
+- [Installation and testing](docs/NLA_INSTALL_AND_TEST.md): current OpenCode setup and operational behavior.
+- [NLA modifications](NLA_MODIFICATIONS.md): boundary between the Superpowers base and NLA additions.
+- [Superpowers](https://github.com/obra/superpowers): the upstream project and original methodology.
+- [Assistant Notebook](https://github.com/pickleshell/skills/tree/main/assistant-notebook): the durable fast-memory skill used by NLA.
 
 ## History
 
@@ -212,11 +291,11 @@ NLA did not begin as a Superpowers fork. I first designed the [Next-Level OpenCo
 
 While reviewing the plan, I asked Grok whether similar systems already existed. It returned several alternatives, including Superpowers. Superpowers was not a ready-made implementation of the full NLA specification, but its ideology immediately matched an important part of mine: a great deal of agent behavior can be built at the skill layer. More importantly, it demonstrated that claim in practice through a development pipeline that had already progressed much further than I expected.
 
-I installed Superpowers, ran it on a simple task, and liked the result. That made it a compelling quick start: rather than implement every workflow skill from zero, I could use a compatible and proven skills-first pipeline as the implementation base, then evolve it toward the existing NLA design. Superpowers is therefore best understood as the closest ideological alternative I found and the practical foundation of this implementation—not the origin of the NLA plan.
+I installed Superpowers, ran it on a simple task, and liked the result. That made it a compelling quick start: rather than implement every workflow skill from zero, I could use a compatible and proven skills-first pipeline as the implementation base, then evolve it toward the existing NLA design. Superpowers is therefore best understood as the closest ideological alternative I found and the practical foundation of this implementation, not the origin of the NLA plan.
 
 The current NLA combines both lines: Superpowers contributes the core development discipline, while the original profile contributes risk tiers, explicit architecture, supervision, model resilience, durable memory, controlled compaction, and operational telemetry. The [technical specification](TECHNICAL_SPECIFICATION.md) preserves the original direction; the implementation has since evolved through real tasks and failure cases, so current runtime documentation is authoritative where later behavior differs from Draft 0.4.
 
-I am now working on multi-agent systems at a different scale. Having a miniature version of such a system on my own machine — and seeing it genuinely complete useful tasks from beginning to end — feels like owning a toy robot that actually helps around the house.
+I am now working on multi-agent systems at a different scale. Having a miniature version of such a system on my own machine, and seeing it genuinely complete useful tasks from beginning to end, feels like owning a toy robot that actually helps around the house.
 
 ## Credits
 
