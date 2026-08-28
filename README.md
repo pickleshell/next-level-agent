@@ -197,6 +197,7 @@ Real end-to-end checks have covered model rejection and fallback, persistent led
 ## Documentation
 
 - [Original technical specification](TECHNICAL_SPECIFICATION.md) — the initial product brief and architectural requirements.
+- [Draft 0.4 implementation status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) — what NLA has achieved, what remains partial or absent, and the recommended practical scope.
 - [Installation and testing](docs/NLA_INSTALL_AND_TEST.md) — current OpenCode setup and operational behavior.
 - [NLA modifications](NLA_MODIFICATIONS.md) — boundary between the Superpowers base and NLA additions.
 - [Superpowers](https://github.com/obra/superpowers) — the upstream project and original methodology.
