@@ -4,7 +4,7 @@
 
 Next Level Agent (NLA) turns an ordinary coding agent into a small engineering team. It keeps one primary coordinator in the conversation, brings in specialized agents only when the task justifies their cost, survives model failures and context compaction, and leaves evidence you can inspect afterward.
 
-NLA is based on [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent and Prime Radiant. Superpowers supplies the development discipline; NLA adds OpenCode-native orchestration, role-based model pools, architectural and supervisory gates, durable working memory, controlled compaction, and session telemetry.
+The design of NLA began independently as the [Next-Level OpenCode Profile specification](TECHNICAL_SPECIFICATION.md). Its current implementation uses [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent and Prime Radiant as a practical starting point: Superpowers already demonstrated the same skills-first idea in a mature development pipeline. NLA keeps that discipline and adds its own OpenCode-native orchestration, risk routing, role-based model pools, architectural and supervisory gates, durable working memory, controlled compaction, and session telemetry.
 
 ## Philosophy
 
@@ -204,13 +204,13 @@ Real end-to-end checks have covered model rejection and fallback, persistent led
 
 ## History
 
-I originally wanted to build this idea at the skill layer myself. Superpowers matched the ideology I was looking for, and I was pleasantly surprised by how far it had already advanced specifically as a software-development pipeline.
+NLA did not begin as a Superpowers fork. I first designed the [Next-Level OpenCode Profile](TECHNICAL_SPECIFICATION.md) as a repository-local configuration pack for OpenCode. Draft 0.4 already described native-first orchestration, Tier 0–3 risk routing, bounded child context, specialized capability roles, least privilege, evidence gates, durable state, compaction, safety controls, and cost measurement. At that point it was a plan under architecture review, not an implementation.
 
-I installed it quickly, gave it a simple task, and was generally satisfied with the result. That led to a practical conclusion: why not use it as the starting point? It was already a strong foundation, and it demonstrated something important — skills really can lift an apparently ordinary agent into a genuine multi-agent workflow. That is impressive.
+While reviewing the plan, I asked Grok whether similar systems already existed. It returned several alternatives, including Superpowers. Superpowers was not a ready-made implementation of the full NLA specification, but its ideology immediately matched an important part of mine: a great deal of agent behavior can be built at the skill layer. More importantly, it demonstrated that claim in practice through a development pipeline that had already progressed much further than I expected.
 
-NLA grew from that experiment. The Superpowers discipline remains the base, while NLA adds the pieces I wanted for daily OpenCode work: risk tiers, explicit architecture, supervision, model resilience, durable memory, safe compaction, and enough telemetry to understand what the system actually did.
+I installed Superpowers, ran it on a simple task, and liked the result. That made it a compelling quick start: rather than implement every workflow skill from zero, I could use a compatible and proven skills-first pipeline as the implementation base, then evolve it toward the existing NLA design. Superpowers is therefore best understood as the closest ideological alternative I found and the practical foundation of this implementation—not the origin of the NLA plan.
 
-The original direction is preserved in the [technical specification](TECHNICAL_SPECIFICATION.md). The implementation has evolved through real tasks and failure cases, so the current runtime documentation is authoritative where later behavior differs from that first draft.
+The current NLA combines both lines: Superpowers contributes the core development discipline, while the original profile contributes risk tiers, explicit architecture, supervision, model resilience, durable memory, controlled compaction, and operational telemetry. The [technical specification](TECHNICAL_SPECIFICATION.md) preserves the original direction; the implementation has since evolved through real tasks and failure cases, so current runtime documentation is authoritative where later behavior differs from Draft 0.4.
 
 I am now working on multi-agent systems at a different scale. Having a miniature version of such a system on my own machine — and seeing it genuinely complete useful tasks from beginning to end — feels like owning a toy robot that actually helps around the house.
 
@@ -218,7 +218,7 @@ I am now working on multi-agent systems at a different scale. Having a miniature
 
 Next Level Agent is built by [PickleShell](https://github.com/pickleshell).
 
-The foundation is [Superpowers](https://github.com/obra/superpowers), created by [Jesse Vincent](https://blog.fsck.com) and Prime Radiant. NLA began from Superpowers commit `b36e082`; attribution and the upstream license are preserved.
+The implementation foundation is [Superpowers](https://github.com/obra/superpowers), created by [Jesse Vincent](https://blog.fsck.com) and Prime Radiant. This implementation fork began from Superpowers commit `b36e082`; attribution and the upstream license are preserved. The NLA product plan and Draft 0.4 specification predate the decision to use Superpowers as that foundation.
 
 The Assistant Notebook skill comes from [pickleshell/skills](https://github.com/pickleshell/skills).
 
