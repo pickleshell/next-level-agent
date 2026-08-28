@@ -10,7 +10,7 @@ NLA is built around a simple idea: skills can change how a general-purpose model
 
 The priorities are correctness, evidence, minimal necessary process, bounded context, recovery, and observable execution.
 
-## What Is NLA?
+## What Is This?
 
 **NLA is a managed multi-agent system with one accountable coordinator, specialized roles, independent decision and review gates, role-specific model pools, and durable state recovery. It is not a collection of prompts.**
 
