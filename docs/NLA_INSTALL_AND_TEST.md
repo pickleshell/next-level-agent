@@ -143,3 +143,91 @@ model_fallback_started
 model_attempt_started
 model_attempt_succeeded
 ```
+
+## Supervisor, session memory, and compaction
+
+Primary `nla` is the coordinator. Supervisor is a bounded independent auditor,
+not a second coordinator. Tier 3 uses Supervisor at the design gate, execution
+gate, material milestones or anomalies, pre-compaction, and completion. Tier 2
+uses it only for repeated failures, blockers, scope drift, long-running
+milestones, or compaction. Tier 0 and Tier 1 do not use Supervisor.
+
+Primary NLA maintains a private structured ledger with `nla_state`. The ledger
+is stored outside the repository under:
+
+```text
+~/.local/share/nla/sessions/<session-id>.json
+```
+
+It preserves the goal, Tier, workflow stage, acceptance criteria, approved
+decisions, completed and active work, changed files, verification, blockers,
+pending gate, and exact next step. Files are atomically replaced with mode
+`0600`; directories use `0700`. Obvious secret assignments are rejected.
+
+### Assistant Notebook
+
+The checked-in `skills/assistant-notebook` is vendored unchanged from
+`pickleshell/skills`. Only primary NLA may use `nla_notebook`; subagents receive
+bounded context packets and cannot use the shared memory. The default local
+backend is:
+
+```text
+~/.local/share/nla/assistant-notebook
+```
+
+Set `ASSISTANT_NOTEBOOK_DIR` to override it. NLA reads Contents plus one
+relevant page at substantive session entry, project switch, or restoration,
+then reuses that context. Notebook pages contain durable retrieval cues, not
+transcripts, logs, secrets, or unverified completion claims.
+
+### Safe automatic compaction
+
+Built-in OpenCode `compaction.auto` remains enabled as an emergency fallback,
+with native pruning enabled and `reserved: 32000`. Planned NLA compaction should
+normally run earlier with a workflow checkpoint; native auto protects the TUI
+if NLA or its plugin cannot complete that path. NLA monitors the latest prompt
+token usage reported by OpenCode:
+
+```text
+NLA_CONTEXT_SOFT_TOKENS=50000
+NLA_CONTEXT_HARD_TOKENS=70000
+```
+
+At the soft threshold, NLA receives a one-time instruction to save its ledger
+and compact at the next safe boundary. At the hard threshold, compaction is
+scheduled automatically. It waits until the primary session is idle and no
+pooled child task is active, then runs:
+
+```text
+Supervisor audit
+→ Compactor checkpoint through its model pool
+→ client.session.summarize()
+→ session.compacted
+→ noReply restore packet
+```
+
+`nla_compact` schedules the same pipeline explicitly. It must not call native
+summarization from inside its active tool call because OpenCode serializes work
+on a session; the idle-boundary handoff avoids that deadlock. A persistent
+OpenCode TUI/server completes this post-response lifecycle. A one-shot
+`opencode run` process can exit before background idle work completes and is
+therefore not a supported automatic-compaction host.
+
+Relevant run-log evidence includes `session_ledger_saved`, `context_threshold`,
+`compaction_scheduled`, `compaction_started`, pooled Supervisor and Compactor
+attempts, `compaction_requested`, `context_compacted`, and `context_restored`.
+
+### Session and context telemetry
+
+Every event includes `session_id` and, when known, `root_session_id`. A new
+session produces `session_created` (or `session_observed` when the plugin
+attaches after creation). Child sessions also contain `parent_session_id` and
+`kind: subagent`. `session_model_bound` records the effective provider/model.
+
+`context_usage` records input, cache-read, and effective context tokens without
+logging prompt contents. A normal compaction keeps the same `session_id` and
+emits `compaction_started`, `context_compacted`, `context_restored`, then
+`context_after_compaction` with `tokens_reclaimed` and `compaction_number`.
+A different root `session_id` means a newly created primary session; a different
+child ID with the same `root_session_id` is a Supervisor, Compactor, or other
+subagent rather than a restarted NLA session.

@@ -61,6 +61,7 @@ done
 tests=(
     "test-plugin-loading.sh"
     "test-bootstrap-caching.sh"
+    "test-nla-memory.sh"
 )
 
 # Integration tests (require OpenCode)

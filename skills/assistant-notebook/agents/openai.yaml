@@ -1,0 +1,13 @@
+interface:
+  display_name: "Assistant Notebook"
+  short_description: "Recall context without replacing it"
+  default_prompt: "Use $assistant-notebook to recall relevant notes while keeping the available conversation and context primary."
+  icon_small: "assets/icon.svg"
+  icon_large: "assets/icon.svg"
+policy:
+  products:
+    - "chatgpt"
+    - "codex"
+    - "api"
+    - "atlas"
+  allow_implicit_invocation: true
