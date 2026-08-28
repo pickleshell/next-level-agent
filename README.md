@@ -34,10 +34,15 @@ flowchart TB
 
     T -->|Tier 0 or 1| D[Direct work<br/>and verification]
     T -->|Tier 2 or 3| E[Explore and research]
-    E --> A{Architecture gate<br/>when required}
-    A --> I[Implement]
+    E --> AG{Architecture required?}
+    AG -->|No| I[Implement]
+    AG -->|Yes| A[Architect]
+    A --> G{User approval}
+    G -->|Approved| I
     I --> V[Verify]
-    V --> R{Independent review<br/>when required}
+    V --> RG{Independent review required?}
+    RG -->|No| X
+    RG -->|Yes| R[Reviewer]
     D --> X[Acceptance]
     R --> X
 
@@ -45,6 +50,7 @@ flowchart TB
     P -. power .-> A
     P -. power .-> I
     P -. power .-> R
+    P -. power .-> C
 
     N <--> M[(Ledger and<br/>Assistant Notebook)]
     N -. context pressure .-> C[Supervisor audit<br/>and Compactor checkpoint]
@@ -57,7 +63,7 @@ flowchart TB
     classDef gate fill:#f5c451,color:#111,stroke:#333;
     classDef memory fill:#78c6a3,color:#111,stroke:#333;
     class N primary;
-    class T,A,R gate;
+    class T,AG,G,RG gate;
     class M memory;
 ```
 
