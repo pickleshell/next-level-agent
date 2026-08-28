@@ -226,6 +226,8 @@ This is one of the main differences between NLA and ordinary context summarizati
 
 NLA currently targets OpenCode and expects provider authentication to be configured in the user's OpenCode profile.
 
+For the supported Alpha installation, external-project launch, verification, updating, and uninstall boundaries, read [`INSTALL.md`](INSTALL.md).
+
 ```bash
 git clone https://github.com/pickleshell/next-level-agent.git
 cd next-level-agent
@@ -284,6 +286,7 @@ Real end-to-end checks have covered model rejection and fallback, persistent led
 ## Documentation
 
 - [Original technical specification](TECHNICAL_SPECIFICATION.md): the initial product brief and architectural requirements.
+- [Installation](INSTALL.md): supported Alpha setup for running NLA against an OpenCode project.
 - [Draft 0.4 implementation status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md): what NLA has achieved, what remains partial or absent, and the recommended practical scope.
 - [Project status and usage](docs/PROJECT_STATUS_AND_USAGE.md): supported environment, external-project launch, limitations, telemetry, model pools, roadmap, and contributions.
 - [Installation and testing](docs/NLA_INSTALL_AND_TEST.md): current OpenCode setup and operational behavior.
