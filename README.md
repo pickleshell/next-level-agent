@@ -4,8 +4,7 @@ Next Level Agent (NLA) is an OpenCode workflow for long or complex software deve
 
 ## Philosophy
 
-> [!NOTE]
-> **Any task can be solved in a single prompt.**
+> Any task can be solved in a single prompt.
 
 > Skills can change how a general-purpose model works. NLA adds coordination, role separation, model failover, memory, and context management around those skills.
 
