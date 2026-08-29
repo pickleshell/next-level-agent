@@ -1,25 +1,24 @@
 # Next Level Agent
 
-Next Level Agent (NLA) helps OpenCode complete software development tasks from clarification and design through implementation, verification, and review. It is intended for work that benefits from specialized agents, model failover, bounded context, and recovery during long sessions.
+Next Level Agent (NLA) is an OpenCode workflow for long or complex software development tasks. It keeps one coordinator responsible for the task while specialized agents handle research, architecture, implementation, review, supervision, and context recovery.
 
 ## Philosophy
 
-Skills can change how a general-purpose model works. NLA combines them with roles, gates, review, memory, and recovery to handle a complete development task.
+Skills can change how a general-purpose model works. NLA adds coordination, role separation, model failover, memory, and context management around those skills.
 
 The priorities are correctness, evidence, minimal necessary process, bounded context, recovery, and observable execution.
 
 **NLA is a managed multi-agent system with one coordinator, specialized roles, independent decision and review gates, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
-- **One coordinator.** NLA owns the goal, user conversation, approvals, sequencing, memory, and final acceptance.
-- **Complete workflow.** Work can cover clarification, design, implementation, verification, review, and completion.
-- **Risk-based routing.** Simple tasks stay direct. Complex and high-risk tasks receive the roles and gates they need.
-- **Specialized agents.** Explorer, Scout, Architect, Implementer, Reviewer, Supervisor, and Compactor work in focused child sessions.
-- **Independent gates.** Architect evaluates important designs, Reviewer checks the result, and Supervisor checks workflow state and evidence.
-- **Model resilience.** Role-specific pools provide bounded failover when a preferred model is unavailable or fails.
-- **Bounded context.** Subagents receive focused task packets instead of the full conversation.
-- **Memory and recovery.** A private ledger, Assistant Notebook, controlled compaction, and restoration preserve verified state and the next step.
-- **Telemetry.** NLA records sessions, models, failover, context usage, compaction, and restoration without copying the conversation.
-- **Development workflow.** Superpowers skills provide brainstorming, planning, TDD, debugging, worktrees, review, verification, and branch completion.
+- **One coordinator.** NLA owns the goal, user conversation, approvals, sequence, shared memory, and final acceptance.
+- **Risk-based routing.** Small tasks stay with NLA. Larger or riskier tasks receive only the roles and gates they need.
+- **Architecture before implementation.** Important designs and Tier 3 tasks go through Architect and user approval before code changes begin.
+- **Independent checks.** Reviewer checks the result, while Supervisor checks workflow state, approvals, context pressure, and evidence.
+- **Role-specific model pools.** Each child role can use a preferred model and bounded fallbacks, so one failed model does not have to stop the task.
+- **Efficient context use.** Child agents receive focused task packets instead of the full conversation. Completed state is kept in structured memory rather than repeatedly copied into prompts.
+- **Coordinator memory.** A private ledger and Assistant Notebook preserve decisions, verified facts, blockers, and the next step across a long task.
+- **Automatic context protection.** OpenCode auto-compaction handles normal context pressure. NLA adds monitoring, a Supervisor audit, a Compactor checkpoint, and state restoration for controlled recovery.
+- **Telemetry.** NLA records session relationships, selected models, failover, context usage, compaction, and restoration without copying the conversation itself.
 
 Prompts define role behavior. The NLA plugin controls delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
