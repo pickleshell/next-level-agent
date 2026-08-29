@@ -8,6 +8,8 @@ Skills can change how a general-purpose model works. NLA adds coordination, role
 
 The priorities are correctness, evidence, minimal necessary process, bounded context, recovery, and observable execution.
 
+## Why NLA?
+
 **NLA is a managed multi-agent system with one coordinator, specialized roles, independent decision and review gates, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
 - **One coordinator.** NLA owns the goal, user conversation, approvals, sequence, shared memory, and final acceptance.
