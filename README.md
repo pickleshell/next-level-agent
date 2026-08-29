@@ -70,13 +70,14 @@ flowchart TB
 
 ## What NLA Can Do
 
-### GPU Top
-
-To test NLA on a real development task, I asked it to create an htop-style terminal monitor for an AMD Radeon 780M, Ollama models, and GPU processes.
-
-After I selected the initial parameters and approved the design, NLA planned the work, used specialized implementation and review roles, fixed issues found during review, ran the tests, and completed the working application without manual coding intervention.
-
-[View the GPU Top source and original task](https://github.com/pickleshell/utilities/tree/main/gpu-top).
+> [!NOTE]
+> **GPU Top**
+>
+> To test NLA on a real development task, I asked it to create an htop-style terminal monitor for an AMD Radeon 780M, Ollama models, and GPU processes.
+>
+> After I selected the initial parameters and approved the design, NLA planned the work, used specialized implementation and review roles, fixed issues found during review, ran the tests, and completed the working application without manual coding intervention.
+>
+> [View the GPU Top source and original task](https://github.com/pickleshell/utilities/tree/main/gpu-top).
 
 ## Architecture and Roles
 
