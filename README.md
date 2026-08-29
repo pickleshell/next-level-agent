@@ -167,8 +167,6 @@ I am also working on larger multi-agent systems. Running a small version locally
 
 ## Credits and License
 
-Next Level Agent is built by [PickleShell](https://github.com/pickleshell).
-
 The implementation is based on [Superpowers](https://github.com/obra/superpowers), created by [Jesse Vincent](https://blog.fsck.com) and Prime Radiant. This fork began from Superpowers commit `b36e082`. Attribution and the upstream license are preserved.
 
 Assistant Notebook comes from [pickleshell/skills](https://github.com/pickleshell/skills).
