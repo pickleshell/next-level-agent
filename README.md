@@ -1,27 +1,25 @@
 # Next Level Agent
 
-> A skill-driven multi-agent system for OpenCode that takes a task from the first idea to verified completion.
+> A managed multi-agent workflow for OpenCode, from task routing to verified completion.
 
 ## Philosophy
 
-> A useful agent should not merely produce code. It should understand the task, choose the right amount of process, finish the work, verify the result, and remember where it was.
-
-Next Level Agent (NLA) is built around a simple idea: skills can change how a general-purpose model works. Roles, gates, independent review, memory, and recovery turn an ordinary coding agent into a small engineering team.
+Skills can change how a general-purpose model works. NLA combines them with roles, gates, review, memory, and recovery to handle a complete development task.
 
 The priorities are correctness, evidence, minimal necessary process, bounded context, recovery, and observable execution.
 
-**NLA is a managed multi-agent system with one accountable coordinator, specialized roles, independent decision and review gates, role-specific model pools, and durable state recovery. It is not a collection of prompts.**
+**NLA is a managed multi-agent system with one coordinator, specialized roles, independent decision and review gates, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
 - **One coordinator.** NLA owns the goal, user conversation, approvals, sequencing, memory, and final acceptance.
-- **End-to-end delivery.** Work continues from clarification and design through implementation, verification, review, and completion.
+- **Complete workflow.** Work can cover clarification, design, implementation, verification, review, and completion.
 - **Risk-based routing.** Simple tasks stay direct. Complex and high-risk tasks receive the roles and gates they need.
 - **Specialized agents.** Explorer, Scout, Architect, Implementer, Reviewer, Supervisor, and Compactor work in focused child sessions.
-- **Independent gates.** Architect evaluates important designs, Reviewer checks the result, and Supervisor audits workflow state and evidence.
+- **Independent gates.** Architect evaluates important designs, Reviewer checks the result, and Supervisor checks workflow state and evidence.
 - **Model resilience.** Role-specific pools provide bounded failover when a preferred model is unavailable or fails.
 - **Bounded context.** Subagents receive focused task packets instead of the full conversation.
-- **Durable memory and recovery.** A private ledger, Assistant Notebook, controlled compaction, and restoration preserve verified state and exact next steps.
-- **Observable execution.** Telemetry records sessions, models, failover, context usage, compaction, and restoration without copying the conversation.
-- **A proven development discipline.** Superpowers skills provide brainstorming, planning, TDD, debugging, worktrees, review, verification, and branch completion.
+- **Memory and recovery.** A private ledger, Assistant Notebook, controlled compaction, and restoration preserve verified state and the next step.
+- **Telemetry.** NLA records sessions, models, failover, context usage, compaction, and restoration without copying the conversation.
+- **Development workflow.** Superpowers skills provide brainstorming, planning, TDD, debugging, worktrees, review, verification, and branch completion.
 
 Prompts define role behavior. The NLA plugin controls delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
@@ -29,7 +27,7 @@ Prompts define role behavior. The NLA plugin controls delegation, model failover
 
 ```mermaid
 flowchart TB
-    U[User] --> N[NLA<br/>one accountable coordinator]
+    U[User] --> N[NLA<br/>one coordinator]
     N --> T{Risk tier}
 
     T -->|Tier 0 or 1| D[Direct work<br/>and verification]
@@ -46,11 +44,11 @@ flowchart TB
     D --> X[Acceptance]
     R --> X
 
-    P[Role-specific model pools<br/>preferred model to fallback] -. power .-> E
-    P -. power .-> A
-    P -. power .-> I
-    P -. power .-> R
-    P -. power .-> C
+    P[Role-specific model pools<br/>preferred model to fallback] -. models .-> E
+    P -. models .-> A
+    P -. models .-> I
+    P -. models .-> R
+    P -. models .-> C
 
     N <--> M[(Ledger and<br/>Assistant Notebook)]
     N -. context pressure .-> C[Supervisor audit<br/>and Compactor checkpoint]
@@ -69,7 +67,7 @@ flowchart TB
 
 ## Architecture and Roles
 
-Primary NLA is the only user-facing coordinator and the exclusive owner of shared memory. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA.
+NLA is the only user-facing coordinator and owns the shared memory. Specialized roles receive bounded assignments, work in child sessions, and return evidence to NLA.
 
 | Role | Responsibility | Typical use |
 | --- | --- | --- |
@@ -81,7 +79,7 @@ Primary NLA is the only user-facing coordinator and the exclusive owner of share
 | **Implementer** | Performs a bounded code change and returns verification evidence | Approved Tier 2/3 implementation |
 | **Reviewer** | Independently checks the scope, change, evidence, and quality | Risk-based review gate |
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
-| **Compactor** | Creates a faithful recovery checkpoint from structured state | Before controlled compaction |
+| **Compactor** | Creates a recovery checkpoint from structured state | Before controlled compaction |
 
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
@@ -122,11 +120,11 @@ NLA saves the ledger
 → the same primary session continues
 ```
 
-Small tasks do not pay for the full workflow. NLA adds agents and gates only when risk and uncertainty justify them.
+Small tasks use a shorter workflow. NLA adds agents and gates when risk and uncertainty justify them.
 
 ## Current Development Status
 
-**Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed real end-to-end tests.
+**Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed end-to-end tests.
 
 Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
 
@@ -156,13 +154,13 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 
 ## History
 
-NLA began as the independent [Next-Level OpenCode Profile Draft 0.4](TECHNICAL_SPECIFICATION.md), a plan for native OpenCode orchestration, risk routing, specialized roles, bounded context, verification, memory, safety, and cost measurement.
+NLA started as the independent [Next-Level OpenCode Profile Draft 0.4](TECHNICAL_SPECIFICATION.md), a plan for OpenCode orchestration, risk routing, specialized roles, bounded context, verification, memory, safety, and cost measurement.
 
-While reviewing that plan, I asked Grok to find similar systems. Superpowers was one of several alternatives and the closest ideological match. It showed in practice that skills could turn a general coding agent into a disciplined development pipeline. I installed it, tested it on a simple task, liked the result, and chose it as a practical quick start rather than rebuilding every workflow skill from zero.
+While reviewing the plan, I asked Grok to find similar systems. Superpowers was one of several alternatives. Its skills-based approach was close to what I had planned, and it already provided a useful development workflow. I tested it on a simple task and chose it as a quick start instead of rebuilding the same workflow skills.
 
-Superpowers is the implementation foundation, not the origin of the NLA plan. NLA adds the architecture I wanted for OpenCode: risk tiers, explicit architecture, supervision, model pools, durable memory, controlled compaction, and operational telemetry.
+Superpowers is the implementation base, not the origin of the NLA plan. NLA adds risk tiers, architecture and review gates, supervision, model pools, memory, controlled compaction, and telemetry for OpenCode.
 
-I am now working on multi-agent systems at a different scale. Having a miniature version on my own machine that genuinely completes useful tasks feels like owning a toy robot that actually helps around the house.
+I am also working on larger multi-agent systems. Running a small version locally that completes useful tasks feels like having a toy robot that can actually help around the house.
 
 ## Credits and License
 
