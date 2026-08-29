@@ -180,6 +180,14 @@ Superpowers is the implementation base, not the origin of the NLA plan. NLA adds
 
 I am also working on larger multi-agent systems. Running a small version locally that completes useful tasks feels like having a toy robot that can actually help around the house.
 
+## Contact
+
+Open a GitHub issue to report a bug, suggest an improvement, or ask for help.
+
+- [Create an issue](https://github.com/pickleshell/next-level-agent/issues/new)
+- [Browse existing issues](https://github.com/pickleshell/next-level-agent/issues)
+- Email: [pickleshell.plugin@gmail.com](mailto:pickleshell.plugin@gmail.com)
+
 ## Credits and License
 
 The implementation is based on [Superpowers](https://github.com/obra/superpowers), created by [Jesse Vincent](https://blog.fsck.com) and Prime Radiant. This fork began from Superpowers commit `b36e082`. Attribution and the upstream license are preserved.
