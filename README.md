@@ -194,4 +194,4 @@ The implementation is based on [Superpowers](https://github.com/obra/superpowers
 
 Assistant Notebook comes from [pickleshell/skills](https://github.com/pickleshell/skills).
 
-MIT. See [`LICENSE`](LICENSE).
+Next Level Agent is available under the [MIT License](LICENSE).
