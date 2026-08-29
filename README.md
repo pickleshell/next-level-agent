@@ -10,7 +10,7 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 ## Why NLA?
 
-**NLA is a managed multi-agent system with one coordinator, specialized roles, independent decision and review gates, role-specific model pools, and state recovery. It is not a collection of prompts.**
+**NLA is a managed multi-agent system with one coordinator, specialized roles, explicit architecture, approval, and review stages, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
 - **One coordinator.** NLA owns the goal, user conversation, approvals, sequence, shared memory, and final acceptance.
 - **Risk-based routing.** Small tasks stay with NLA. Larger or riskier tasks receive only the roles and gates they need.
@@ -22,7 +22,7 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 - **Automatic context protection.** OpenCode auto-compaction handles normal context pressure. NLA adds monitoring, a Supervisor audit, a Compactor checkpoint, and state restoration for controlled recovery.
 - **Telemetry.** NLA records session relationships, selected models, failover, context usage, compaction, and restoration without copying the conversation itself.
 
-Prompts define role behavior. The NLA plugin controls delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
+Prompts define role behavior. The NLA plugin provides managed NLA delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
 ## At a Glance
 
@@ -138,9 +138,11 @@ Small tasks use a shorter workflow. NLA adds agents and gates when risk and unce
 **Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed end-to-end tests.
 
 > [!WARNING]
-> NLA is developed primarily for personal use and shared as an experimental project.
+> NLA is an experimental Alpha developed and tested in a controlled personal OpenCode environment. It is not yet a hardened security boundary.
 
 Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
+
+This repository is based on Superpowers and retains some upstream integrations and tests. The complete NLA runtime is currently OpenCode-specific. Manifests for other agent platforms do not imply full NLA support on those platforms.
 
 Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
 
