@@ -126,7 +126,8 @@ Small tasks use a shorter workflow. NLA adds agents and gates when risk and unce
 
 **Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed end-to-end tests.
 
-NLA is developed primarily for personal use and shared as an experimental project.
+> [!WARNING]
+> NLA is developed primarily for personal use and shared as an experimental project.
 
 Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
 
