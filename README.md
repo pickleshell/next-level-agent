@@ -1,6 +1,6 @@
 # Next Level Agent
 
-> A managed multi-agent workflow for OpenCode, from task routing to verified completion.
+Next Level Agent (NLA) helps OpenCode complete software development tasks from clarification and design through implementation, verification, and review. It is intended for work that benefits from specialized agents, model failover, bounded context, and recovery during long sessions.
 
 ## Philosophy
 
