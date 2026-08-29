@@ -70,7 +70,6 @@ flowchart TB
 
 ## What NLA Can Do
 
-> [!NOTE]
 > **GPU Top**
 >
 > To test NLA on a real development task, I asked it to create an htop-style terminal monitor for an AMD Radeon 780M, Ollama models, and GPU processes.
