@@ -190,8 +190,17 @@ Open a GitHub issue to report a bug, suggest an improvement, or ask for help.
 
 ## Credits and License
 
-The implementation is based on [Superpowers](https://github.com/obra/superpowers), created by [Jesse Vincent](https://blog.fsck.com) and Prime Radiant. This fork began from Superpowers commit `b36e082`. Attribution and the upstream license are preserved.
+Next Level Agent and its original components are licensed under the
+[MIT License](LICENSE).
+
+Copyright © 2026 PickleShell.
+
+This repository includes components derived from
+[Superpowers](https://github.com/obra/superpowers). Those components remain
+Copyright © 2025 Jesse Vincent and are distributed under their original
+[MIT License](LICENSES/SUPERPOWERS.txt).
 
 Assistant Notebook comes from [pickleshell/skills](https://github.com/pickleshell/skills).
 
-Next Level Agent is available under the [MIT License](LICENSE).
+See [NLA_MODIFICATIONS.md](NLA_MODIFICATIONS.md) for the separation between
+original NLA components and inherited Superpowers components.
