@@ -202,6 +202,57 @@ instruction-following and tool-use capability. This allowance does not yet
 extend to Router, and it does not change Architect, Implementer, or Supervisor
 requirements.
 
+### Utility-model runtime
+
+A role pool can select `runtime: "utility"` to call a bounded model directly,
+without an OpenCode child session, agent loop, or tools. Pools without that
+setting retain the existing OpenCode runtime. The dispatcher is role-generic;
+Compactor is the first lifecycle consumer, and Explorer can use the same path
+when its prompt already contains all data it needs.
+
+The first backend is Ollama over non-streaming HTTP. Both the native chat API
+and Ollama's OpenAI-compatible chat API are supported. Direct diagnostics with
+`qwen3:4b` favored the native API because it was simpler and returned answer
+content separately with thinking disabled. The runtime reads only answer
+content and never mistakes a `thinking` or `reasoning` field for the answer.
+
+Keep host-specific bindings in a complete external pool file selected with
+`NLA_MODEL_POOLS_PATH`. The following is a focused excerpt; retain the other
+required roles, especially Supervisor, in the complete file:
+
+```json
+{
+  "version": 1,
+  "roles": {
+    "compactor": {
+      "enabled": true,
+      "runtime": "utility",
+      "backend": "ollama",
+      "provider": {
+        "api": "native",
+        "base_url": "http://127.0.0.1:11434"
+      },
+      "models": ["qwen3:4b"],
+      "request_timeout_ms": 90000,
+      "max_failovers": 0,
+      "output_format": "json"
+    }
+  }
+}
+```
+
+`provider.api` may be `native` or `openai-compatible`. `models` remains an
+ordered bounded pool, and `max_failovers` limits additional attempts. Every
+utility request has an explicit positive `request_timeout_ms`. `output_format`
+is optional for general bounded roles; Compactor should use `json`.
+
+Compactor validates the returned checkpoint against the deterministic ledger.
+A missing model, HTTP error, timeout, invalid response, or checkpoint that
+changes protected facts produces the existing deterministic-ledger fallback.
+Supervisor does not use this optional path during controlled compaction: its
+audit still runs through the configured OpenCode pool and any Supervisor error
+or block stops compaction fail-closed.
+
 The current Architect pool intentionally starts with `nvidia/qwen/qwen3-coder-480b-a35b-instruct`. That endpoint has returned HTTP 410 and is retained as a live failover probe. It should be replaced with a healthy preferred model for normal use. Model-failure testing should eventually move to a dedicated fixture.
 
 ## Local Data and Privacy

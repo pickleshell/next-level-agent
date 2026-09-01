@@ -16,6 +16,7 @@ import {
   thresholdState, writeNotebookPage,
 } from './nla-memory.mjs';
 import { intelligentCheckpoint } from './nla-compaction.mjs';
+import { configuredUtilityPool, runUtilityModel } from './nla-utility-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -330,6 +331,23 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     }
   };
 
+  const runRoleTask = async (args, context) => {
+    const pool = pools[args.role];
+    if (pool && pool.runtime === 'utility') {
+      if (!configuredUtilityPool(pool)) throw new Error(`Invalid utility-model configuration for role: ${args.role}`);
+      appendRunLog({ event: 'utility_model_attempt_started', session_id: context.sessionID, agent: args.role, backend: pool.backend, models: pool.models });
+      try {
+        const result = await runUtilityModel({ role: args.role, pool, prompt: args.prompt });
+        appendRunLog({ event: 'utility_model_attempt_succeeded', session_id: context.sessionID, agent: args.role, backend: pool.backend, model: result.metadata.model });
+        return { title: `${args.description} (${args.role})`, ...result };
+      } catch (error) {
+        appendRunLog({ event: 'utility_model_attempt_failed', session_id: context.sessionID, agent: args.role, backend: pool.backend, reason: String(error && error.message || error).slice(0, 180) });
+        throw error;
+      }
+    }
+    return pooledTaskWithTracking(args, context);
+  };
+
   const nlaTask = tool({
     description: 'Run one bounded NLA subagent task through its ordered model pool. Use this instead of task for NLA roles so early model errors, provider failures, and timeouts can fall back safely.',
     args: {
@@ -337,7 +355,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       description: tool.schema.string().max(120).describe('Short task title'),
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
     },
-    execute: pooledTaskWithTracking,
+    execute: runRoleTask,
   });
 
   const assertPrimaryNla = (sessionID) => {
@@ -419,7 +437,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         sessionID,
         directory: primary.directory || directory,
         pool: pools.compactor,
-        runCompactor: (prompt) => pooledTaskWithTracking({
+        runCompactor: (prompt) => runRoleTask({
           role: 'compactor',
           description: 'Create intelligent compaction checkpoint',
           prompt,
