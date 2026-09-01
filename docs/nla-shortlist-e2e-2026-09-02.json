@@ -1,0 +1,33 @@
+{
+  "runtime": "OpenCode 1.18.9",
+  "host": "BOS",
+  "successful_run": {
+    "root_session_id": "ses_fa0da77baffeIcryHj6DGI4mbb",
+    "child_session_id": "ses_fa0da1468ffeBIoE7Nu4SIppo2",
+    "role": "explorer",
+    "model": "opencode/mimo-v2.5-free",
+    "capability_cache": "cache-miss",
+    "role_profile": ["read", "grep", "glob"],
+    "tool_shortlist": ["read", "grep", "glob"],
+    "session_permissions": [
+      {"permission": "*", "pattern": "*", "action": "deny"},
+      {"permission": "read", "pattern": "*", "action": "allow"},
+      {"permission": "grep", "pattern": "*", "action": "allow"},
+      {"permission": "glob", "pattern": "*", "action": "allow"}
+    ],
+    "tools_executed": ["read", "read"],
+    "result": "# Next Level Agent",
+    "files_changed": false,
+    "attempt_status": "succeeded"
+  },
+  "local_model_limit": {
+    "root_session_id": "ses_fa0dd0884ffedxInEBdMakdm2W",
+    "child_session_id": "ses_fa0dccbe3ffefSLTiHs5jqiWpq",
+    "role": "explorer",
+    "model": "ollama-local/qwen3:4b",
+    "role_profile": ["read", "grep", "glob"],
+    "tool_shortlist": ["read", "grep", "glob"],
+    "timeout_ms": 120000,
+    "attempt_status": "timed_out"
+  }
+}

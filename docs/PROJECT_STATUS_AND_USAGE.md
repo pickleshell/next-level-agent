@@ -161,7 +161,7 @@ tool-using work still needs the appropriate capabilities. They show that
 eagerly exposing every tool can make schema prefill and context consumption
 dominate a small model's execution before it begins the useful task.
 
-The current architecture decision is dynamic prompt optimization per step:
+The implemented architecture is dynamic prompt optimization per step:
 
 - target a shortlist of 2–5 relevant tools rather than all 31;
 - keep Router focused on task and model routing (Tier, roles, gates, budgets,
@@ -170,10 +170,22 @@ The current architecture decision is dynamic prompt optimization per step:
   prompts and prunes or shortlists tool schemas before model invocation;
 - do not introduce a separate Selector role.
 
-Reducing 31 schemas to a small shortlist is expected to cut tool-schema prefill
+Reducing 31 schemas to a small shortlist is intended to cut tool-schema prefill
 and context use by roughly an order of magnitude. The benefit is most important
 for small/local models, but may also reduce latency and input cost for cloud
-models. No runtime code for this proposal is implemented yet.
+models. `nla_task` now computes the shortlist before creating a tool-using
+OpenCode child prompt and passes `{"*": false, ...shortlistAllows}` through
+OpenCode's native per-prompt tool map. The bounded prompt remains unchanged.
+Tool-free roles and explicitly tool-free steps receive only the wildcard deny.
+
+Role capability discovery has a small persistent cache at
+`.opencode/nla-role-capabilities.json` in the target project. It stores tool IDs
+and schema hashes, not prompts or tool output. Entries are invalidated by the
+NLA cache format/version, role pool and model configuration, expected role
+ceiling, or any relevant resolved OpenCode schema change. Corrupt entries are
+treated as misses. A hit reuses the stable role profile, after which Compactor
+may only narrow it for the current bounded step. Required capabilities missing
+from the live catalog fail closed; cache failure never exposes the catalog.
 
 Compactor's optimization may remove redundant context and narrow capabilities,
 but it must preserve task meaning, acceptance criteria, safety constraints,
@@ -183,6 +195,43 @@ invalid optimization, NLA falls back to a conservative deterministic subset
 derived from the role and bounded step, never automatically to all tools. If no
 safe sufficient subset can be determined, NLA fails closed and requests
 clarification, re-routes the step, or chooses a more capable model/runtime.
+
+### qwen3:4b BOS measurement (2026-09-01)
+
+The reproducible benchmark is
+[`tests/opencode/benchmark-nla-tool-shortlist.mjs`](../tests/opencode/benchmark-nla-tool-shortlist.mjs),
+with raw results in
+[`docs/nla-bos-qwen3-4b-2026-09-01.json`](nla-bos-qwen3-4b-2026-09-01.json).
+It used the same bounded Implementer prompt for both native Ollama requests.
+The current OpenCode 1.18.9 endpoint resolved 16 entries; the benchmark omitted
+the internal `invalid` error sentinel, leaving a 15-tool full baseline, and
+compared it with `read`, `edit`, `write`, and `bash`.
+
+The full baseline serialized 25,419 schema bytes and failed in all three runs
+with Ollama HTTP 500 `unexpected EOF` after 11.8–14.2 seconds. Because the
+provider failed before producing a response, it reported no prompt token count;
+the raw result records that value as null rather than inventing an estimate.
+The four-tool shortlist serialized 9,998 schema bytes, completed all three
+runs, and consistently reported 2,215 prompt tokens. Wall time was 3.0 seconds
+with a warm retained model and about 13.5 seconds when Ollama reloaded or
+re-prefilled it. No request reached the 30-second benchmark timeout. This is a
+provider compatibility/failure comparison as well as a size comparison; it is
+not evidence of a successful full-catalog latency value.
+
+### Real `nla_task` E2E (2026-09-02)
+
+The raw evidence is
+[`docs/nla-shortlist-e2e-2026-09-02.json`](nla-shortlist-e2e-2026-09-02.json).
+On OpenCode 1.18.9, NLA dispatched a real Explorer child through `nla_task`.
+The child session permission state was exactly wildcard deny followed by allows
+for `read`, `grep`, and `glob`; it executed only `read`, returned
+`# Next Level Agent`, reported no file changes, and completed successfully on
+`opencode/mimo-v2.5-free`.
+
+The same full OpenCode child flow with local `qwen3:4b` received the same
+three-tool shortlist but timed out after 120 seconds. This preserves the
+existing distinction between success in bounded native Ollama calls and the
+larger OpenCode agent loop. It does not weaken or bypass the shortlist policy.
 
 ## Model Pools
 
@@ -369,9 +418,14 @@ Distinguish session behavior:
 - the mandatory `profile-guard` proposed in Draft 0.4 is not implemented;
 - strict Task Context Packet schema and size validation are not implemented;
 - hard token, call, time, and monetary budgets are not enforced;
-- Compactor prompt optimization and per-step tool shortlisting are documented
-  but not implemented; agents may still receive the full OpenCode tool catalog
-  and its schema overhead;
+- Compactor runtime optimization currently prunes tool schemas only for child
+  invocations made through `nla_task`; raw OpenCode `task`, selectable `build`
+  or `plan`, and other non-NLA prompt paths are outside this control;
+- prompt-text rewriting is not implemented; NLA deliberately passes the
+  bounded task packet through unchanged while pruning schemas;
+- capability cache invalidation still requires fetching and hashing the
+  role-relevant resolved schemas; the cache avoids rebuilding the stable role
+  profile, not the OpenCode catalog query itself;
 - selectable `build` and `plan` agents can bypass the NLA coordinator;
 - global, project, remote, or managed OpenCode configuration may alter the resolved profile;
 - there is no transactional installer, drift detector, or deterministic profile validator;
@@ -379,6 +433,10 @@ Distinguish session behavior:
 - one-shot `opencode run` may exit before the idle-boundary compaction pipeline completes;
 - the current Architect preferred endpoint is intentionally useful as a failing probe;
 - the inherited Superpowers OpenCode test runner still contains fork-specific assumptions and Node 18 ESM incompatibility in two old tests;
+- specifically, `test-plugin-loading.sh` and `test-bootstrap-caching.sh`
+  require `skills/using-superpowers/SKILL.md`, which is absent from the
+  unchanged `origin/main` tree; the current shortlisting diff does not touch
+  those tests, their setup, `superpowers.js`, or that missing path;
 - role model quality and provider availability are installation-specific;
 - NLA is not a sandbox and does not replace operating-system security boundaries.
 
@@ -395,9 +453,8 @@ The next milestone is reliability of NLA Core, not expansion of the installer.
 5. Exercise Supervisor gates on multiple real Tier 2 and Tier 3 tasks.
 6. Run a small practical benchmark across five to ten representative tasks.
 7. Replace the deliberately failing Architect preferred endpoint with a healthy model.
-8. Implement and measure Compactor prompt optimization, including bounded
-   per-step shortlists targeting 2–5 tools, while keeping Router limited to task
-   and model routing.
+8. Extend measurements of implemented Compactor shortlisting across supported
+   providers and consider safe prompt-text optimization separately.
 9. Add independently tested CLI integrations only when contributors need them.
 
 The installer, managed launcher, immutable snapshots, complete guard, and statistical economic benchmark remain a separate possible product named NLA Managed Profile. They are deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement.

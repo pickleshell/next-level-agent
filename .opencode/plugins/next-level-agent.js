@@ -17,6 +17,12 @@ import {
 } from './nla-memory.mjs';
 import { intelligentCheckpoint } from './nla-compaction.mjs';
 import { configuredUtilityPool, runUtilityModel } from './nla-utility-runtime.mjs';
+import {
+  optimizeInvocation, requiredRoleTools, roleIsToolFree, ROLE_TOOL_CEILINGS, toolPermissionMap,
+} from './nla-prompt-optimizer.mjs';
+import {
+  capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
+} from './nla-capability-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -107,6 +113,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   let defaultAgent = 'nla';
   let defaultModel = null;
   const runLogPath = path.join(directory, '.opencode', 'agent-run.log');
+  const capabilityCachePath = path.join(directory, '.opencode', 'nla-role-capabilities.json');
   const stateRoot = memoryRoot(homeDir);
   const notebookDir = notebookRoot(homeDir);
   const softContextTokens = Number(process.env.NLA_CONTEXT_SOFT_TOKENS || 50000);
@@ -120,6 +127,15 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const compactionState = new Map();
   const sessionRoots = new Map();
   let watchdog = null;
+  let capabilityCache = (() => {
+    try { return parseCapabilityCache(fs.readFileSync(capabilityCachePath, 'utf8')); }
+    catch { return parseCapabilityCache(''); }
+  })();
+
+  const persistCapabilityCache = () => {
+    fs.mkdirSync(path.dirname(capabilityCachePath), { recursive: true });
+    fs.writeFileSync(capabilityCachePath, serializeCapabilityCache(capabilityCache), { mode: 0o600 });
+  };
 
   const touch = (sessionID) => {
     const state = trackedSessions.get(sessionID);
@@ -251,13 +267,53 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
         let timer = null;
         try {
+          let roleProfile = [];
+          let capabilityCacheSource = 'tool-free';
+          if (!roleIsToolFree(args.role)) {
+            const ceiling = ROLE_TOOL_CEILINGS[args.role];
+            if (!ceiling) throw new Error(`No safe tool policy is defined for role: ${args.role}`);
+            const listed = await client.tool.list({
+              query: { directory: context.directory || directory, provider: model.providerID, model: model.modelID },
+              throwOnError: true,
+            });
+            const resolved = resolveRoleCapabilityProfile({
+              role: args.role,
+              ceiling,
+              required: requiredRoleTools(args.role),
+              catalog: listed.data,
+              cache: capabilityCache,
+              configSignature: capabilityHash({ role: args.role, pool, model, ceiling }),
+            });
+            roleProfile = resolved.tools;
+            capabilityCacheSource = resolved.source;
+            if (resolved.cache !== capabilityCache) {
+              capabilityCache = resolved.cache;
+              persistCapabilityCache();
+            }
+          }
+          const compactorPool = pools.compactor;
+          const optimized = await optimizeInvocation({
+            role: args.role,
+            prompt: args.prompt,
+            roleProfile,
+            runCompactor: configuredUtilityPool(compactorPool)
+              ? async (prompt) => (await runUtilityModel({ role: 'compactor', pool: compactorPool, prompt })).output
+              : null,
+          });
+          const invocationTools = toolPermissionMap(optimized.tools);
+          appendRunLog({
+            event: 'tool_shortlist_selected', session_id: childID, parent_session_id: context.sessionID,
+            agent: args.role, model: modelName, capability_cache: capabilityCacheSource,
+            role_profile: roleProfile, tool_shortlist: optimized.tools, tool_optimization: optimized.source,
+          });
           const request = client.session.prompt({
             path: { id: childID },
             query: { directory: context.directory || directory },
             body: {
               agent: args.role,
               model,
-              parts: [{ type: 'text', text: args.prompt }],
+              tools: invocationTools,
+              parts: [{ type: 'text', text: optimized.prompt }],
             },
             throwOnError: true,
           });
@@ -297,7 +353,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           return {
             title: `${args.description} (${args.role})`,
             output,
-            metadata: { sessionID: childID, role: args.role, model: modelName, attempt: index + 1 },
+            metadata: {
+              sessionID: childID, role: args.role, model: modelName, attempt: index + 1,
+              tools: optimized.tools, toolOptimization: optimized.source, capabilityCache: capabilityCacheSource,
+            },
           };
         } catch (error) {
           if (timer) clearTimeout(timer);
