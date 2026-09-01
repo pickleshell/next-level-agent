@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "roles": {
+    "explorer": {
+      "enabled": true,
+      "models": ["ollama-local/qwen3:4b"],
+      "idle_timeout_ms": 120000,
+      "max_failovers": 0
+    },
+    "compactor": {
+      "enabled": false,
+      "models": []
+    }
+  }
+}

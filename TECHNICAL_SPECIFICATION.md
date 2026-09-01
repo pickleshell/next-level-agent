@@ -45,7 +45,8 @@ Minimal token count is not itself considered success if the result fails verific
 > deterministic fallback, while Supervisor remains fail-closed through
 > OpenCode. This evolution postdates the normative Draft 0.4 text below.
 >
-> A later architecture decision broadens Compactor from context compression to
+> A later architecture decision, now implemented for `nla_task` child prompts,
+> broadens Compactor from context compression to
 > prompt optimization before model invocation, including prompt shaping and
 > pruning tool schemas to a small relevant subset. Router remains responsible
 > only for task and model routing; there is no new Selector role. This responds
@@ -56,7 +57,17 @@ Minimal token count is not itself considered success if the result fails verific
 > permissions, acceptance criteria, and provenance. On unavailable or invalid
 > optimization, NLA uses a conservative deterministic role/step subset rather
 > than the full tool universe and fails closed if no safe sufficient subset can
-> be determined. This decision is not implemented in the current runtime.
+> be determined. Runtime behavior currently preserves the bounded prompt
+> verbatim and prunes schemas through OpenCode's per-prompt tool permission map;
+> general prompt-text rewriting and non-`nla_task` invocations remain outside
+> this implementation.
+>
+> Stable role capability profiles are cached locally using a key composed from
+> the NLA cache version, role/model-pool configuration, expected role ceiling,
+> and hashes of the relevant resolved OpenCode tool schemas. Cache hits reuse
+> that bounded profile; corruption, schema drift, and configuration drift cause
+> deterministic misses. Missing required tools and unknown roles fail closed.
+> Per-step Compactor selection is always constrained to the cached profile.
 
 ## 2. Delivery Boundaries
 

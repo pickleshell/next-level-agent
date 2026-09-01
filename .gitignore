@@ -20,4 +20,5 @@ __pycache__/
 
 # NLA hook-generated workflow evidence
 .opencode/agent-run.log
+.opencode/nla-role-capabilities.json
 .checkpoints/

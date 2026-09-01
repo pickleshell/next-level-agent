@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["../../../.opencode/plugins/next-level-agent.js"],
+  "default_agent": "nla",
+  "agent": {
+    "nla": {
+      "mode": "primary",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "You are the NLA BOS test coordinator. Load next-level-agent first, then follow the user instruction. Use nla_task for the requested child and never use raw task or complete the child task yourself."
+    },
+    "explorer": {
+      "mode": "subagent",
+      "model": "ollama-local/qwen3:4b",
+      "prompt": "You are the NLA Explorer. Use only exposed read-only tools. Complete the bounded task and return concise evidence. Never modify files."
+    }
+  },
+  "skills": {
+    "paths": ["../../../skills"]
+  },
+  "provider": {
+    "ollama-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama local BOS",
+      "options": {
+        "baseURL": "http://127.0.0.1:11434/v1"
+      },
+      "models": {
+        "qwen3:4b": {
+          "name": "qwen3:4b",
+          "limit": {
+            "context": 32768,
+            "output": 4096
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "roles": {
+    "explorer": {
+      "enabled": true,
+      "models": ["opencode/mimo-v2.5-free"],
+      "idle_timeout_ms": 120000,
+      "max_failovers": 0
+    },
+    "compactor": {
+      "enabled": false,
+      "models": []
+    }
+  }
+}

@@ -105,7 +105,7 @@ context, shape the prompt without changing its meaning or acceptance criteria,
 and prune or shortlist tool schemas so the target model receives only the small
 relevant subset. NLA does not introduce a separate Selector role.
 
-### Compactor prompt-optimization proposal
+### Compactor prompt optimization
 
 An OpenCode forensic comparison found that exposing the full toolset injected
 approximately 16.7k prompt tokens of tool schemas for 31 tools before useful
@@ -114,13 +114,16 @@ and local `qwen3:4b` became fast. This indicates that tool-schema prefill, not
 only model inference or task complexity, can dominate a small model's agent
 latency.
 
-The proposed design is for Compactor to select a relevant shortlist of
-approximately 2–5 tools for each step rather than expose every available tool.
+Before each `nla_task` OpenCode child invocation, Compactor now selects a
+relevant shortlist of approximately 2–5 tools rather than exposing every
+available tool.
 That target should reduce tool-schema prefill and context consumption by
 roughly an order of magnitude while retaining the tools required for the
 bounded assignment. It is especially important for small and local models, but
 the same reduction may also lower latency and billed input cost for cloud
-models. This is an architectural proposal and has not yet been implemented.
+models. The bounded task packet is currently passed through unchanged; runtime
+optimization prunes tool schemas but does not yet perform general prompt-text
+rewriting.
 
 Prompt optimization must preserve the task, safety constraints, permissions,
 acceptance criteria, and provenance. It may narrow capabilities but may not
@@ -131,6 +134,24 @@ silently restore the full tool universe. If that policy cannot identify a safe
 sufficient subset, the step fails closed for clarification, re-routing, or a
 more capable model/runtime instead of risking an under-equipped or bloated
 invocation.
+
+OpenCode 1.18.9 exposes this control on `session.prompt` as a per-invocation
+tool permission map. NLA sends an explicit wildcard deny followed by the
+shortlist allows. This is the smallest native seam available; the map is stored
+as child-session permission state, so retries in that child retain the same
+restriction. A configured utility-runtime Compactor may refine the shortlist.
+When it is not configured or its JSON is invalid, a deterministic role/step
+policy is used. Unknown roles fail closed.
+
+Stable role capability profiles are cached in the target project's ignored
+`.opencode/nla-role-capabilities.json`. Each entry is keyed by the role,
+NLA capability-cache version, relevant model-pool/config signature, and hashes
+of the role-relevant OpenCode tool schemas. A matching entry avoids rebuilding
+the role profile; a schema or configuration change produces a cache miss and a
+new inspectable entry. Corrupt cache data is discarded and rebuilt only from
+the current role ceiling and resolved schemas. Missing required tools still
+fail closed. Compactor narrows the cached profile for each bounded step and can
+never select a tool outside it.
 
 NLA intentionally has two execution classes:
 
