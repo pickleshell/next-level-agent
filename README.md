@@ -96,25 +96,27 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
-Explorer and Compactor may use local or utility models that are not strong
-general coding agents when the orchestration layer supplies a bounded packet
-and the data to analyze. This is not a guarantee that arbitrary base models
-will work: Compactor must reliably follow its narrow summarization and
-structured-output contract, and Explorer must reliably follow its bounded
-read-only analysis contract and return the expected report. Neither role needs
-tool-calling capability in that supplied-data mode. If Explorer must navigate
-files or tools itself through OpenCode, stronger instruction-following and
-tool-use capability may still be required. This makes local Ollama models useful
-for these two narrow roles even when they perform poorly as full OpenCode
-agents. This exception applies only to Explorer and Compactor, not Router; the
-requirements for Architect, Implementer, and Supervisor are unchanged.
+NLA intentionally has two execution classes:
 
-These bounded roles can select a direct utility-model runtime instead of an
-OpenCode child session. The first backend is non-streaming Ollama HTTP (native
-or OpenAI-compatible). It has no agent loop or tools: NLA sends one complete
-prompt and consumes one answer. Normal agent roles continue to use OpenCode by
-default. See [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime)
-for configuration and failure behavior.
+1. **Agent runtime:** OpenCode child sessions for roles that need multi-step
+   reasoning, tools, repository navigation, or participation in the wider
+   workflow.
+2. **Utility-model runtime:** direct, single-shot calls for bounded
+   transformations or analysis when orchestration supplies the complete packet
+   and input data. This is a deliberate architecture for local, small, cheap,
+   or specialized models, not a workaround for one model.
+
+Compactor is the first proven utility-runtime consumer. Explorer may use it only
+when all required data is supplied; an Explorer that must navigate the
+repository or use tools belongs on the agent runtime. This claim does not extend
+to Router. Architect, Implementer, and Supervisor requirements are unchanged.
+
+A model can perform well on a narrow direct Ollama request yet perform poorly
+inside a full OpenCode agent loop, where system instructions, tool protocols,
+repository context, and runtime workflow add substantial overhead. The first
+utility backend is non-streaming Ollama HTTP, using either its native or
+OpenAI-compatible API. See [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime)
+for configuration, evidence, and failure behavior.
 
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
 

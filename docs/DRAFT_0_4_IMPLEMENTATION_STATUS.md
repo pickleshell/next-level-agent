@@ -28,6 +28,7 @@ Measured against the practical user goal, NLA is a working alpha/MVP. Measured l
 | Supervisor | Added beyond the original role set |
 | Role-specific models | Implemented |
 | Model pools | Implemented |
+| Two execution classes | Implemented: OpenCode agent runtime and bounded utility-model runtime |
 | Automatic bounded failover | Implemented and tested against a real HTTP 410 model rejection |
 | Bounded child sessions | Implemented through `nla_task` |
 | Skills-first development workflow | Implemented through the Superpowers foundation |
@@ -104,12 +105,33 @@ Role-specific models exist, but the following Draft 0.4 mechanisms do not:
 
 Draft 0.4 also specified fail-closed behavior without silent fallback. The current NLA deliberately implements bounded model failover instead. This is a tested and useful architectural change, but it is a deviation from the draft.
 
+The implementation also now distinguishes two execution classes. Roles needing
+multi-step reasoning, tools, repository navigation, or workflow participation
+run as OpenCode agents. Bounded single-shot transformations or analysis may use
+the utility-model runtime when orchestration supplies the complete packet and
+data. This is a deliberate architecture for local, small, cheap, or specialized
+models, not a one-model workaround. Compactor is its first proven consumer;
+Explorer may use it only for supplied-data work. The claim does not extend to
+Router.
+
+This boundary reflects a practical design lesson: success on a narrow direct
+Ollama task does not predict success in a full OpenCode agent loop, whose
+instructions, tools, repository context, and workflow impose additional
+overhead. BOS evidence includes a direct native Ollama `qwen3:4b` Compactor
+lifecycle followed by same-session restoration with
+`BOS_UTILITY_COMPACT_OK`; native Ollama diagnostics were much faster than the
+OpenAI-compatible path.
+
 ### Compaction
 
 Controlled compaction works, but the current design differs from Draft 0.4:
 
 - the draft relied primarily on a separate native compaction model;
 - NLA adds a Supervisor audit and an explicit structured checkpoint;
+- Compactor output is validated, with the deterministic ledger retained as the
+  fallback for unavailable models, errors, timeouts, or invalid output;
+- Supervisor remains on the OpenCode agent runtime and fails closed before
+  compaction on an error or block;
 - the draft rejected a fixed `reserved` value without benchmark evidence;
 - the current configuration intentionally uses `reserved: 32000` after a real OpenCode context failure.
 
