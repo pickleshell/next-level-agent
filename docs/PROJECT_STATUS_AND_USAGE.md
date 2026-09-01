@@ -184,6 +184,19 @@ unavailability, timeout/error, or invalid output automatically retains the
 already-saved deterministic ledger, after which native compaction and restore
 continue normally.
 
+Explorer and Compactor may be assigned local or utility models that are not
+strong general coding agents when orchestration provides a bounded packet and
+the input data. This is a narrow compatibility claim, not a guarantee for
+arbitrary base models: Compactor must reliably satisfy its summarization and
+structured-output contract, while Explorer must reliably satisfy its bounded
+read-only analysis contract and return the expected report. In this mode
+neither role requires tool calling, so local Ollama models can be useful even
+when they perform poorly as full OpenCode agents. An Explorer expected to
+navigate files or tools itself through OpenCode may still need stronger
+instruction-following and tool-use capability. This allowance does not yet
+extend to Router, and it does not change Architect, Implementer, or Supervisor
+requirements.
+
 The current Architect pool intentionally starts with `nvidia/qwen/qwen3-coder-480b-a35b-instruct`. That endpoint has returned HTTP 410 and is retained as a live failover probe. It should be replaced with a healthy preferred model for normal use. Model-failure testing should eventually move to a dedicated fixture.
 
 ## Local Data and Privacy

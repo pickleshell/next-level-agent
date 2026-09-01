@@ -234,6 +234,19 @@ To keep deterministic-only behavior, omit that entry or set `enabled` to
 `false`. No local provider, credential, or machine-specific model setting is
 required by the repository.
 
+Compactor and Explorer are the two roles that may use local or utility models
+that are weaker as general coding agents, provided NLA supplies the bounded
+packet and input data. This does not make arbitrary base models compatible.
+Compactor must still obey its narrow summarization and structured-output
+contract. Explorer must still obey its bounded read-only analysis contract and
+return the expected report. Neither needs tool-calling capability when the
+orchestration layer supplies all required data, which can make local Ollama
+models useful even when they perform poorly as full OpenCode agents. If
+Explorer instead must navigate files or invoke tools through OpenCode, use a
+model with sufficiently strong instruction-following and tool-use capability.
+Do not apply this allowance to Router; Architect, Implementer, and Supervisor
+retain their existing model-capability requirements.
+
 `nla_compact` schedules the same pipeline explicitly. It must not call native
 summarization from inside its active tool call because OpenCode serializes work
 on a session; the idle-boundary handoff avoids that deadlock. A persistent
