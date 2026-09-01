@@ -96,6 +96,19 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
+Explorer and Compactor may use local or utility models that are not strong
+general coding agents when the orchestration layer supplies a bounded packet
+and the data to analyze. This is not a guarantee that arbitrary base models
+will work: Compactor must reliably follow its narrow summarization and
+structured-output contract, and Explorer must reliably follow its bounded
+read-only analysis contract and return the expected report. Neither role needs
+tool-calling capability in that supplied-data mode. If Explorer must navigate
+files or tools itself through OpenCode, stronger instruction-following and
+tool-use capability may still be required. This makes local Ollama models useful
+for these two narrow roles even when they perform poorly as full OpenCode
+agents. This exception applies only to Explorer and Compactor, not Router; the
+requirements for Architect, Implementer, and Supervisor are unchanged.
+
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
 
 ## Workflow
