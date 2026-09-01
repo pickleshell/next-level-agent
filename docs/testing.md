@@ -17,6 +17,8 @@ python3 -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
 utility runtime, prompt optimizer, capability cache, and model-pool retry logic.
 The Python tests cover the standalone model-pool helpers and compact/checkpoint
 helpers. GitHub Actions installs `pytest` in an isolated runner environment.
+It also installs the pinned `@opencode-ai/plugin` version used by the checked-in
+OpenCode profile; provider/model calls remain disabled.
 
 Individual deterministic entry points include:
 
