@@ -92,7 +92,7 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Implementer** | Performs a bounded code change and returns verification evidence | Approved Tier 2/3 implementation |
 | **Reviewer** | Independently checks the scope, change, evidence, and quality | Risk-based review gate |
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
-| **Compactor** | Creates a recovery checkpoint from structured state | Before controlled compaction |
+| **Compactor** | Optionally compresses structured state into a concise, provenance-preserving recovery checkpoint | Before controlled compaction when its model pool is configured and available |
 
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
@@ -125,13 +125,22 @@ NLA clarification
 Controlled context recovery:
 
 ```text
-NLA saves the ledger
-→ Supervisor audit
-→ Compactor checkpoint
+NLA saves the deterministic ledger
+→ required Supervisor audit
+→ optional intelligent Compactor checkpoint
 → OpenCode summarization
 → ledger restoration
 → the same primary session continues
 ```
+
+Compactor is a role, not a model binding. Its provider/model is selected through
+the same configurable role pool as other NLA subagents. If the pool is omitted
+or disabled, every configured model is unavailable, a request times out or
+fails, or the returned checkpoint is invalid, NLA retains the deterministic
+ledger and continues native compaction and restoration. AI compaction is never
+a runtime dependency. The Supervisor audit remains a required safety gate: if
+its pool is unavailable, fails, or blocks the operation, controlled compaction
+stops rather than silently continuing to native summarization.
 
 Small tasks use a shorter workflow. NLA adds agents and gates when risk and uncertainty justify them.
 

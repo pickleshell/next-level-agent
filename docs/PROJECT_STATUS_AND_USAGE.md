@@ -177,6 +177,13 @@ Rules:
 - the visible primary NLA session does not silently switch models;
 - every attempt, failure, fallback, and success is logged.
 
+Compactor follows these same role-pool rules and is not tied to a particular
+provider or model. Its intelligent structured checkpoint is optional: omit or
+disable the `compactor` pool for deterministic-only compaction. Model
+unavailability, timeout/error, or invalid output automatically retains the
+already-saved deterministic ledger, after which native compaction and restore
+continue normally.
+
 The current Architect pool intentionally starts with `nvidia/qwen/qwen3-coder-480b-a35b-instruct`. That endpoint has returned HTTP 410 and is retained as a live failover probe. It should be replaced with a healthy preferred model for normal use. Model-failure testing should eventually move to a dedicated fixture.
 
 ## Local Data and Privacy

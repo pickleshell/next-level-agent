@@ -12,9 +12,10 @@ import { fileURLToPath } from 'url';
 import { tool } from '@opencode-ai/plugin';
 import {
   contextTokens, initializeNotebook, loadLedger, memoryRoot, notebookRoot,
-  normalizeLedger, parseLedgerJSON, readNotebook, restorePacket, saveLedger,
+  parseLedgerJSON, readNotebook, restorePacket, saveLedger,
   thresholdState, writeNotebookPage,
 } from './nla-memory.mjs';
+import { intelligentCheckpoint } from './nla-compaction.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -408,17 +409,24 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       }, context);
       if (/^\s*BLOCK\b/i.test(audit.output)) throw new Error(`Supervisor blocked compaction: ${audit.output.slice(0, 500)}`);
 
-      const compacted = await pooledTaskWithTracking({
-        role: 'compactor',
-        description: 'Create compaction checkpoint',
-        prompt: `Return ONLY valid JSON for a faithful NLA checkpoint. Preserve exactly these fields: ${Object.keys(ledger).join(', ')}. Do not add prose, markdown fences, secrets, transcript text, or invented approval. Input ledger:\n${JSON.stringify(ledger)}`,
-      }, context);
-      let checkpoint = ledger;
-      try {
-        const json = compacted.output.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
-        checkpoint = normalizeLedger(JSON.parse(json), sessionID, primary.directory || directory);
-      }
-      catch (error) { appendRunLog({ event: 'compactor_output_rejected', session_id: sessionID, reason: error.message }); }
+      const resolved = await intelligentCheckpoint({
+        ledger,
+        sessionID,
+        directory: primary.directory || directory,
+        pool: pools.compactor,
+        runCompactor: (prompt) => pooledTaskWithTracking({
+          role: 'compactor',
+          description: 'Create intelligent compaction checkpoint',
+          prompt,
+        }, context),
+      });
+      const checkpoint = resolved.checkpoint;
+      appendRunLog({
+        event: resolved.mode === 'intelligent' ? 'compactor_checkpoint_created' : 'compactor_fallback_used',
+        session_id: sessionID,
+        mode: resolved.mode,
+        reason: resolved.reason || undefined,
+      });
       saveLedger(stateRoot, checkpoint);
       current.checkpoint = checkpoint;
       current.awaitingEvent = true;
@@ -441,7 +449,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaCompact = tool({
-    description: 'Schedule safe native OpenCode compaction for the primary NLA session. Saves a ledger now, then runs Supervisor, Compactor, native summarization, and restore at the next safe idle boundary.',
+    description: 'Schedule safe native OpenCode compaction for the primary NLA session. Saves a deterministic ledger, optionally improves it with the configured Compactor role, then runs native summarization and restore at the next safe idle boundary.',
     args: {
       snapshot: tool.schema.string().describe('Complete current NLA ledger JSON, using the same schema as nla_state'),
       reason: tool.schema.string().max(240).optional().describe('Why compaction is needed'),
@@ -455,7 +463,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       current.trigger = args.reason || 'manual_model_request';
       compactionState.set(context.sessionID, current);
       appendRunLog({ event: 'compaction_scheduled', session_id: context.sessionID, trigger: current.trigger });
-      return { title: 'NLA compaction scheduled', output: 'Checkpoint saved. Supervisor audit, Compactor pass, native summarization, and restore will run after this response at the next safe idle boundary. Do not start another task before the compaction events complete.' };
+      return { title: 'NLA compaction scheduled', output: 'Deterministic checkpoint saved. An available configured Compactor may improve it before native summarization and restore run after this response at the next safe idle boundary. Any Compactor failure falls back to this checkpoint. Do not start another task before the compaction events complete.' };
     },
   });
 
