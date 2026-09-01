@@ -114,6 +114,14 @@ models, not a one-model workaround. Compactor is its first proven consumer;
 Explorer may use it only for supplied-data work. The claim does not extend to
 Router.
 
+The current architecture also broadens Compactor's intended responsibility
+beyond recovery checkpoints. Before model invocation it owns bounded prompt
+shaping and tool-schema pruning/shortlisting. Router remains limited to task and
+model routing; NLA does not add a Selector role. This prompt-optimization path
+is a documented decision, not implemented runtime behavior. Its fallback must
+use a conservative deterministic role/step subset rather than silently exposing
+the full tool catalog, and fail closed when no safe sufficient subset is known.
+
 This boundary reflects a practical design lesson: success on a narrow direct
 Ollama task does not predict success in a full OpenCode agent loop, whose
 instructions, tools, repository context, and workflow impose additional

@@ -161,20 +161,28 @@ tool-using work still needs the appropriate capabilities. They show that
 eagerly exposing every tool can make schema prefill and context consumption
 dominate a small model's execution before it begins the useful task.
 
-The current proposal is dynamic tool selection per step:
+The current architecture decision is dynamic prompt optimization per step:
 
 - target a shortlist of 2–5 relevant tools rather than all 31;
-- keep task routing (Tier, roles, gates, and budgets) separate from tool
-  selection;
-- initially reuse the existing Router role for the narrow bounded contract
-  `Router -> tool shortlist`;
-- split a dedicated Selector role later only if task-routing and tool-selection
-  responsibilities diverge enough to require independent evolution.
+- keep Router focused on task and model routing (Tier, roles, gates, budgets,
+  and model class/pool);
+- broaden Compactor beyond context compression so it also shapes bounded
+  prompts and prunes or shortlists tool schemas before model invocation;
+- do not introduce a separate Selector role.
 
 Reducing 31 schemas to a small shortlist is expected to cut tool-schema prefill
 and context use by roughly an order of magnitude. The benefit is most important
 for small/local models, but may also reduce latency and input cost for cloud
 models. No runtime code for this proposal is implemented yet.
+
+Compactor's optimization may remove redundant context and narrow capabilities,
+but it must preserve task meaning, acceptance criteria, safety constraints,
+permissions, and provenance. It cannot add tools forbidden to the target role.
+Tool-free work receives no schemas. If Compactor is unavailable or returns an
+invalid optimization, NLA falls back to a conservative deterministic subset
+derived from the role and bounded step, never automatically to all tools. If no
+safe sufficient subset can be determined, NLA fails closed and requests
+clarification, re-routes the step, or chooses a more capable model/runtime.
 
 ## Model Pools
 
@@ -361,8 +369,9 @@ Distinguish session behavior:
 - the mandatory `profile-guard` proposed in Draft 0.4 is not implemented;
 - strict Task Context Packet schema and size validation are not implemented;
 - hard token, call, time, and monetary budgets are not enforced;
-- dynamic per-step tool selection is proposed but not implemented; agents may
-  still receive the full OpenCode tool catalog and its schema overhead;
+- Compactor prompt optimization and per-step tool shortlisting are documented
+  but not implemented; agents may still receive the full OpenCode tool catalog
+  and its schema overhead;
 - selectable `build` and `plan` agents can bypass the NLA coordinator;
 - global, project, remote, or managed OpenCode configuration may alter the resolved profile;
 - there is no transactional installer, drift detector, or deterministic profile validator;
@@ -386,8 +395,9 @@ The next milestone is reliability of NLA Core, not expansion of the installer.
 5. Exercise Supervisor gates on multiple real Tier 2 and Tier 3 tasks.
 6. Run a small practical benchmark across five to ten representative tasks.
 7. Replace the deliberately failing Architect preferred endpoint with a healthy model.
-8. Implement and measure bounded per-step tool shortlists, targeting 2–5 tools,
-   while keeping task routing and tool selection as separate contracts.
+8. Implement and measure Compactor prompt optimization, including bounded
+   per-step shortlists targeting 2–5 tools, while keeping Router limited to task
+   and model routing.
 9. Add independently tested CLI integrations only when contributors need them.
 
 The installer, managed launcher, immutable snapshots, complete guard, and statistical economic benchmark remain a separate possible product named NLA Managed Profile. They are deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement.
