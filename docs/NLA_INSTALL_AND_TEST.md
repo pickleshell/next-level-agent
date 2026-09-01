@@ -200,11 +200,39 @@ pooled child task is active, then runs:
 
 ```text
 Supervisor audit
-→ Compactor checkpoint through its model pool
+→ optional intelligent Compactor checkpoint through its model pool
 → client.session.summarize()
 → session.compacted
 → noReply restore packet
 ```
+
+The deterministic ledger is saved before either model-backed step. The
+Supervisor audit remains a required safety gate: if Supervisor is unavailable,
+fails, or returns `BLOCK`, controlled compaction stops and logs
+`compaction_failed`. Compactor alone is optional. When `roles.compactor` is
+absent, disabled, or has no models, NLA skips the intelligent pass. It also
+falls back to the saved ledger on provider rejection, timeout, other task
+errors, or invalid Compactor JSON. Validation requires the complete ledger
+shape and prevents alteration or loss of critical workflow state and
+provenance. Native OpenCode summarization and restore then proceed with
+whichever checkpoint was selected.
+
+Compactor uses the existing role/model-pool boundary; its role prompt is in
+`opencode.json`, while its ordered provider models and timeout are configured in
+`config/model-pools.json`. For example:
+
+```json
+"compactor": {
+  "enabled": true,
+  "models": ["provider/preferred-model", "provider/fallback-model"],
+  "idle_timeout_ms": 90000,
+  "max_failovers": 1
+}
+```
+
+To keep deterministic-only behavior, omit that entry or set `enabled` to
+`false`. No local provider, credential, or machine-specific model setting is
+required by the repository.
 
 `nla_compact` schedules the same pipeline explicitly. It must not call native
 summarization from inside its active tool call because OpenCode serializes work
@@ -215,7 +243,8 @@ therefore not a supported automatic-compaction host.
 
 Relevant run-log evidence includes `session_ledger_saved`, `context_threshold`,
 `compaction_scheduled`, `compaction_started`, pooled Supervisor and Compactor
-attempts, `compaction_requested`, `context_compacted`, and `context_restored`.
+attempts, `compactor_checkpoint_created` or `compactor_fallback_used`,
+`compaction_requested`, `context_compacted`, and `context_restored`.
 
 ### Session and context telemetry
 
