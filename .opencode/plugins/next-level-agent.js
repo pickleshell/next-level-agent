@@ -60,14 +60,19 @@ const normalizePath = (p, homeDir) => {
 let _bootstrapCache = undefined; // undefined = not yet loaded, null = file missing
 let _nlaBannerShown = false;
 
-const MODEL_POOLS_PATH = path.resolve(__dirname, '../../config/model-pools.json');
+const DEFAULT_MODEL_POOLS_PATH = path.resolve(__dirname, '../../config/model-pools.json');
+
+export function modelPoolsPath(homeDir = os.homedir()) {
+  return normalizePath(process.env.NLA_MODEL_POOLS_PATH, homeDir) || DEFAULT_MODEL_POOLS_PATH;
+}
 
 function loadModelPools() {
+  const configPath = modelPoolsPath();
   try {
-    const parsed = JSON.parse(fs.readFileSync(MODEL_POOLS_PATH, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     return parsed && typeof parsed.roles === 'object' ? parsed.roles : {};
   } catch (error) {
-    console.error('[Next Level Agent] could not load model pools: ' + error.message);
+    console.error(`[Next Level Agent] could not load model pools from ${configPath}: ${error.message}`);
     return {};
   }
 }
@@ -78,13 +83,13 @@ function splitModel(model) {
   return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
 }
 
-function retryableProviderError(error) {
+export function retryableProviderError(error) {
   const text = error instanceof Error
     ? `${error.name}: ${error.message}`
     : typeof error === 'string'
       ? error
       : JSON.stringify(error || {});
-  return /\b(404|410|429|500|502|503|504)\b|model not found|end of life|\bgone\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset/i.test(text);
+  return /\b(404|410|429|500|502|503|504)\b|model not found|end of life|\bgone\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset|unexpected server error/i.test(text);
 }
 
 function showNlaBanner() {

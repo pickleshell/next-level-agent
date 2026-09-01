@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 
 sys.path.insert(0, '.')
@@ -17,6 +18,15 @@ def test_primary_nla_is_not_silently_replaced():
     pool = get_pool("nla")
     assert pool["enabled"] is False
     assert next_model("nla", "opencode/hy3-free") is None
+
+
+def test_model_pool_path_can_be_overridden(monkeypatch, tmp_path):
+    from config.model_pools import config_path, get_pool
+    override = tmp_path / "local-pools.json"
+    override.write_text(json.dumps({"roles": {"compactor": {"enabled": True, "models": ["local/test"]}}}))
+    monkeypatch.setenv("NLA_MODEL_POOLS_PATH", str(override))
+    assert config_path() == os.path.abspath(override)
+    assert get_pool("compactor")["models"] == ["local/test"]
 
 
 def test_every_enabled_pool_is_bounded():
