@@ -85,27 +85,27 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | Role | Responsibility | Typical use |
 | --- | --- | --- |
 | **NLA** | Coordinates the complete task, talks to the user, owns memory, accepts the result, and handles direct Tier 0/1 work | Every task |
-| **Router** | Produces a bounded shortlist of relevant tools for the next step | Before tool-using agent steps when dynamic tool selection is enabled |
+| **Router** | Classifies tasks and selects the appropriate workflow route and model class | At task-routing and model-routing boundaries |
 | **Explorer** | Finds relevant files, symbols, dependencies, facts, and local risks | Tier 2/3 discovery |
 | **Scout** | Researches official documentation, versions, and external dependencies | When local evidence is insufficient |
 | **Architect** | Compares designs and defines boundaries, interfaces, failure handling, risks, and tests | Tier 3 design gate |
 | **Implementer** | Performs a bounded code change and returns verification evidence | Approved Tier 2/3 implementation |
 | **Reviewer** | Independently checks the scope, change, evidence, and quality | Risk-based review gate |
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
-| **Compactor** | Optionally compresses structured state into a concise, provenance-preserving recovery checkpoint | Before controlled compaction when its model pool is configured and available |
+| **Compactor** | Optimizes model input: compresses structured state, shapes prompts, and prunes tool schemas to a small relevant shortlist | Before controlled compaction and before model invocation when prompt optimization is enabled |
 
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
-Task routing and tool selection are separate architectural concerns. NLA keeps
-ownership of task classification, Tier, workflow roles, gates, and budgets.
-The existing Router role is the preferred initial home for the narrower
-operation `Router -> tool shortlist`: given the next bounded step, it should
-return only the small set of tools that step is likely to need. This reuse does
-not make Router a second coordinator. If task-routing and tool-selection
-responsibilities later need to evolve independently, the tool-selection
-contract should split into a dedicated Selector role.
+Router and Compactor have separate boundaries. Router handles task and model
+routing only: it classifies the task, selects the workflow route, and identifies
+the required model class or pool. It does not shape prompts or select tools.
+Compactor owns prompt optimization before model invocation as well as context
+compression. Given the already-bounded next step, it may remove redundant
+context, shape the prompt without changing its meaning or acceptance criteria,
+and prune or shortlist tool schemas so the target model receives only the small
+relevant subset. NLA does not introduce a separate Selector role.
 
-### Dynamic tool selection proposal
+### Compactor prompt-optimization proposal
 
 An OpenCode forensic comparison found that exposing the full toolset injected
 approximately 16.7k prompt tokens of tool schemas for 31 tools before useful
@@ -114,13 +114,23 @@ and local `qwen3:4b` became fast. This indicates that tool-schema prefill, not
 only model inference or task complexity, can dominate a small model's agent
 latency.
 
-The proposed design is to select a relevant shortlist of approximately 2–5
-tools for each step rather than expose every available tool. That target should
-reduce tool-schema prefill and context consumption by roughly an order of
-magnitude while retaining the tools required for the bounded assignment. It is
-especially important for small and local models, but the same reduction may
-also lower latency and billed input cost for cloud models. This is an
-architectural proposal and has not yet been implemented.
+The proposed design is for Compactor to select a relevant shortlist of
+approximately 2–5 tools for each step rather than expose every available tool.
+That target should reduce tool-schema prefill and context consumption by
+roughly an order of magnitude while retaining the tools required for the
+bounded assignment. It is especially important for small and local models, but
+the same reduction may also lower latency and billed input cost for cloud
+models. This is an architectural proposal and has not yet been implemented.
+
+Prompt optimization must preserve the task, safety constraints, permissions,
+acceptance criteria, and provenance. It may narrow capabilities but may not
+grant a tool that the target role is not allowed to use. A tool-free step gets
+no schemas. If optimization is unavailable or its output is invalid, NLA uses a
+conservative deterministic policy derived from the role and step; it does not
+silently restore the full tool universe. If that policy cannot identify a safe
+sufficient subset, the step fails closed for clarification, re-routing, or a
+more capable model/runtime instead of risking an under-equipped or bloated
+invocation.
 
 NLA intentionally has two execution classes:
 

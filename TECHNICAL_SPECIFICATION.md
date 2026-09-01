@@ -44,6 +44,19 @@ Minimal token count is not itself considered success if the result fails verific
 > a full OpenCode agent loop. Compactor output remains validated with a
 > deterministic fallback, while Supervisor remains fail-closed through
 > OpenCode. This evolution postdates the normative Draft 0.4 text below.
+>
+> A later architecture decision broadens Compactor from context compression to
+> prompt optimization before model invocation, including prompt shaping and
+> pruning tool schemas to a small relevant subset. Router remains responsible
+> only for task and model routing; there is no new Selector role. This responds
+> to a forensic OpenCode comparison in which 31 injected tool schemas consumed
+> approximately 16.7k prompt tokens and caused local-model latency/timeouts,
+> while `tools: false` reduced the prompt to approximately 126 tokens and
+> restored fast behavior. Optimization must preserve task meaning, constraints,
+> permissions, acceptance criteria, and provenance. On unavailable or invalid
+> optimization, NLA uses a conservative deterministic role/step subset rather
+> than the full tool universe and fails closed if no safe sufficient subset can
+> be determined. This decision is not implemented in the current runtime.
 
 ## 2. Delivery Boundaries
 
