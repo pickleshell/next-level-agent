@@ -148,6 +148,34 @@ TELEMETRY_COMPACT_OK
 
 The response also contained the correct legacy README heading. This test verified continuity at that point in project history. The heading has since changed, but the restoration result remains valid evidence for the tested session.
 
+## Tool-schema Prefill Finding
+
+A forensic OpenCode comparison exposed a separate source of local-model
+latency: the tool catalog itself. With the full toolset enabled, OpenCode
+injected approximately 16.7k prompt tokens of schemas for 31 tools before
+useful user content. With `tools: false`, the prompt was approximately 126
+tokens and local `qwen3:4b` became fast.
+
+These measurements do not imply that tool-less agents are the general answer;
+tool-using work still needs the appropriate capabilities. They show that
+eagerly exposing every tool can make schema prefill and context consumption
+dominate a small model's execution before it begins the useful task.
+
+The current proposal is dynamic tool selection per step:
+
+- target a shortlist of 2–5 relevant tools rather than all 31;
+- keep task routing (Tier, roles, gates, and budgets) separate from tool
+  selection;
+- initially reuse the existing Router role for the narrow bounded contract
+  `Router -> tool shortlist`;
+- split a dedicated Selector role later only if task-routing and tool-selection
+  responsibilities diverge enough to require independent evolution.
+
+Reducing 31 schemas to a small shortlist is expected to cut tool-schema prefill
+and context use by roughly an order of magnitude. The benefit is most important
+for small/local models, but may also reduce latency and input cost for cloud
+models. No runtime code for this proposal is implemented yet.
+
 ## Model Pools
 
 Model pools are configured in [`config/model-pools.json`](../config/model-pools.json).
@@ -333,6 +361,8 @@ Distinguish session behavior:
 - the mandatory `profile-guard` proposed in Draft 0.4 is not implemented;
 - strict Task Context Packet schema and size validation are not implemented;
 - hard token, call, time, and monetary budgets are not enforced;
+- dynamic per-step tool selection is proposed but not implemented; agents may
+  still receive the full OpenCode tool catalog and its schema overhead;
 - selectable `build` and `plan` agents can bypass the NLA coordinator;
 - global, project, remote, or managed OpenCode configuration may alter the resolved profile;
 - there is no transactional installer, drift detector, or deterministic profile validator;
@@ -356,7 +386,9 @@ The next milestone is reliability of NLA Core, not expansion of the installer.
 5. Exercise Supervisor gates on multiple real Tier 2 and Tier 3 tasks.
 6. Run a small practical benchmark across five to ten representative tasks.
 7. Replace the deliberately failing Architect preferred endpoint with a healthy model.
-8. Add independently tested CLI integrations only when contributors need them.
+8. Implement and measure bounded per-step tool shortlists, targeting 2–5 tools,
+   while keeping task routing and tool selection as separate contracts.
+9. Add independently tested CLI integrations only when contributors need them.
 
 The installer, managed launcher, immutable snapshots, complete guard, and statistical economic benchmark remain a separate possible product named NLA Managed Profile. They are deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement.
 
