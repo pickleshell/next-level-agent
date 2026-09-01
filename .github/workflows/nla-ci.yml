@@ -1,0 +1,30 @@
+name: NLA deterministic checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python test dependency
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Run deterministic OpenCode/NLA tests
+        run: npm run test:nla
+      - name: Run deterministic Python tests
+        run: python -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
+      - name: Check whitespace errors
+        run: git diff --check

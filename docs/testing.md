@@ -1,35 +1,72 @@
-# Testing Superpowers
+# Testing Next Level Agent
 
-Superpowers has two distinct kinds of tests, each in its own directory:
+NLA keeps its mandatory publication checks deterministic and offline. Real
+provider and model experiments are useful evidence, but they are never required
+for pull requests because provider availability, latency, and cost are external.
 
-- **`tests/`** — does the plugin's non-LLM code work? Bash + node + python integration tests for brainstorm-server JS, OpenCode plugin loading, codex-plugin sync, and analysis utilities.
-- **`evals/`** — do agents behave correctly on real LLM sessions? Python harness driving real tmux sessions of Claude Code / Codex / Gemini CLI, with an LLM actor and verifier judging skill compliance.
+## Fast NLA tests
 
-## Plugin tests
-
-Live in `tests/`. Currently:
-
-- `tests/brainstorm-server/` — node test suite for the brainstorm server JS code.
-- `tests/opencode/` — bash tests for OpenCode plugin loading, bootstrap caching, and tool registration.
-- `tests/codex-plugin-sync/` — bash sync verification.
-- `tests/kimi/` — bash/Python checks for Kimi plugin manifest wiring.
-- `tests/claude-code/test-helpers.sh`, `analyze-token-usage.py` — utilities used by remaining bash tests.
-- `tests/claude-code/test-subagent-driven-development.sh` — agent-can-describe-SDD test (no drill counterpart; tests description-recall, not behavior).
-- `tests/claude-code/test-subagent-driven-development-integration.sh` — extended SDD integration with token analysis (drill covers the YAGNI subset; bash adds commit-count, Claude Code task-tracking, and token telemetry assertions).
-- `tests/claude-code/test-worktree-native-preference.sh` — RED-GREEN-REFACTOR validation for worktree skill (drill covers the PRESSURE phase; bash also covers RED/GREEN baselines).
-- `tests/explicit-skill-requests/` — Haiku-specific, multi-turn, and skill-name-prompted tests not covered by drill.
-
-Run plugin tests via the relevant directory's `run-*.sh` or `npm test`.
-
-## Skill behavior evals
-
-Live in `evals/`. Drill is the harness; scenarios live at `evals/scenarios/*.yaml`. See `evals/README.md` for setup. Quick start:
+From the repository root, run:
 
 ```bash
-cd evals
-uv sync --extra dev
-export ANTHROPIC_API_KEY=sk-...
-uv run drill run triggering-test-driven-development -b claude
+npm run test:nla
+python3 -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
 ```
 
-Drill scenarios are slow (3-30+ minutes each) and run real LLM sessions. They are not part of CI today; the natural follow-up is a tiered model (fast subset on PR, full sweep nightly + on-demand).
+`npm run test:nla` covers the OpenCode-side memory, Compactor checkpoint,
+utility runtime, prompt optimizer, capability cache, and model-pool retry logic.
+The Python tests cover the standalone model-pool helpers and compact/checkpoint
+helpers. GitHub Actions installs `pytest` in an isolated runner environment.
+
+Individual deterministic entry points include:
+
+- `bash tests/opencode/test-nla-memory.sh`
+- `node tests/opencode/test-nla-compaction.mjs`
+- `node tests/opencode/test-nla-utility-runtime.mjs`
+- `node tests/opencode/test-nla-prompt-optimizer.mjs`
+- `node tests/opencode/test-nla-capability-cache.mjs`
+- `node tests/opencode/test-nla-model-pools.mjs`
+
+## Broader inherited tests
+
+This repository retains the Superpowers skills and multi-harness test suites it
+is based on. Their entry points live under `tests/`, including:
+
+- `tests/brainstorm-server/` — Node tests (`npm test` in that directory);
+- `tests/codex-plugin-sync/test-sync-to-codex-plugin.sh`;
+- `tests/codex/`, `tests/kimi/`, `tests/hermes/`, and other harness checks;
+- `tests/claude-code/` and `tests/explicit-skill-requests/` — slower or
+  environment-dependent behavioral checks.
+
+Two inherited OpenCode bootstrap scripts still assume the upstream
+`skills/using-superpowers/SKILL.md` layout and are not valid NLA-fork release
+gates. They are tracked as a known fork compatibility limitation rather than
+being silently treated as passing NLA tests.
+
+## Real-model evidence
+
+Provider-backed measurements are opt-in and must not run in mandatory CI. The
+reproducible local shortlist benchmark is:
+
+```bash
+node tests/opencode/benchmark-nla-tool-shortlist.mjs
+```
+
+It requires its explicitly configured local provider. Sanitized result files in
+`docs/` record historical observations; they do not promise current free-model
+availability. Never commit provider credentials, real session identifiers,
+private paths, or runtime logs with benchmark evidence.
+
+## Publication checks
+
+Before a release, also verify:
+
+```bash
+git diff --check
+git status --short --branch
+```
+
+Check README links, tracked files for credential/private-key patterns, and the
+ignored runtime files `.opencode/agent-run.log` and
+`.opencode/nla-role-capabilities.json`. A release must keep the Alpha limitations
+and OpenCode-only support boundary explicit.

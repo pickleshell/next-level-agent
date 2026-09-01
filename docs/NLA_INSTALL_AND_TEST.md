@@ -120,20 +120,20 @@ fallback: it remains visible to the user. Inkling is intentionally not a
 long-running subagent fallback because the gtop test exposed repeated upstream
 504 responses.
 
-The Architect pool is currently ordered as:
+The public Architect pool is currently ordered as:
 
 ```text
-nvidia/qwen/qwen3-coder-480b-a35b-instruct
+opencode/mimo-v2.5-free
 → opencode/hy3-free
 ```
 
-The NVIDIA Qwen endpoint currently rejects requests with HTTP 410 because the
-model is end-of-life. It is intentionally useful as a failover probe: a real
-Architect dispatch must log the failed first attempt and continue with
-`opencode/hy3-free` in the same child session. Replace the first entry with a
-healthy preferred model when this deliberate probe is no longer needed.
+Both entries were usable during the documented development smoke tests, but
+free-provider availability is external and must be verified during installation.
+Provider rejection, including HTTP 410, remains covered by deterministic test
+fixtures; public defaults do not intentionally call a broken live endpoint.
 
-Expected Architect-related run-log events are:
+When a deterministic or real provider failure exercises bounded Architect
+failover, the expected run-log sequence is:
 
 ```text
 pooled_subagent_created (agent=architect)
@@ -246,6 +246,13 @@ Explorer instead must navigate files or invoke tools through OpenCode, use a
 model with sufficiently strong instruction-following and tool-use capability.
 Do not apply this allowance to Router; Architect, Implementer, and Supervisor
 retain their existing model-capability requirements.
+
+For a direct utility pool, add `runtime: "utility"`, choose `backend: "ollama"`
+or `backend: "openai-compatible"`, and provide the matching `provider.api` and
+`provider.base_url`. Generic OpenAI-compatible pools may also set
+`reasoning_effort` and `max_output_tokens`; support for those request fields is
+provider-specific. Keep credentials in the provider's supported user-level
+authentication mechanism, never in this repository or the pool file.
 
 `nla_compact` schedules the same pipeline explicitly. It must not call native
 summarization from inside its active tool call because OpenCode serializes work

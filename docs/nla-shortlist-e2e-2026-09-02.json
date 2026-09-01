@@ -1,9 +1,7 @@
 {
   "runtime": "OpenCode 1.18.9",
-  "host": "BOS",
+  "environment": "development workstation (internal host identifier removed)",
   "successful_run": {
-    "root_session_id": "ses_fa0da77baffeIcryHj6DGI4mbb",
-    "child_session_id": "ses_fa0da1468ffeBIoE7Nu4SIppo2",
     "role": "explorer",
     "model": "opencode/mimo-v2.5-free",
     "capability_cache": "cache-miss",
@@ -21,8 +19,6 @@
     "attempt_status": "succeeded"
   },
   "local_model_limit": {
-    "root_session_id": "ses_fa0dd0884ffedxInEBdMakdm2W",
-    "child_session_id": "ses_fa0dccbe3ffefSLTiHs5jqiWpq",
     "role": "explorer",
     "model": "ollama-local/qwen3:4b",
     "role_profile": ["read", "grep", "glob"],

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-02",
+  "environment": "development workstation (internal host and session identifiers removed)",
+  "runtime": "OpenCode 1.18.9",
+  "endpoint_class": "OpenCode free OpenAI-compatible inference",
+  "model": "nemotron-3.5-lightning-free",
+  "utility_config": {
+    "backend": "openai-compatible",
+    "provider_api": "openai-compatible",
+    "base_url": "https://opencode.ai/inference/openai",
+    "output_format": "json",
+    "reasoning_effort": "none",
+    "request_timeout_ms": 60000
+  },
+  "preflight": {
+    "task": "Return constrained JSON confirming availability",
+    "max_output_tokens": 256,
+    "wall_ms": 900,
+    "prompt_tokens": 68,
+    "completion_tokens": 11,
+    "total_tokens": 79,
+    "reasoning_tokens": 0,
+    "result": "valid JSON"
+  },
+  "nla_task_tool_selection": {
+    "task": "Search for the text Next Level Agent, read the matching content, and return the first match",
+    "role": "explorer",
+    "role_profile": ["read", "grep", "glob"],
+    "selected_tools": ["read", "grep"],
+    "permission_map": [
+      {"permission": "*", "pattern": "*", "action": "deny"},
+      {"permission": "read", "pattern": "*", "action": "allow"},
+      {"permission": "grep", "pattern": "*", "action": "allow"}
+    ],
+    "selection_wall_ms": 599,
+    "prompt_tokens": 139,
+    "completion_tokens": 9,
+    "total_tokens": 148,
+    "reasoning_tokens": 0,
+    "provider_cost": null,
+    "opencode_session_cost": 0,
+    "tools_executed": ["grep", "read"],
+    "attempt_status": "succeeded",
+    "full_parent_wall_ms": 24750,
+    "bounded_child_replay_wall_ms": 7060
+  },
+  "checkpoint_lifecycle": {
+    "task": "Create a provenance-preserving continuation checkpoint, run native compaction, and restore the exact next step",
+    "max_output_tokens": 1024,
+    "utility_wall_ms": 7378,
+    "prompt_tokens": 396,
+    "completion_tokens": 291,
+    "total_tokens": 687,
+    "reasoning_tokens": 0,
+    "provider_cost": null,
+    "opencode_session_cost": 0,
+    "checkpoint_mode": "intelligent",
+    "native_compaction": "completed",
+    "restoration": "exact next step restored",
+    "restoration_marker": "FREE_CLOUD_CHECKPOINT_TELEMETRY_OK"
+  },
+  "fallback_observation": {
+    "max_output_tokens": 256,
+    "result": "truncated JSON rejected; deterministic ledger retained"
+  },
+  "local_comparison": {
+    "model": "qwen3:4b",
+    "comparable_utility_checkpoint_wall_ms": 9703,
+    "full_opencode_child_timeout_ms": 120000
+  },
+  "provenance_notes": [
+    "Values are copied from the recorded utility response metadata, OpenCode lifecycle telemetry, and wall-clock observations from the same experiment.",
+    "No prompt content, credentials, private paths, host identifier, or real session identifier is included.",
+    "Free-provider availability is external and this artifact is not an availability SLA."
+  ]
+}

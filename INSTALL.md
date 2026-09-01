@@ -64,16 +64,19 @@ provider settings live in the role pool. Keep machine-specific URLs and model
 bindings outside the repository.
 
 Bounded Explorer or Compactor pools may instead select the direct utility-model
-runtime. Its Ollama endpoint and local model belong in the same external pool
-file; see the [utility-model runtime configuration](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime).
+runtime. Ollama or generic OpenAI-compatible endpoint settings belong in the
+same external pool file; see the [utility-model runtime configuration](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime).
 
-The current Architect pool begins with:
+The public Architect pool begins with the smoke-tested free model:
 
 ```text
-nvidia/qwen/qwen3-coder-480b-a35b-instruct
+opencode/mimo-v2.5-free
 ```
 
-That endpoint has returned HTTP 410 and is intentionally retained as a live failover probe. Replace it with a healthy preferred model for ordinary use. Keep a working fallback.
+Provider availability can change. Confirm this model and the configured fallback
+in `opencode debug config` before real work. Provider-rejection and failover
+behavior are tested with deterministic fixtures rather than a broken live
+production default.
 
 Never place API keys in `opencode.json`, `model-pools.json`, Notebook, ledger, or telemetry.
 

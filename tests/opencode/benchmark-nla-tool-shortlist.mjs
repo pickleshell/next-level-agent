@@ -3,7 +3,7 @@ import fs from 'node:fs';
 const toolURL = process.env.NLA_TOOL_CATALOG_URL || 'http://127.0.0.1:41987/experimental/tool';
 const ollamaURL = process.env.NLA_OLLAMA_URL || 'http://127.0.0.1:11434/api/chat';
 const model = process.env.NLA_OLLAMA_MODEL || 'qwen3:4b';
-const timeoutMs = Number(process.env.NLA_BOS_TIMEOUT_MS || 30000);
+const timeoutMs = Number(process.env.NLA_BENCHMARK_TIMEOUT_MS || 30000);
 const outputPath = process.argv[2];
 const prompt = 'Bounded implementer task: inspect README.md, change no files, and report its first Markdown heading. Acceptance criteria: return the exact heading and state that no files were changed. Preserve this user-provided provenance.';
 const shortlistIDs = ['read', 'edit', 'write', 'bash'];

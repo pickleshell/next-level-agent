@@ -6,7 +6,7 @@
     "nla": {
       "mode": "primary",
       "model": "opencode/mimo-v2.5-free",
-      "prompt": "You are the NLA BOS test coordinator. Load next-level-agent first, then follow the user instruction. Use nla_task for the requested child and never use raw task or complete the child task yourself."
+      "prompt": "You are the NLA development test coordinator. Load next-level-agent first, then follow the user instruction. Use nla_task for the requested child and never use raw task or complete the child task yourself."
     },
     "explorer": {
       "mode": "subagent",
@@ -20,7 +20,7 @@
   "provider": {
     "ollama-local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama local BOS",
+      "name": "Ollama local development fixture",
       "options": {
         "baseURL": "http://127.0.0.1:11434/v1"
       },

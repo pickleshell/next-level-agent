@@ -114,6 +114,11 @@ and local `qwen3:4b` became fast. This indicates that tool-schema prefill, not
 only model inference or task complexity, can dominate a small model's agent
 latency.
 
+That 31-tool observation is a separate forensic snapshot. The checked-in,
+reproducible native Ollama benchmark resolved 15 public tools and reports schema
+bytes and provider telemetry rather than retrofitting an estimated token count.
+Both measurements are labeled separately in the status documentation.
+
 Before each `nla_task` OpenCode child invocation, Compactor now selects a
 relevant shortlist of approximately 2–5 tools rather than exposing every
 available tool.
@@ -174,6 +179,10 @@ repository context, and runtime workflow add substantial overhead. The utility
 runtime supports non-streaming Ollama HTTP and generic OpenAI-compatible
 chat-completions endpoints. See [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime)
 for configuration, evidence, and failure behavior.
+
+Bounded utility success is not evidence that the same model is suitable for a
+full OpenCode child-agent loop. Mem0 is not an NLA-supported integration;
+separate Mem0 testing is outside the Alpha release boundary.
 
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
 
@@ -255,6 +264,9 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 - [Original Draft 0.4](TECHNICAL_SPECIFICATION.md): the original product and architecture specification.
 - [Draft 0.4 Implementation Status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md): what is implemented, partial, absent, or intentionally deferred.
 - [NLA Modifications](NLA_MODIFICATIONS.md): the boundary between Superpowers and NLA additions.
+- [Testing](docs/testing.md): deterministic CI gates and optional real-model evidence.
+- [Contributing](CONTRIBUTING.md): contribution and evidence requirements.
+- [Security](SECURITY.md): Alpha threat boundary and private reporting guidance.
 - [Superpowers](https://github.com/obra/superpowers): the upstream skills-first development methodology.
 - [Assistant Notebook](https://github.com/pickleshell/skills/tree/main/assistant-notebook): the durable fast-memory skill used by NLA.
 

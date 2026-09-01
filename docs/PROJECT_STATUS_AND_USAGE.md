@@ -161,6 +161,12 @@ tool-using work still needs the appropriate capabilities. They show that
 eagerly exposing every tool can make schema prefill and context consumption
 dominate a small model's execution before it begins the useful task.
 
+The 31-tool/~16.7k-token result is a forensic OpenCode snapshot from the full
+runtime surface. It is separate from the checked-in native Ollama benchmark
+below, which resolved 16 endpoint entries, excluded one internal error sentinel,
+and compared a reproducible 15-tool catalog by serialized schema bytes. The two
+measurements must not be combined or presented as the same cohort.
+
 The implemented architecture is dynamic prompt optimization per step:
 
 - target a shortlist of 2–5 relevant tools rather than all 31;
@@ -196,12 +202,12 @@ derived from the role and bounded step, never automatically to all tools. If no
 safe sufficient subset can be determined, NLA fails closed and requests
 clarification, re-routes the step, or chooses a more capable model/runtime.
 
-### qwen3:4b BOS measurement (2026-09-01)
+### qwen3:4b development-workstation measurement (2026-09-01)
 
 The reproducible benchmark is
 [`tests/opencode/benchmark-nla-tool-shortlist.mjs`](../tests/opencode/benchmark-nla-tool-shortlist.mjs),
 with raw results in
-[`docs/nla-bos-qwen3-4b-2026-09-01.json`](nla-bos-qwen3-4b-2026-09-01.json).
+[`docs/nla-qwen3-4b-tool-shortlist-2026-09-01.json`](nla-qwen3-4b-tool-shortlist-2026-09-01.json).
 It used the same bounded Implementer prompt for both native Ollama requests.
 The current OpenCode 1.18.9 endpoint resolved 16 entries; the benchmark omitted
 the internal `invalid` error sentinel, leaving a 15-tool full baseline, and
@@ -305,9 +311,9 @@ OpenAI-compatible chat API) and generic OpenAI-compatible chat-completions
 endpoints. Endpoint joining preserves a base URL path prefix. Pools can bound
 OpenAI-compatible hidden reasoning and output with `reasoning_effort` and
 `max_output_tokens`; these settings are optional and provider support varies.
-BOS validation showed
-that a direct native Ollama `qwen3:4b` Compactor completed the lifecycle and
-restoration continued in the same session with `BOS_UTILITY_COMPACT_OK`.
+Development-workstation validation showed that a direct native Ollama
+`qwen3:4b` Compactor completed the lifecycle and restoration continued in the
+same session with the expected continuation marker.
 Native Ollama diagnostics were also much faster than the OpenAI-compatible
 path. The runtime reads only answer content and never mistakes a `thinking` or
 `reasoning` field for the answer.
@@ -344,7 +350,7 @@ is optional for general bounded roles; Compactor should use `json`.
 
 For a generic OpenAI-compatible endpoint, use `backend: "openai-compatible"`,
 `provider.api: "openai-compatible"`, and the endpoint's base URL. On
-2026-09-02, BOS exercised OpenCode's free inference endpoint with
+2026-09-02, a development workstation exercised OpenCode's free inference endpoint with
 `nemotron-3.5-lightning-free`, `reasoning_effort: "none"`, and
 `max_output_tokens: 1024`. A real `nla_task` shortlist call completed in 0.599 s
 with 139 prompt and 9 completion tokens, selecting only `read` and `grep` from
@@ -356,12 +362,19 @@ compaction, and restored the exact next step. The endpoint reported no
 monetary-cost field (`null`); OpenCode recorded zero cost for the free-model
 sessions.
 
+The sanitized raw measurement record is
+[`docs/nla-free-cloud-compactor-2026-09-02.json`](nla-free-cloud-compactor-2026-09-02.json).
+It includes the bounded utility configuration, tool permissions, wall times,
+token telemetry, cost fields, checkpoint outcome, and fallback observation,
+without real session IDs, host identifiers, credentials, or private paths.
+
 This free endpoint is useful experimental evidence, not an availability SLA:
 other free models returned rate limits or upstream errors during preflight.
 With a 256-token cap, the same checkpoint was truncated and correctly used the
 deterministic-ledger fallback; 1024 tokens was sufficient for the tested
 ledger. Local `qwen3:4b` previously took 9.703 s for the comparable utility
-checkpoint on BOS and timed out at 120 s in the full child-agent loop. The
+checkpoint on the same workstation and timed out at 120 s in the full
+child-agent loop. The
 cloud result isolates that local latency from the Compactor architecture, but
 does not make a cloud provider a runtime dependency.
 
@@ -372,7 +385,10 @@ Supervisor does not use this optional path during controlled compaction: its
 audit still runs through the configured OpenCode pool and any Supervisor error
 or block stops compaction fail-closed.
 
-The current Architect pool intentionally starts with `nvidia/qwen/qwen3-coder-480b-a35b-instruct`. That endpoint has returned HTTP 410 and is retained as a live failover probe. It should be replaced with a healthy preferred model for normal use. Model-failure testing should eventually move to a dedicated fixture.
+The public Architect pool starts with the smoke-tested
+`opencode/mimo-v2.5-free` and retains one bounded fallback. HTTP rejection and
+failover behavior are exercised with deterministic fixtures rather than a
+deliberately broken live default. Provider health is still installation-specific.
 
 ## Local Data and Privacy
 
@@ -458,13 +474,15 @@ Distinguish session behavior:
 - there is no transactional installer, drift detector, or deterministic profile validator;
 - controlled compaction requires a persistent TUI or server;
 - one-shot `opencode run` may exit before the idle-boundary compaction pipeline completes;
-- the current Architect preferred endpoint is intentionally useful as a failing probe;
-- the inherited Superpowers OpenCode test runner still contains fork-specific assumptions and Node 18 ESM incompatibility in two old tests;
+- the inherited Superpowers OpenCode test runner still contains fork-specific
+  bootstrap-layout assumptions in two old tests;
 - specifically, `test-plugin-loading.sh` and `test-bootstrap-caching.sh`
   require `skills/using-superpowers/SKILL.md`, which is absent from the
-  unchanged `origin/main` tree; the current shortlisting diff does not touch
-  those tests, their setup, `superpowers.js`, or that missing path;
+  NLA fork; these legacy harness tests are not part of the deterministic NLA CI
+  gate and their incompatibility is documented rather than hidden;
 - role model quality and provider availability are installation-specific;
+- Mem0 is not an NLA-supported integration. Testing Mem0 or other external
+  memory systems is separate work and is not an NLA Alpha release gate;
 - NLA is not a sandbox and does not replace operating-system security boundaries.
 
 For a full requirement-by-requirement analysis, read [Draft 0.4 Implementation Status](DRAFT_0_4_IMPLEMENTATION_STATUS.md).
@@ -479,10 +497,9 @@ The next milestone is reliability of NLA Core, not expansion of the installer.
 4. Machine-check approval, verification, review, checkpoint, and completion transitions.
 5. Exercise Supervisor gates on multiple real Tier 2 and Tier 3 tasks.
 6. Run a small practical benchmark across five to ten representative tasks.
-7. Replace the deliberately failing Architect preferred endpoint with a healthy model.
-8. Extend measurements of implemented Compactor shortlisting across supported
+7. Extend measurements of implemented Compactor shortlisting across supported
    providers and consider safe prompt-text optimization separately.
-9. Add independently tested CLI integrations only when contributors need them.
+8. Add independently tested CLI integrations only when contributors need them.
 
 The installer, managed launcher, immutable snapshots, complete guard, and statistical economic benchmark remain a separate possible product named NLA Managed Profile. They are deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement.
 
