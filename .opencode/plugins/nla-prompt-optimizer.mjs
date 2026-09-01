@@ -100,8 +100,12 @@ export async function optimizeInvocation({ role, prompt, roleProfile = ROLE_TOOL
     return { prompt, tools: fallback, source: fallback.length ? 'deterministic' : 'tool-free' };
   }
   try {
-    const output = await runCompactor(compactorPrompt(role, prompt, roleProfile, fallback));
-    return { prompt, tools: parseCompactorToolOutput(output, role, fallback, roleProfile), source: 'utility-compactor' };
+    const result = await runCompactor(compactorPrompt(role, prompt, roleProfile, fallback));
+    const output = typeof result === 'string' ? result : result?.output;
+    return {
+      prompt, tools: parseCompactorToolOutput(output, role, fallback, roleProfile), source: 'utility-compactor',
+      compactorMetadata: typeof result === 'object' ? result.metadata : undefined,
+    };
   } catch (error) {
     return { prompt, tools: fallback, source: 'deterministic-fallback', reason: String(error?.message || error) };
   }

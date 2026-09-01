@@ -26,11 +26,12 @@ assert.throws(
 const bounded = 'Goal: preserve this exact task. Acceptance: tests pass. Provenance: user request.';
 const optimized = await optimizeInvocation({
   role: 'implementer', prompt: bounded,
-  runCompactor: async () => '{"tools":["read","edit","bash"]}',
+  runCompactor: async () => ({ output: '{"tools":["read","edit","bash"]}', metadata: { usage: { prompt_tokens: 12 } } }),
 });
 assert.equal(optimized.prompt, bounded);
 assert.deepEqual(optimized.tools, ['read', 'edit', 'bash']);
 assert.equal(optimized.source, 'utility-compactor');
+assert.deepEqual(optimized.compactorMetadata.usage, { prompt_tokens: 12 });
 
 const invalidFallback = await optimizeInvocation({
   role: 'reviewer', prompt: 'Review source changes and run tests.', runCompactor: async () => '{"tools":["read","edit"]}',

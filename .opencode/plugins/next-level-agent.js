@@ -297,7 +297,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             prompt: args.prompt,
             roleProfile,
             runCompactor: configuredUtilityPool(compactorPool)
-              ? async (prompt) => (await runUtilityModel({ role: 'compactor', pool: compactorPool, prompt })).output
+              ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt })
               : null,
           });
           const invocationTools = toolPermissionMap(optimized.tools);
@@ -305,6 +305,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             event: 'tool_shortlist_selected', session_id: childID, parent_session_id: context.sessionID,
             agent: args.role, model: modelName, capability_cache: capabilityCacheSource,
             role_profile: roleProfile, tool_shortlist: optimized.tools, tool_optimization: optimized.source,
+            compactor_usage: optimized.compactorMetadata?.usage,
+            compactor_cost: optimized.compactorMetadata?.cost,
+            compactor_model: optimized.compactorMetadata?.model,
+            compactor_fallback_reason: optimized.reason,
           });
           const request = client.session.prompt({
             path: { id: childID },
@@ -508,6 +512,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         session_id: sessionID,
         mode: resolved.mode,
         reason: resolved.reason || undefined,
+        compactor_model: resolved.metadata?.model,
+        compactor_usage: resolved.metadata?.usage,
+        compactor_cost: resolved.metadata?.cost,
       });
       saveLedger(stateRoot, checkpoint);
       current.checkpoint = checkpoint;

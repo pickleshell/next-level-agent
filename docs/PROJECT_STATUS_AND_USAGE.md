@@ -300,8 +300,12 @@ Explorer may use the utility runtime only for supplied-data analysis; repository
 navigation or tool use requires the agent runtime. This claim does not extend
 to Router.
 
-The first backend is Ollama over non-streaming HTTP. Both the native chat API
-and Ollama's OpenAI-compatible chat API are supported. BOS validation showed
+The runtime supports Ollama over non-streaming HTTP (native or
+OpenAI-compatible chat API) and generic OpenAI-compatible chat-completions
+endpoints. Endpoint joining preserves a base URL path prefix. Pools can bound
+OpenAI-compatible hidden reasoning and output with `reasoning_effort` and
+`max_output_tokens`; these settings are optional and provider support varies.
+BOS validation showed
 that a direct native Ollama `qwen3:4b` Compactor completed the lifecycle and
 restoration continued in the same session with `BOS_UTILITY_COMPACT_OK`.
 Native Ollama diagnostics were also much faster than the OpenAI-compatible
@@ -337,6 +341,29 @@ required roles, especially Supervisor, in the complete file:
 ordered bounded pool, and `max_failovers` limits additional attempts. Every
 utility request has an explicit positive `request_timeout_ms`. `output_format`
 is optional for general bounded roles; Compactor should use `json`.
+
+For a generic OpenAI-compatible endpoint, use `backend: "openai-compatible"`,
+`provider.api: "openai-compatible"`, and the endpoint's base URL. On
+2026-09-02, BOS exercised OpenCode's free inference endpoint with
+`nemotron-3.5-lightning-free`, `reasoning_effort: "none"`, and
+`max_output_tokens: 1024`. A real `nla_task` shortlist call completed in 0.599 s
+with 139 prompt and 9 completion tokens, selecting only `read` and `grep` from
+the Explorer's `read`/`grep`/`glob` ceiling. The child permission map denied
+`*` and allowed only those two tools, and the child completed. A meaningful
+checkpoint call completed in 7.378 s with 396 prompt and 291 completion tokens
+(687 total, 0 reasoning), produced an intelligent checkpoint, survived native
+compaction, and restored the exact next step. The endpoint reported no
+monetary-cost field (`null`); OpenCode recorded zero cost for the free-model
+sessions.
+
+This free endpoint is useful experimental evidence, not an availability SLA:
+other free models returned rate limits or upstream errors during preflight.
+With a 256-token cap, the same checkpoint was truncated and correctly used the
+deterministic-ledger fallback; 1024 tokens was sufficient for the tested
+ledger. Local `qwen3:4b` previously took 9.703 s for the comparable utility
+checkpoint on BOS and timed out at 120 s in the full child-agent loop. The
+cloud result isolates that local latency from the Compactor architecture, but
+does not make a cloud provider a runtime dependency.
 
 Compactor validates the returned checkpoint against the deterministic ledger.
 A missing model, HTTP error, timeout, invalid response, or checkpoint that

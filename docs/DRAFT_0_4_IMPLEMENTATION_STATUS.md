@@ -112,7 +112,10 @@ the utility-model runtime when orchestration supplies the complete packet and
 data. This is a deliberate architecture for local, small, cheap, or specialized
 models, not a one-model workaround. Compactor is its first proven consumer;
 Explorer may use it only for supplied-data work. The claim does not extend to
-Router.
+Router. The utility adapter supports native Ollama and generic
+OpenAI-compatible endpoints with bounded timeout, output, and optional
+reasoning controls; provider availability remains external and deterministic
+fallback remains required.
 
 The current architecture also broadens Compactor's responsibility
 beyond recovery checkpoints. Before model invocation it owns bounded prompt

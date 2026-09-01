@@ -67,6 +67,7 @@ export async function intelligentCheckpoint({ ledger, sessionID, directory, pool
       checkpoint: parseCompactorOutput(result && result.output, ledger, sessionID, directory),
       mode: 'intelligent',
       reason: null,
+      metadata: result && result.metadata,
     };
   } catch (error) {
     return {
