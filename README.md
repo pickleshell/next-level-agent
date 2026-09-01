@@ -109,6 +109,13 @@ for these two narrow roles even when they perform poorly as full OpenCode
 agents. This exception applies only to Explorer and Compactor, not Router; the
 requirements for Architect, Implementer, and Supervisor are unchanged.
 
+These bounded roles can select a direct utility-model runtime instead of an
+OpenCode child session. The first backend is non-streaming Ollama HTTP (native
+or OpenAI-compatible). It has no agent loop or tools: NLA sends one complete
+prompt and consumes one answer. Normal agent roles continue to use OpenCode by
+default. See [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime)
+for configuration and failure behavior.
+
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
 
 ## Workflow

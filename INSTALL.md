@@ -58,9 +58,14 @@ NLA at a complete external pool file:
 export NLA_MODEL_POOLS_PATH="/absolute/path/to/model-pools.json"
 ```
 
-The override applies to role-pool selection only. Provider definitions and
-agent prompts remain OpenCode configuration concerns. Keep machine-specific
-provider URLs and model bindings outside the repository.
+The override replaces the complete role-pool file. OpenCode provider definitions
+and agent prompts remain OpenCode configuration concerns; direct utility-runtime
+provider settings live in the role pool. Keep machine-specific URLs and model
+bindings outside the repository.
+
+Bounded Explorer or Compactor pools may instead select the direct utility-model
+runtime. Its Ollama endpoint and local model belong in the same external pool
+file; see the [utility-model runtime configuration](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime).
 
 The current Architect pool begins with:
 

@@ -13,7 +13,7 @@ export function configuredCompactorPool(pool) {
     pool
     && pool.enabled
     && Array.isArray(pool.models)
-    && pool.models.some((model) => typeof model === 'string' && model.includes('/'))
+    && pool.models.some((model) => typeof model === 'string' && model.trim())
   );
 }
 
