@@ -51,6 +51,17 @@ Open:
 
 Each enabled role must contain at least one model available through the user's OpenCode providers.
 
+For a machine-local pool assignment without changing repository defaults, point
+NLA at a complete external pool file:
+
+```bash
+export NLA_MODEL_POOLS_PATH="/absolute/path/to/model-pools.json"
+```
+
+The override applies to role-pool selection only. Provider definitions and
+agent prompts remain OpenCode configuration concerns. Keep machine-specific
+provider URLs and model bindings outside the repository.
+
 The current Architect pool begins with:
 
 ```text

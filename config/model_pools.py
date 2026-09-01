@@ -1,11 +1,16 @@
 import json
 import os
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "model-pools.json")
+DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "model-pools.json")
+
+
+def config_path():
+    override = os.environ.get("NLA_MODEL_POOLS_PATH")
+    return os.path.abspath(os.path.expanduser(override)) if override else DEFAULT_CONFIG_PATH
 
 
 def get_pool(role):
-    with open(CONFIG_PATH, "r") as f:
+    with open(config_path(), "r") as f:
         pools = json.load(f)
     return pools.get("roles", {}).get(role, {})
 

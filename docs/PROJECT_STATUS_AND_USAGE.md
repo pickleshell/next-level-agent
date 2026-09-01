@@ -152,6 +152,11 @@ The response also contained the correct legacy README heading. This test verifie
 
 Model pools are configured in [`config/model-pools.json`](../config/model-pools.json).
 
+Set `NLA_MODEL_POOLS_PATH` to an absolute path (or a path beginning with `~`) to
+load a complete machine-local pool file instead. If unset, NLA uses the
+repository default. This supports local provider experiments without committing
+machine-specific role bindings.
+
 ```json
 {
   "architect": {
