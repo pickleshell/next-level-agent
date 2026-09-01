@@ -189,32 +189,39 @@ unavailability, timeout/error, or invalid output automatically retains the
 already-saved deterministic ledger, after which native compaction and restore
 continue normally.
 
-Explorer and Compactor may be assigned local or utility models that are not
-strong general coding agents when orchestration provides a bounded packet and
-the input data. This is a narrow compatibility claim, not a guarantee for
-arbitrary base models: Compactor must reliably satisfy its summarization and
-structured-output contract, while Explorer must reliably satisfy its bounded
-read-only analysis contract and return the expected report. In this mode
-neither role requires tool calling, so local Ollama models can be useful even
-when they perform poorly as full OpenCode agents. An Explorer expected to
-navigate files or tools itself through OpenCode may still need stronger
-instruction-following and tool-use capability. This allowance does not yet
-extend to Router, and it does not change Architect, Implementer, or Supervisor
-requirements.
+Model suitability depends on the execution class, not only the role name. A
+model can succeed on a narrow direct Ollama task yet perform poorly in a full
+OpenCode agent loop because system instructions, tool protocols, repository
+context, and workflow participation add overhead. That observation supports a
+separate utility runtime; it does not establish that the model is a capable
+general coding agent.
 
 ### Utility-model runtime
 
-A role pool can select `runtime: "utility"` to call a bounded model directly,
-without an OpenCode child session, agent loop, or tools. Pools without that
-setting retain the existing OpenCode runtime. The dispatcher is role-generic;
-Compactor is the first lifecycle consumer, and Explorer can use the same path
-when its prompt already contains all data it needs.
+NLA has two intended execution classes:
+
+- the **agent runtime** uses OpenCode child sessions for roles that need
+  multi-step reasoning, tools, repository navigation, or workflow
+  participation;
+- the **utility-model runtime** makes a bounded single-shot call, without an
+  agent loop or tools, when orchestration supplies the complete packet and
+  input data.
+
+This separation deliberately creates a useful place for local, small, cheap, or
+specialized models. It is not a workaround for one model. A role pool selects
+the second class with `runtime: "utility"`; pools without that setting retain
+the OpenCode agent runtime. Compactor is the first proven lifecycle consumer.
+Explorer may use the utility runtime only for supplied-data analysis; repository
+navigation or tool use requires the agent runtime. This claim does not extend
+to Router.
 
 The first backend is Ollama over non-streaming HTTP. Both the native chat API
-and Ollama's OpenAI-compatible chat API are supported. Direct diagnostics with
-`qwen3:4b` favored the native API because it was simpler and returned answer
-content separately with thinking disabled. The runtime reads only answer
-content and never mistakes a `thinking` or `reasoning` field for the answer.
+and Ollama's OpenAI-compatible chat API are supported. BOS validation showed
+that a direct native Ollama `qwen3:4b` Compactor completed the lifecycle and
+restoration continued in the same session with `BOS_UTILITY_COMPACT_OK`.
+Native Ollama diagnostics were also much faster than the OpenAI-compatible
+path. The runtime reads only answer content and never mistakes a `thinking` or
+`reasoning` field for the answer.
 
 Keep host-specific bindings in a complete external pool file selected with
 `NLA_MODEL_POOLS_PATH`. The following is a focused excerpt; retain the other

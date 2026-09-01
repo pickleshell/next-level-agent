@@ -32,6 +32,19 @@ task (`cost per accepted task`). When goals conflict, priorities are as follows:
 
 Minimal token count is not itself considered success if the result fails verification.
 
+> **Current implementation evolution:** NLA now distinguishes an OpenCode
+> **agent runtime** for multi-step reasoning, tools, repository navigation, and
+> workflow participation from a direct **utility-model runtime** for bounded
+> single-shot transformations or analysis supplied with a complete packet and
+> data. The latter is a deliberate architecture for local, small, cheap, or
+> specialized models, not a one-model workaround. Compactor is the first proven
+> consumer; Explorer may use it only for supplied-data work. This claim does not
+> extend to Router. A model's success on a narrow direct Ollama task does not
+> imply success under the instruction, tool, context, and workflow overhead of
+> a full OpenCode agent loop. Compactor output remains validated with a
+> deterministic fallback, while Supervisor remains fail-closed through
+> OpenCode. This evolution postdates the normative Draft 0.4 text below.
+
 ## 2. Delivery Boundaries
 
 ### 2.1. Included in the first version
