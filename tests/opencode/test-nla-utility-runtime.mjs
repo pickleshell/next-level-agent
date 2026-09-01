@@ -55,4 +55,23 @@ for (const invalid of [
   { ...pool, request_timeout_ms: 0 },
 ]) assert.equal(configuredUtilityPool(invalid), false);
 
+let cloudRequest;
+const cloudPool = {
+  enabled: true, runtime: 'utility', backend: 'openai-compatible',
+  provider: { api: 'openai-compatible', base_url: 'https://example.test/prefix' }, models: ['free-json'],
+  request_timeout_ms: 1000, max_failovers: 0, output_format: 'json', reasoning_effort: 'none', max_output_tokens: 128,
+};
+const cloud = await runUtilityModel({
+  role: 'compactor', pool: cloudPool, prompt: 'select',
+  fetchImpl: async (url, options) => {
+    cloudRequest = { url: String(url), body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"tools":["read","grep"]}' } }], usage: { prompt_tokens: 10, completion_tokens: 8 } }), { status: 200 });
+  },
+});
+assert.equal(cloudRequest.url, 'https://example.test/prefix/v1/chat/completions');
+assert.equal(cloudRequest.body.reasoning_effort, 'none');
+assert.equal(cloudRequest.body.max_tokens, 128);
+assert.deepEqual(cloud.metadata.usage, { prompt_tokens: 10, completion_tokens: 8 });
+assert.equal(cloud.metadata.backend, 'openai-compatible');
+
 console.log('NLA utility-model runtime tests passed');

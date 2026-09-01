@@ -16,10 +16,11 @@ const intelligent = { ...ledger, completed_tasks: ['Implementation complete; see
 let calls = 0;
 const success = await intelligentCheckpoint({
   ledger, sessionID, directory, pool,
-  runCompactor: async () => { calls += 1; return { output: JSON.stringify(intelligent) }; },
+  runCompactor: async () => { calls += 1; return { output: JSON.stringify(intelligent), metadata: { usage: { total_tokens: 42 }, cost: 0 } }; },
 });
 assert.equal(success.mode, 'intelligent');
 assert.deepEqual(success.checkpoint.completed_tasks, intelligent.completed_tasks);
+assert.deepEqual(success.metadata, { usage: { total_tokens: 42 }, cost: 0 });
 assert.equal(calls, 1);
 
 for (const disabledPool of [undefined, { enabled: false, models: ['provider/model'] }, { enabled: true, models: [] }]) {

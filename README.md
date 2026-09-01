@@ -170,9 +170,9 @@ to Router. Architect, Implementer, and Supervisor requirements are unchanged.
 
 A model can perform well on a narrow direct Ollama request yet perform poorly
 inside a full OpenCode agent loop, where system instructions, tool protocols,
-repository context, and runtime workflow add substantial overhead. The first
-utility backend is non-streaming Ollama HTTP, using either its native or
-OpenAI-compatible API. See [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime)
+repository context, and runtime workflow add substantial overhead. The utility
+runtime supports non-streaming Ollama HTTP and generic OpenAI-compatible
+chat-completions endpoints. See [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime)
 for configuration, evidence, and failure behavior.
 
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
