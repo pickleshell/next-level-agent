@@ -59,7 +59,7 @@ opencode.json
 config/model-pools.json
 ```
 
-Check that every enabled pool has at least one model the user can access. Warn that the current Architect primary NVIDIA Qwen endpoint is retained as a failing HTTP 410 probe and should be replaced for normal use.
+Check that every enabled pool has at least one model the user can access. Public defaults use models that passed the documented development smoke tests; provider availability can still change, so verify the resolved model list during installation.
 
 ## Required Verification
 

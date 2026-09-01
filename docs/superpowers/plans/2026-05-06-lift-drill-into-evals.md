@@ -633,7 +633,7 @@ Expected: scenario list, no error about missing SUPERPOWERS_ROOT.
 
 ```bash
 set -a
-source /Users/jesse/Documents/GitHub/prime-radiant-inc/sprout/.env
+source /absolute/path/to/private-eval-environment/.env
 set +a
 echo "ANTHROPIC_API_KEY set: ${ANTHROPIC_API_KEY:+yes}"
 ```
@@ -1176,7 +1176,7 @@ Expected: all tests pass.
 
 ```bash
 set -a
-source /Users/jesse/Documents/GitHub/prime-radiant-inc/sprout/.env
+source /absolute/path/to/private-eval-environment/.env
 set +a
 cd /Users/jesse/Documents/GitHub/superpowers/superpowers/evals
 unset SUPERPOWERS_ROOT

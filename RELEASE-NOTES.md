@@ -1,3 +1,27 @@
+# Release Notes
+
+## NLA v0.1.0-alpha.1 (2026-09-02)
+
+This is the first publication-focused **experimental Alpha** of Next Level
+Agent. It is not a hardened security boundary and currently supports the full
+NLA runtime only on OpenCode.
+
+- Compactor performs bounded tool-schema shortlisting for `nla_task` children,
+  constrained by cached role capability profiles and fail-closed fallbacks.
+- The utility runtime supports native Ollama and generic OpenAI-compatible
+  endpoints with bounded timeout, output, and optional reasoning controls.
+- Controlled checkpoint → native compaction → restoration and cloud Compactor
+  telemetry have passed documented end-to-end tests.
+- Public model defaults no longer depend on a deliberately broken live endpoint;
+  provider-failure behavior remains covered by deterministic fixtures.
+- Publication adds deterministic GitHub Actions checks, security guidance,
+  contribution guidance, sanitized evidence, and explicit local-model limits.
+
+The repository retains the upstream Superpowers version metadata and release
+history below because NLA is built on that distribution. The NLA Alpha tag uses
+its own `nla-v0.1.0-alpha.1` namespace to avoid implying a new upstream
+Superpowers release.
+
 # Superpowers Release Notes
 
 ## v6.3.0 (2026-08-12)

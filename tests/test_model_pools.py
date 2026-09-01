@@ -37,3 +37,13 @@ def test_every_enabled_pool_is_bounded():
             assert len(pool["models"]) == 2, role
             assert pool["max_failovers"] == 1, role
             assert pool["idle_timeout_ms"] > 0, role
+
+
+def test_public_architect_pool_uses_healthy_smoke_tested_default():
+    from config.model_pools import get_pool
+    pool = get_pool("architect")
+    assert pool["models"][0] == "opencode/mimo-v2.5-free"
+    assert not any("nvidia/qwen/qwen3-coder-480b-a35b-instruct" == model for model in pool["models"])
+    with open("opencode.json", "r") as f:
+        profile = json.load(f)
+    assert profile["agent"]["architect"]["model"] == pool["models"][0]

@@ -2,8 +2,13 @@
   "name": "next-level-agent",
   "version": "6.3.0",
   "description": "Next Level Agent orchestration plugin with Superpowers skills",
+  "private": true,
+  "license": "MIT",
   "type": "module",
   "main": ".opencode/plugins/next-level-agent.js",
+  "scripts": {
+    "test:nla": "bash tests/opencode/test-nla-memory.sh && node tests/opencode/test-nla-model-pools.mjs"
+  },
   "keywords": [
     "pi-package",
     "skills",

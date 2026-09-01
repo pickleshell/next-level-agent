@@ -134,10 +134,9 @@ ceiling, never a full-catalog fallback.
 This boundary reflects a practical design lesson: success on a narrow direct
 Ollama task does not predict success in a full OpenCode agent loop, whose
 instructions, tools, repository context, and workflow impose additional
-overhead. BOS evidence includes a direct native Ollama `qwen3:4b` Compactor
-lifecycle followed by same-session restoration with
-`BOS_UTILITY_COMPACT_OK`; native Ollama diagnostics were much faster than the
-OpenAI-compatible path.
+overhead. Sanitized development-workstation evidence includes a direct native
+Ollama `qwen3:4b` Compactor lifecycle followed by same-session restoration;
+native Ollama diagnostics were much faster than the OpenAI-compatible path.
 
 ### Compaction
 
@@ -338,9 +337,12 @@ Instead of building the Draft 0.4 statistical laboratory, run five to ten repres
 - whether context survived compaction;
 - how much user intervention was necessary.
 
-### 7. Replace the Deliberately Failing Architect Probe
+### 7. Keep Public Model Defaults Healthy
 
-The current NVIDIA Qwen entry is useful as a live failover probe, but a stable installation should use a healthy preferred Architect model. Model-failure testing should move to a dedicated fixture.
+The public Architect default is now a model that passed the documented smoke
+tests. Provider rejection and failover remain covered by deterministic fixtures
+instead of a deliberately failing live default. Installation still must verify
+current provider availability.
 
 ## Recommended Scope Decision
 

@@ -6,7 +6,7 @@
     "supervisor": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 180000, "max_failovers": 1},
     "scout": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
     "explorer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
-    "architect": {"enabled": true, "models": ["nvidia/qwen/qwen3-coder-480b-a35b-instruct", "opencode/hy3-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
+    "architect": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
     "implementer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
     "reviewer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 180000, "max_failovers": 1},
     "compactor": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 90000, "max_failovers": 1}

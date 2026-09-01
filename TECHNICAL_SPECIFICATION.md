@@ -61,6 +61,9 @@ Minimal token count is not itself considered success if the result fails verific
 > verbatim and prunes schemas through OpenCode's per-prompt tool permission map;
 > general prompt-text rewriting and non-`nla_task` invocations remain outside
 > this implementation.
+> The 31-tool/~16.7k result is a separate forensic runtime snapshot, not the
+> checked-in 15-tool native Ollama benchmark cohort; current status docs retain
+> that distinction and do not infer missing provider token telemetry.
 >
 > Stable role capability profiles are cached locally using a key composed from
 > the NLA cache version, role/model-pool configuration, expected role ceiling,
