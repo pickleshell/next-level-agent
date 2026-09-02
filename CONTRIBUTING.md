@@ -33,7 +33,3 @@ artifact and clearly distinguish observation from availability guarantees.
 Describe the problem, the chosen boundary, changed behavior, verification, and
 known limitations. Preserve deterministic fail-closed behavior: utility-model
 failure must not restore the full tool catalog or weaken role permissions.
-
-By contributing, you agree that your contribution may be distributed under the
-repository's MIT license while inherited Superpowers components retain their
-existing attribution and license.
