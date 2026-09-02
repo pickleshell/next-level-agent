@@ -1,6 +1,6 @@
 {
   "name": "next-level-agent",
-  "version": "0.1.0-alpha.2",
+  "version": "6.3.0",
   "description": "Next Level Agent orchestration plugin with Superpowers skills",
   "private": true,
   "license": "MIT",
@@ -9,5 +9,20 @@
   "scripts": {
     "test:nla": "bash tests/opencode/test-nla-memory.sh && node tests/opencode/test-nla-model-pools.mjs && node tests/opencode/test-nla-version.mjs"
   },
-  "keywords": ["opencode", "agents", "workflow", "compaction"]
+  "keywords": [
+    "pi-package",
+    "skills",
+    "tdd",
+    "debugging",
+    "collaboration",
+    "workflow"
+  ],
+  "pi": {
+    "extensions": [
+      "./.pi/extensions/superpowers.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
 }

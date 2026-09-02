@@ -25,11 +25,15 @@ python3 -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
 git diff --check
 ```
 
-Provider-backed claims should distinguish measured observations from
-availability guarantees and must not expose private runtime data.
+If a provider-backed experiment supports a claim, include a sanitized evidence
+artifact and clearly distinguish observation from availability guarantees.
 
 ## Pull requests
 
 Describe the problem, the chosen boundary, changed behavior, verification, and
 known limitations. Preserve deterministic fail-closed behavior: utility-model
 failure must not restore the full tool catalog or weaken role permissions.
+
+By contributing, you agree that your contribution may be distributed under the
+repository's MIT license while inherited Superpowers components retain their
+existing attribution and license.

@@ -1,20 +1,34 @@
 ---
-name: OpenCode compatibility report
-about: Report an NLA compatibility issue with an OpenCode version or platform
-labels: compatibility
+name: IDE / Platform Support Request
+about: Request support for a new IDE, editor, or AI coding tool
+labels: platform-support
 ---
 
-## Environment
+<!--
+BEFORE FILING: Search existing issues — your IDE may already be
+requested or discussed.
+-->
 
-- NLA version or commit:
-- OpenCode version:
-- Operating system:
+- [ ] I searched existing issues for this IDE/platform
 
-## Compatibility problem
+## Which IDE or platform?
+<!-- Name and link -->
 
-## Minimal reproduction
+## Does this tool have a plugin or extension system?
+<!-- If yes, link to the docs. If no, explain how third-party
+     integrations typically work with this tool. -->
 
-## Sanitized evidence
+## Have you tried manual installation?
+<!-- Many tools work with Superpowers through manual setup even without
+     official support. Did you try? What happened? -->
 
-NLA currently supports OpenCode only. Do not include credentials or private
-runtime data.
+## Environment (required)
+<!-- Required. We assume an agent wrote this request — tell us which one and
+     where it ran. -->
+
+| Field | Value |
+|-------|-------|
+| Harness you currently use (Claude Code, Cursor, etc.) | |
+| Harness version | |
+| Your model + version | |
+| All plugins installed | |
