@@ -8,12 +8,6 @@ boundary. Run it only in repositories and provider accounts whose access you
 understand. Review the current limitations in
 [`docs/PROJECT_STATUS_AND_USAGE.md`](docs/PROJECT_STATUS_AND_USAGE.md) before use.
 
-## Supported version
-
-Security fixes are applied to the current `main` branch and the newest Alpha
-release only. Historical snapshots and inherited upstream integrations may not
-receive NLA-specific fixes.
-
 ## Reporting a vulnerability
 
 Do not include credentials, private repository content, session transcripts,
@@ -25,8 +19,7 @@ or exploit details in a public issue. Email
 - minimal reproduction steps using synthetic data;
 - any suggested mitigation.
 
-Allow reasonable time for triage before public disclosure. Ordinary bugs and
-feature requests can use the public GitHub issue tracker.
+Ordinary bugs and feature requests can use the public GitHub issue tracker.
 
 ## Data and credential boundaries
 

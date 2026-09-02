@@ -113,14 +113,11 @@ NLA Core is the current priority. Focus on:
 - stable model pools and deterministic failure fixtures;
 - memory, compaction, restoration, and telemetry reliability.
 
-Do not restart work on the Draft 0.4 transactional installer, managed launcher, immutable catalog, or full benchmark laboratory unless the user explicitly places NLA Managed Profile back in scope.
-
 ## Repository Safety
 
 - Preserve unrelated and pre-existing changes.
 - Use focused tests proportional to the change.
 - Never claim completion without fresh verification evidence.
 - Do not commit or push unless the user asks for it.
-- Do not open a pull request to Superpowers upstream for NLA-specific changes.
 - Preserve Superpowers attribution and license boundaries.
-- Do not claim support for another CLI without a complete NLA end-to-end integration test.
+- Do not claim support beyond the current OpenCode runtime.
