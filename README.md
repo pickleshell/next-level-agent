@@ -186,8 +186,7 @@ chat-completions endpoints. See [Project Status and Usage](docs/PROJECT_STATUS_A
 for configuration, evidence, and failure behavior.
 
 Bounded utility success is not evidence that the same model is suitable for a
-full OpenCode child-agent loop. Mem0 is not an NLA-supported integration;
-separate Mem0 testing is outside the Alpha release boundary.
+full OpenCode child-agent loop.
 
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
 
@@ -250,6 +249,25 @@ This repository is based on Superpowers and retains some upstream integrations a
 
 Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
 
+## Optional durable memory with Mem0
+
+NLA includes a Mem0 OpenCode plugin that lets the agent add, semantically
+search, list, read, update, delete, and inspect the history of durable memories
+across OpenCode sessions. The plugin belongs to NLA and is enabled in the
+default NLA configuration; the Mem0 service and its Python dependencies are a
+separate optional deployment. If the service is absent, normal NLA startup and
+non-Mem0 work continue normally, and only an invoked `memory_*` tool fails.
+
+The recommended profile uses a cheap OpenAI-compatible cloud model for memory
+extraction while keeping `nomic-embed-text` embeddings, Qdrant vectors, and
+SQLite history local. Fully local extraction with Ollama `qwen3:4b` is also
+supported, although it had lower identifier fidelity in one development test.
+NLA never needs to know which extraction profile the external service uses.
+
+See [Install the Mem0 service](docs/MEM0_INSTALL.md) for a clean-clone deployment
+and [Mem0 plugin reference](docs/NLA_MEM0_PLUGIN.md) for architecture, tool
+semantics, security boundaries, failure handling, and cross-session behavior.
+
 ## Install
 
 > [!WARNING]
@@ -271,6 +289,7 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 - [NLA Modifications](NLA_MODIFICATIONS.md): the boundary between Superpowers and NLA additions.
 - [Testing](docs/testing.md): deterministic CI gates and optional real-model evidence.
 - [Optional Mem0 tools](docs/NLA_MEM0_PLUGIN.md): separate HTTP plugin for durable semantic memory.
+- [Mem0 service installation](docs/MEM0_INSTALL.md): deploy and verify the optional external service.
 - [Contributing](CONTRIBUTING.md): contribution and evidence requirements.
 - [Security](SECURITY.md): Alpha threat boundary and private reporting guidance.
 - [Superpowers](https://github.com/obra/superpowers): the upstream skills-first development methodology.

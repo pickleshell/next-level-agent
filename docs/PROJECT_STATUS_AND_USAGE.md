@@ -486,8 +486,10 @@ Distinguish session behavior:
   NLA fork; these legacy harness tests are not part of the deterministic NLA CI
   gate and their incompatibility is documented rather than hidden;
 - role model quality and provider availability are installation-specific;
-- Mem0 is not an NLA-supported integration. Testing Mem0 or other external
-  memory systems is separate work and is not an NLA Alpha release gate;
+- the Mem0 tools plugin is included and enabled by default, but its external
+  Mem0 service, extraction provider, local embedder, and persistent stores are
+  optional operator-managed dependencies; their availability is not required
+  for ordinary NLA startup or non-Mem0 workflows;
 - NLA is not a sandbox and does not replace operating-system security boundaries.
 
 For a full requirement-by-requirement analysis, read [Draft 0.4 Implementation Status](DRAFT_0_4_IMPLEMENTATION_STATUS.md).

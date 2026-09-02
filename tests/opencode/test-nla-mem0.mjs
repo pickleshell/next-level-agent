@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { Mem0HttpClient, mem0Config, resolveMem0UserID } from '../../.opencode/plugins/nla-mem0-client.mjs';
 import { NlaMem0Plugin } from '../../.opencode/plugins/nla-mem0.js';
 
@@ -62,6 +63,15 @@ const server = http.createServer(async (request, response) => {
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 try {
+  const defaultConfig = JSON.parse(await readFile(new URL('../../opencode.json', import.meta.url), 'utf8'));
+  assert.ok(defaultConfig.plugin.includes('./.opencode/plugins/nla-mem0.js'), 'default config must include the optional Mem0 plugin');
+  const originalURL = process.env.NLA_MEM0_URL;
+  process.env.NLA_MEM0_URL = 'http://127.0.0.1:1';
+  const offlinePlugin = await NlaMem0Plugin();
+  assert.equal(Object.keys(offlinePlugin.tool).length, 7, 'plugin must load without contacting the optional service');
+  if (originalURL === undefined) delete process.env.NLA_MEM0_URL;
+  else process.env.NLA_MEM0_URL = originalURL;
+
   const address = server.address();
   const config = mem0Config({
     NLA_MEM0_URL: `http://127.0.0.1:${address.port}`,
