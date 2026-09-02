@@ -8,6 +8,11 @@ For architecture and roles, start with the main [README](../README.md). For the 
 
 **Current maturity: Alpha, active development**
 
+The canonical NLA release is `0.1.0-alpha.2`, tagged
+`nla-v0.1.0-alpha.2`. NLA release identity is stored in
+[`nla-version.json`](../nla-version.json) and is intentionally separate from the
+inherited Superpowers `6.3.0` package and harness-manifest metadata.
+
 The core NLA workflow is operational and has passed real end-to-end tests. NLA can classify work, create specialized child sessions, use role-specific model pools, fail over after model rejection, maintain a private workflow ledger, use Assistant Notebook, run controlled compaction, restore the same primary session, and emit structured telemetry.
 
 NLA is not yet production-ready as a hardened security boundary. Some role restrictions are behavioral contracts in prompts rather than a complete least-privilege permission matrix. The full guard, validator, hard budget enforcement, and managed installation system proposed in Draft 0.4 are not implemented.
