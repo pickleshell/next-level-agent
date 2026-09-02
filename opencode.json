@@ -1,7 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    "./.opencode/plugins/next-level-agent.js"
+    "./.opencode/plugins/next-level-agent.js",
+    "./.opencode/plugins/nla-mem0.js"
   ],
   "default_agent": "nla",
   "compaction": {
