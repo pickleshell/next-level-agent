@@ -8,6 +8,11 @@ For architecture and roles, start with the main [README](../README.md). For the 
 
 **Current maturity: Alpha, active development**
 
+The canonical NLA release is `0.1.0-alpha.2`, tagged
+`nla-v0.1.0-alpha.2`. NLA release identity is stored in
+[`nla-version.json`](../nla-version.json) and is intentionally separate from the
+inherited Superpowers `6.3.0` package and harness-manifest metadata.
+
 The core NLA workflow is operational and has passed real end-to-end tests. NLA can classify work, create specialized child sessions, use role-specific model pools, fail over after model rejection, maintain a private workflow ledger, use Assistant Notebook, run controlled compaction, restore the same primary session, and emit structured telemetry.
 
 NLA is not yet production-ready as a hardened security boundary. Some role restrictions are behavioral contracts in prompts rather than a complete least-privilege permission matrix. The full guard, validator, hard budget enforcement, and managed installation system proposed in Draft 0.4 are not implemented.
@@ -27,6 +32,8 @@ NLA is currently developed and tested specifically for OpenCode.
 
 The Draft 0.4 version is historical and should not be interpreted as the current tested runtime version. OpenCode is evolving, so compatibility should be verified after every runtime upgrade.
 
+If you need another coding-agent CLI, you are welcome to implement and test the corresponding integration. Support should not be claimed until the complete NLA workflow, tools, memory, failover, compaction, and restoration have passed an end-to-end test on that CLI.
+
 ## Requirements
 
 - OpenCode installed and available on `PATH`;
@@ -35,7 +42,7 @@ The Draft 0.4 version is historical and should not be interpreted as the current
 - at least one available model in every enabled role pool;
 - a persistent OpenCode TUI or server for controlled compaction;
 - a stable local clone of this repository;
-- Git for repository work and normal NLA workflows.
+- Git for repository work and normal Superpowers workflows.
 
 API keys and provider credentials do not belong in this repository, model-pool configuration, ledger, Notebook, or telemetry.
 
@@ -497,6 +504,9 @@ The next milestone is reliability of NLA Core, not expansion of the installer.
 6. Run a small practical benchmark across five to ten representative tasks.
 7. Extend measurements of implemented Compactor shortlisting across supported
    providers and consider safe prompt-text optimization separately.
+8. Add independently tested CLI integrations only when contributors need them.
+
+The installer, managed launcher, immutable snapshots, complete guard, and statistical economic benchmark remain a separate possible product named NLA Managed Profile. They are deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement.
 
 ## Contributing
 
@@ -509,6 +519,7 @@ Useful contributions include:
 - behavioral and end-to-end tests;
 - model-pool integrations and deterministic failure fixtures;
 - telemetry analysis tools;
+- independently tested integrations for other coding-agent CLIs.
 
 Do not claim support for a model, OpenCode version, operating system, or CLI based only on configuration files being present. Provide end-to-end evidence that routing, tools, child sessions, failover, memory, compaction, restoration, and final acceptance work together.
 

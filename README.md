@@ -2,6 +2,11 @@
 
 Next Level Agent (NLA) is an OpenCode workflow for long or complex software development tasks. It keeps one coordinator responsible for the task while specialized agents handle research, architecture, implementation, review, supervision, and context recovery.
 
+**Current NLA release:** `0.1.0-alpha.2` (`nla-v0.1.0-alpha.2`). NLA uses its
+own Alpha release namespace; the inherited Superpowers package/manifests retain
+their upstream `6.3.0` metadata. [`nla-version.json`](nla-version.json) is the
+canonical machine-readable NLA version record.
+
 ## Philosophy
 
 > Any task can be solved in a single prompt.
@@ -241,15 +246,14 @@ Small tasks use a shorter workflow. NLA adds agents and gates when risk and unce
 
 Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
 
-The complete NLA runtime is currently OpenCode-specific. Files inherited in the
-pinned source snapshot do not imply support for other agent platforms.
+This repository is based on Superpowers and retains some upstream integrations and tests. The complete NLA runtime is currently OpenCode-specific. Manifests for other agent platforms do not imply full NLA support on those platforms.
 
 Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
 
 ## Install
 
 > [!WARNING]
-> NLA is currently developed and tested specifically for OpenCode. Other coding-agent CLIs are outside the supported NLA runtime.
+> NLA is currently developed and tested specifically for OpenCode. Support for other coding-agent CLIs is not guaranteed. If you need another CLI, you are welcome to complete and test the integration.
 
 Ask your OpenCode or Codex agent to clone this repository, read [`AGENTS.md`](AGENTS.md), and follow [`INSTALL.md`](INSTALL.md). Codex may assist with installation, but the complete NLA runtime currently runs in OpenCode.
 
@@ -277,11 +281,7 @@ NLA started as the independent [Next-Level OpenCode Profile Draft 0.4](TECHNICAL
 
 While reviewing the plan, I asked Grok to find similar systems. Superpowers was one of several alternatives. Its skills-based approach was close to what I had planned, and it already provided a useful development workflow. I tested it on a simple task and chose it as a quick start instead of rebuilding the same workflow skills.
 
-NLA uses a pinned source snapshot of Superpowers at commit
-`b36e0829c6d0140e93cfef2ca599b1b07d4a7797` as its skills foundation. It is an
-independent project with no planned upstream synchronization. NLA adds risk
-tiers, architecture and review gates, supervision, model pools, memory,
-controlled compaction, and telemetry for OpenCode.
+Superpowers is the implementation base, not the origin of the NLA plan. NLA adds risk tiers, architecture and review gates, supervision, model pools, memory, controlled compaction, and telemetry for OpenCode.
 
 I am also working on larger multi-agent systems. Running a small version locally that completes useful tasks feels like having a toy robot that can actually help around the house.
 

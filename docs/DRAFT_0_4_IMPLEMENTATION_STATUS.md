@@ -344,10 +344,11 @@ tests. Provider rejection and failover remain covered by deterministic fixtures
 instead of a deliberately failing live default. Installation still must verify
 current provider availability.
 
-## Current Scope
+## Recommended Scope Decision
 
-NLA Core is the project: a skills-driven multi-agent OpenCode workflow. Current
-work focuses on validated task packets, enforced role boundaries,
-machine-checked gates, and evidence from real end-to-end tasks. Unimplemented
-Draft 0.4 deployment concepts are historical design material, not a current
-product or roadmap commitment.
+The current project should explicitly separate two possible products:
+
+1. **NLA Core** — the useful skills-driven multi-agent OpenCode workflow. This is already a working alpha/MVP and needs focused hardening, behavioral testing, and a small practical benchmark.
+2. **NLA Managed Profile** — the installer, launcher, mandatory guard, immutable snapshots, drift detection, hard budgets, and full economic benchmark described by Draft 0.4. This should remain deferred unless distribution, untrusted projects, or enterprise governance creates a real requirement for it.
+
+The next rational milestone is not a more elaborate installer. It is a more reliable NLA Core: validated task packets, enforced role boundaries, machine-checked gates, and evidence from a series of real end-to-end tasks.

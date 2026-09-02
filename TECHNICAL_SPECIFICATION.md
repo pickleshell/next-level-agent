@@ -1,11 +1,5 @@
 # Next-Level OpenCode Profile — Technical Specification and Architecture
 
-> **Historical, non-normative design document.** This is the original NLA Draft
-> 0.4 and is retained for design provenance only. It does not define current
-> requirements, roadmap, installation, or release obligations. Current behavior
-> is defined by `README.md`, `INSTALL.md`, and
-> `docs/PROJECT_STATUS_AND_USAGE.md`; those documents override this draft.
-
 **Status:** Draft 0.4 — final architecture audit, requires approval
 **Date:** 2026-08-23
 **Repository:** `pickleshell/next-level-agent`

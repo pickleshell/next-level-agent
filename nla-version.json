@@ -4,8 +4,8 @@
   "version": "0.1.0-alpha.2",
   "tag": "nla-v0.1.0-alpha.2",
   "channel": "alpha",
-  "source_provenance": {
-    "project": "https://github.com/obra/superpowers",
-    "base_commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797"
+  "upstream_base": {
+    "name": "superpowers",
+    "version": "6.3.0"
   }
 }
