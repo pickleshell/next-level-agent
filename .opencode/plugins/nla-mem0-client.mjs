@@ -19,9 +19,10 @@ export function mem0Config(env = process.env) {
   return { baseURL, timeoutMs, userID };
 }
 
-function endpoint(baseURL, pathname) {
+function endpoint(baseURL, pathname, query = {}) {
   const url = new URL(baseURL);
   url.pathname = `${url.pathname.replace(/\/$/, '')}/${pathname.replace(/^\//, '')}`;
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
   return url;
 }
 
@@ -32,14 +33,14 @@ export class Mem0HttpClient {
     this.fetchImpl = fetchImpl;
   }
 
-  async request(pathname, body) {
+  async request(pathname, { method = 'GET', body, query } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(endpoint(this.baseURL, pathname), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
+      const response = await this.fetchImpl(endpoint(this.baseURL, pathname, query), {
+        method,
+        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });
       const text = await response.text();
@@ -61,9 +62,12 @@ export class Mem0HttpClient {
 
   add({ text, userID, infer = true }) {
     return this.request('/memories', {
-      text: boundedText(text, 'memory text', 32000),
-      user_id: boundedText(userID, 'Mem0 user ID', 200),
-      infer: Boolean(infer),
+      method: 'POST',
+      body: {
+        text: boundedText(text, 'memory text', 32000),
+        user_id: boundedText(userID, 'Mem0 user ID', 200),
+        infer: Boolean(infer),
+      },
     });
   }
 
@@ -73,9 +77,51 @@ export class Mem0HttpClient {
       throw new Error('memory search limit must be an integer from 1 to 20');
     }
     return this.request('/search', {
-      query: boundedText(query, 'memory query', 8000),
-      user_id: boundedText(userID, 'Mem0 user ID', 200),
-      limit: boundedLimit,
+      method: 'POST',
+      body: {
+        query: boundedText(query, 'memory query', 8000),
+        user_id: boundedText(userID, 'Mem0 user ID', 200),
+        limit: boundedLimit,
+      },
+    });
+  }
+
+  list({ userID, limit = 20 }) {
+    const boundedLimit = Number(limit);
+    if (!Number.isInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > 100) {
+      throw new Error('memory list limit must be an integer from 1 to 100');
+    }
+    return this.request('/memories', {
+      query: { user_id: boundedText(userID, 'Mem0 user ID', 200), limit: boundedLimit },
+    });
+  }
+
+  get({ memoryID, userID }) {
+    return this.request(`/memories/${encodeURIComponent(boundedText(memoryID, 'memory ID', 200))}`, {
+      query: { user_id: boundedText(userID, 'Mem0 user ID', 200) },
+    });
+  }
+
+  update({ memoryID, text, userID }) {
+    return this.request(`/memories/${encodeURIComponent(boundedText(memoryID, 'memory ID', 200))}`, {
+      method: 'PUT',
+      body: {
+        user_id: boundedText(userID, 'Mem0 user ID', 200),
+        text: boundedText(text, 'memory text', 32000),
+      },
+    });
+  }
+
+  delete({ memoryID, userID }) {
+    return this.request(`/memories/${encodeURIComponent(boundedText(memoryID, 'memory ID', 200))}`, {
+      method: 'DELETE',
+      query: { user_id: boundedText(userID, 'Mem0 user ID', 200) },
+    });
+  }
+
+  history({ memoryID, userID }) {
+    return this.request(`/memories/${encodeURIComponent(boundedText(memoryID, 'memory ID', 200))}/history`, {
+      query: { user_id: boundedText(userID, 'Mem0 user ID', 200) },
     });
   }
 }

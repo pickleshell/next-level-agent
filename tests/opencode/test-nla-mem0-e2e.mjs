@@ -13,12 +13,24 @@ const firstSession = new Mem0HttpClient(config);
 const added = await firstSession.add({
   text: `The durable marker ${marker} is stored in the silver cabinet.`,
   userID,
+  infer: false,
 });
 assert.ok(Array.isArray(added.results) && added.results.length > 0, 'Mem0 must extract a memory');
 assert.match(added.results[0].memory, new RegExp(marker), 'Mem0 must preserve the exact marker');
+const memoryID = added.results[0].id;
 
 const freshSession = new Mem0HttpClient(config);
 const found = await freshSession.search({ query: `Where is ${marker} stored?`, userID });
 assert.ok(found.results.some((item) => item.memory.includes(marker)), 'fresh client must retrieve the durable marker');
-console.log(JSON.stringify({ user_id: userID, marker, added: added.results[0], search_results: found.results.length }));
+assert.ok((await freshSession.list({ userID })).results.some((item) => item.id === memoryID));
+assert.equal((await freshSession.get({ memoryID, userID })).id, memoryID);
+const replacement = `The durable marker ${marker} is stored in the gold vault.`;
+assert.equal((await freshSession.update({ memoryID, userID, text: replacement })).memory.memory, replacement);
+assert.equal((await freshSession.get({ memoryID, userID })).memory, replacement);
+assert.deepEqual((await freshSession.history({ memoryID, userID })).results.map((event) => event.event), ['ADD', 'UPDATE']);
+assert.ok((await freshSession.search({ query: marker, userID })).results.some((item) => item.memory === replacement));
+assert.equal((await freshSession.delete({ memoryID, userID })).message, 'Memory deleted successfully!');
+await assert.rejects(() => freshSession.get({ memoryID, userID }), /Mem0 HTTP 404/);
+assert.ok(!(await freshSession.list({ userID })).results.some((item) => item.id === memoryID));
+console.log(JSON.stringify({ user_id: userID, marker, memory_id: memoryID, history: ['ADD', 'UPDATE'], deleted: true }));
 console.log('NLA Mem0 real E2E passed');

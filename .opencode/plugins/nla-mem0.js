@@ -33,5 +33,76 @@ export const NlaMem0Plugin = async () => {
     },
   });
 
-  return { tool: { memory_add: memoryAdd, memory_search: memorySearch } };
+  const scopedUser = (args) => resolveMem0UserID(args.user_id, config.userID);
+  const memoryList = tool({
+    description: 'List durable memories for one stable Mem0 user namespace.',
+    args: {
+      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
+      limit: tool.schema.number().int().min(1).max(100).optional().describe('Maximum results; defaults to 20'),
+    },
+    execute: async (args) => {
+      const userID = scopedUser(args);
+      const result = await client.list({ userID, limit: args.limit ?? 20 });
+      return { title: 'Mem0 memory list', output: JSON.stringify(result), metadata: { user_id: userID } };
+    },
+  });
+  const memoryGet = tool({
+    description: 'Get one durable memory by ID within a stable Mem0 user namespace.',
+    args: {
+      memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
+      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
+    },
+    execute: async (args) => {
+      const userID = scopedUser(args);
+      const result = await client.get({ memoryID: args.memory_id, userID });
+      return { title: 'Mem0 memory retrieved', output: JSON.stringify(result), metadata: { user_id: userID, memory_id: args.memory_id } };
+    },
+  });
+  const memoryUpdate = tool({
+    description: 'Replace the text of one durable memory within its stable Mem0 user namespace.',
+    args: {
+      memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
+      text: tool.schema.string().max(32000).describe('Complete replacement memory text'),
+      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
+    },
+    execute: async (args) => {
+      const userID = scopedUser(args);
+      const result = await client.update({ memoryID: args.memory_id, text: args.text, userID });
+      return { title: 'Mem0 memory updated', output: JSON.stringify(result), metadata: { user_id: userID, memory_id: args.memory_id } };
+    },
+  });
+  const memoryDelete = tool({
+    description: 'Delete one durable memory by ID within its stable Mem0 user namespace.',
+    args: {
+      memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
+      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
+    },
+    execute: async (args) => {
+      const userID = scopedUser(args);
+      const result = await client.delete({ memoryID: args.memory_id, userID });
+      return { title: 'Mem0 memory deleted', output: JSON.stringify(result), metadata: { user_id: userID, memory_id: args.memory_id } };
+    },
+  });
+  const memoryHistory = tool({
+    description: 'Get Mem0 ADD and UPDATE history for one existing scoped memory.',
+    args: {
+      memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
+      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
+    },
+    execute: async (args) => {
+      const userID = scopedUser(args);
+      const result = await client.history({ memoryID: args.memory_id, userID });
+      return { title: 'Mem0 memory history', output: JSON.stringify(result), metadata: { user_id: userID, memory_id: args.memory_id } };
+    },
+  });
+
+  return { tool: {
+    memory_add: memoryAdd,
+    memory_search: memorySearch,
+    memory_list: memoryList,
+    memory_get: memoryGet,
+    memory_update: memoryUpdate,
+    memory_delete: memoryDelete,
+    memory_history: memoryHistory,
+  } };
 };

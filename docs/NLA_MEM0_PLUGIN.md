@@ -5,7 +5,7 @@ private NLA workflow ledger or Assistant Notebook, and NLA core does not know
 which model Mem0 uses for extraction.
 
 ```text
-memory_add / memory_search
+memory_add / memory_search / scoped CRUD and history
         ↓
 .opencode/plugins/nla-mem0.js
         ↓
@@ -29,10 +29,12 @@ stable, non-secret ID to retrieve memories from a later OpenCode session. Do not
 store credentials, private keys, complete transcripts, or unverified claims as
 memories.
 
-The plugin currently exposes only `memory_add` and `memory_search`. The tested
-Mem0 spike API publishes `POST /memories` and `POST /search`, but no list,
-history, update, or delete endpoints. Those tools should be added only after the
-external service defines and tests the corresponding HTTP operations.
+The plugin exposes `memory_add`, `memory_search`, `memory_list`, `memory_get`,
+`memory_update`, `memory_delete`, and `memory_history`. All operations use the
+same stable `user_id`; the service returns 404 when an ID does not exist or is
+outside that namespace. Update replaces memory text. History returns Mem0's
+recorded ADD and UPDATE events while the scoped memory still exists; it is not
+available through this API after deletion.
 
 Deterministic tests use a fake HTTP service:
 
@@ -40,7 +42,8 @@ Deterministic tests use a fake HTTP service:
 node tests/opencode/test-nla-mem0.mjs
 ```
 
-The real service test is opt-in and writes one synthetic fact:
+The real service CRUD test is opt-in and writes one synthetic fact with
+`infer:false` so provider availability does not affect storage/API verification:
 
 ```bash
 NLA_MEM0_E2E=1 NLA_MEM0_URL=http://127.0.0.1:8765 \
