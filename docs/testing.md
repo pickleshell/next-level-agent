@@ -29,22 +29,6 @@ Individual deterministic entry points include:
 - `node tests/opencode/test-nla-capability-cache.mjs`
 - `node tests/opencode/test-nla-model-pools.mjs`
 
-## Broader inherited tests
-
-This repository retains the Superpowers skills and multi-harness test suites it
-is based on. Their entry points live under `tests/`, including:
-
-- `tests/brainstorm-server/` — Node tests (`npm test` in that directory);
-- `tests/codex-plugin-sync/test-sync-to-codex-plugin.sh`;
-- `tests/codex/`, `tests/kimi/`, `tests/hermes/`, and other harness checks;
-- `tests/claude-code/` and `tests/explicit-skill-requests/` — slower or
-  environment-dependent behavioral checks.
-
-Two inherited OpenCode bootstrap scripts still assume the upstream
-`skills/using-superpowers/SKILL.md` layout and are not valid NLA-fork release
-gates. They are tracked as a known fork compatibility limitation rather than
-being silently treated as passing NLA tests.
-
 ## Real-model evidence
 
 Provider-backed measurements are opt-in and must not run in mandatory CI. The

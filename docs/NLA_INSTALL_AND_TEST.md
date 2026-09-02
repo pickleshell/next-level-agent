@@ -1,7 +1,7 @@
 # Next Level Agent — Installation + Testing
 
-Base: Superpowers (https://github.com/obra/superpowers, commit b36e082)
-Plugin: `next-level-agent` (`.codex-plugin/plugin.json`)
+Historical skills source: Superpowers commit
+`b36e0829c6d0140e93cfef2ca599b1b07d4a7797`
 
 ## Installation
 
@@ -77,7 +77,6 @@ and the user explicitly approves the resulting written design.
 - File log: `cat .logs/compact.log` (structured JSON events)
 - Timestamp checkpoint: `ls .checkpoints/*.json`
 - Restore: `python3 -c "from compact.restore import load_latest_checkpoint; print(load_latest_checkpoint())"`
-- Plugin identity: `cat .codex-plugin/plugin.json | grep name`
 - Skill integration: read `skills/subagent-driven-development/` templates (reference `config/model-pools.json`)
 
 ### Evidence Before Completion
