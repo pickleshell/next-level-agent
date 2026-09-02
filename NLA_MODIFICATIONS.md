@@ -20,6 +20,8 @@ Pinned base: https://github.com/obra/superpowers at commit
   per-step tool-schema shortlisting within role capability ceilings.
 - `.opencode/plugins/nla-capability-cache.mjs` — deterministic role capability
   profiles cached against tool-schema and configuration signatures.
+- `.opencode/plugins/nla-mem0.js` — optional standalone OpenCode memory tools
+  backed by an external Mem0 HTTP service; NLA core remains independent.
 - `compact/` — standalone checkpoint, compaction, restoration, and event-logging
   helpers.
 - `config/model-pools.json` — public role pools, utility runtime settings, retry

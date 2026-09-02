@@ -270,6 +270,7 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 - [Draft 0.4 Implementation Status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md): what is implemented, partial, absent, or intentionally deferred.
 - [NLA Modifications](NLA_MODIFICATIONS.md): the boundary between Superpowers and NLA additions.
 - [Testing](docs/testing.md): deterministic CI gates and optional real-model evidence.
+- [Optional Mem0 tools](docs/NLA_MEM0_PLUGIN.md): separate HTTP plugin for durable semantic memory.
 - [Contributing](CONTRIBUTING.md): contribution and evidence requirements.
 - [Security](SECURITY.md): Alpha threat boundary and private reporting guidance.
 - [Superpowers](https://github.com/obra/superpowers): the upstream skills-first development methodology.
