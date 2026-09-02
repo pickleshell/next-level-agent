@@ -1,5 +1,14 @@
 # Release Notes
 
+## NLA v0.1.0-alpha.2 (2026-09-02)
+
+- Establishes [`nla-version.json`](nla-version.json) as the canonical
+  machine-readable NLA release identity.
+- Separates NLA's `0.1.0-alpha.x` prerelease namespace from inherited
+  Superpowers `6.3.0` package and harness-manifest metadata.
+- Adds a deterministic consistency test covering the canonical version,
+  `nla-v0.1.0-alpha.2` tag, README, status, and release notes.
+
 ## NLA v0.1.0-alpha.1 (2026-09-02)
 
 This is the first publication-focused **experimental Alpha** of Next Level
