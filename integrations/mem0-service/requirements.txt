@@ -1,0 +1,5 @@
+fastapi==0.116.1
+mem0ai==2.0.19
+ollama==0.6.0
+qdrant-client==1.15.1
+uvicorn==0.35.0

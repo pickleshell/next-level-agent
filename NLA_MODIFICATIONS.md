@@ -23,6 +23,9 @@ Pinned base: https://github.com/obra/superpowers at commit
 - `.opencode/plugins/nla-mem0.js` — optional standalone OpenCode add, search,
   scoped CRUD, and history tools backed by an external Mem0 HTTP service; NLA
   core remains independent.
+- `integrations/mem0-service/` — optional deployable Mem0 HTTP adapter with
+  local Ollama embeddings, local Qdrant/SQLite persistence, and selectable
+  Ollama or OpenAI-compatible extraction; it is not an NLA core dependency.
 - `compact/` — standalone checkpoint, compaction, restoration, and event-logging
   helpers.
 - `config/model-pools.json` — public role pools, utility runtime settings, retry
@@ -38,6 +41,8 @@ Pinned base: https://github.com/obra/superpowers at commit
 - `TECHNICAL_SPECIFICATION.md` — original NLA product brief and architecture
   draft.
 - `docs/NLA_INSTALL_AND_TEST.md` — runtime, installation, and verification guide.
+- `docs/MEM0_INSTALL.md` and `docs/NLA_MEM0_PLUGIN.md` — optional Mem0 service
+  deployment and NLA plugin/tool reference.
 - `docs/PROJECT_STATUS_AND_USAGE.md` — current behavior, limitations, telemetry,
   storage, evidence, and roadmap status.
 - `docs/nla-qwen3-4b-tool-shortlist-2026-09-01.json` — sanitized local

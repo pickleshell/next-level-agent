@@ -1,0 +1,17 @@
+services:
+  mem0:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      MEM0_TELEMETRY: "false"
+      ANONYMIZED_TELEMETRY: "false"
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      MEM0_LLM_PROVIDER: ${MEM0_LLM_PROVIDER:-ollama}
+      MEM0_LLM_MODEL: ${MEM0_LLM_MODEL:-qwen3:4b}
+      MEM0_LLM_BASE_URL: ${MEM0_LLM_BASE_URL:-http://127.0.0.1:11434}
+      MEM0_LLM_API_KEY: ${MEM0_LLM_API_KEY:-}
+      MEM0_EMBED_MODEL: ${MEM0_EMBED_MODEL:-nomic-embed-text:latest}
+      MEM0_DATA_DIR: /data
+    volumes:
+      - ./data:/data

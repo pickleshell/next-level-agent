@@ -22,3 +22,8 @@ __pycache__/
 .opencode/agent-run.log
 .opencode/nla-role-capabilities.json
 .checkpoints/
+
+# Optional Mem0 service persistence and local configuration
+integrations/mem0-service/data/
+integrations/mem0-service/.env
+integrations/mem0-service/.env.*
