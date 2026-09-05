@@ -9,11 +9,10 @@ export const NlaMem0Plugin = async () => {
     description: 'Add one durable fact or preference to the separately configured Mem0 service. Never store credentials, private keys, or transient transcript text.',
     args: {
       text: tool.schema.string().max(32000).describe('Self-contained durable fact or preference'),
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
       infer: tool.schema.boolean().optional().describe('Use Mem0 LLM extraction; defaults to true'),
     },
     execute: async (args) => {
-      const userID = resolveMem0UserID(args.user_id, config.userID);
+      const userID = resolveMem0UserID(undefined, config.userID);
       const result = await client.add({ text: args.text, userID, infer: args.infer ?? true });
       return { title: 'Mem0 memory added', output: JSON.stringify(result), metadata: { user_id: userID } };
     },
@@ -23,21 +22,19 @@ export const NlaMem0Plugin = async () => {
     description: 'Search durable memories in the separately configured Mem0 service using a stable user namespace.',
     args: {
       query: tool.schema.string().max(8000).describe('Semantic memory query'),
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
       limit: tool.schema.number().int().min(1).max(20).optional().describe('Maximum results; defaults to 5'),
     },
     execute: async (args) => {
-      const userID = resolveMem0UserID(args.user_id, config.userID);
+      const userID = resolveMem0UserID(undefined, config.userID);
       const result = await client.search({ query: args.query, userID, limit: args.limit ?? 5 });
       return { title: 'Mem0 memory search', output: JSON.stringify(result), metadata: { user_id: userID } };
     },
   });
 
-  const scopedUser = (args) => resolveMem0UserID(args.user_id, config.userID);
+  const scopedUser = () => resolveMem0UserID(undefined, config.userID);
   const memoryList = tool({
     description: 'List durable memories for one stable Mem0 user namespace.',
     args: {
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
       limit: tool.schema.number().int().min(1).max(100).optional().describe('Maximum results; defaults to 20'),
     },
     execute: async (args) => {
@@ -50,7 +47,6 @@ export const NlaMem0Plugin = async () => {
     description: 'Get one durable memory by ID within a stable Mem0 user namespace.',
     args: {
       memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
     },
     execute: async (args) => {
       const userID = scopedUser(args);
@@ -63,7 +59,6 @@ export const NlaMem0Plugin = async () => {
     args: {
       memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
       text: tool.schema.string().max(32000).describe('Complete replacement memory text'),
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
     },
     execute: async (args) => {
       const userID = scopedUser(args);
@@ -75,7 +70,6 @@ export const NlaMem0Plugin = async () => {
     description: 'Delete one durable memory by ID within its stable Mem0 user namespace.',
     args: {
       memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
     },
     execute: async (args) => {
       const userID = scopedUser(args);
@@ -87,7 +81,6 @@ export const NlaMem0Plugin = async () => {
     description: 'Get Mem0 ADD and UPDATE history for one existing scoped memory.',
     args: {
       memory_id: tool.schema.string().max(200).describe('Mem0 memory ID'),
-      user_id: tool.schema.string().max(200).optional().describe('Stable memory namespace; defaults to NLA_MEM0_USER_ID'),
     },
     execute: async (args) => {
       const userID = scopedUser(args);
