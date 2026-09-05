@@ -6,6 +6,11 @@ remain optional. NLA core does not import Mem0, manage its process, or know
 whether its extraction model is local or cloud-hosted. The integration does not
 replace NLA's private workflow ledger or Assistant Notebook.
 
+The public `mem0-memory` skill is discovered from NLA's standard `./skills`
+path. It teaches the primary NLA agent to use the optional tool surface with
+bounded retrieval and conservative writes; it remains discoverable when the
+Mem0 plugin or service is disabled.
+
 ```text
 memory_add / memory_search / scoped CRUD and history
         ↓
@@ -34,26 +39,28 @@ export NLA_MEM0_TIMEOUT_MS=30000
 OPENCODE_CONFIG=/absolute/path/to/next-level-agent/opencode.json opencode /project
 ```
 
-`NLA_MEM0_USER_ID` is optional when every tool call supplies `user_id`. Reuse a
-stable, non-secret ID to retrieve memories from a later OpenCode session. Do not
+`NLA_MEM0_USER_ID` is required before a memory tool can run. It is owned by the
+plugin configuration and intentionally absent from agent-callable arguments,
+so an agent cannot expand its namespace. Reuse a stable, non-secret ID to
+retrieve memories from a later OpenCode session. Do not
 store credentials, private keys, complete transcripts, or unverified claims as
 memories.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `NLA_MEM0_URL` | `http://127.0.0.1:8765` | Adapter base URL; HTTP or HTTPS, without embedded credentials |
-| `NLA_MEM0_USER_ID` | none | Stable default namespace for every memory tool |
+| `NLA_MEM0_USER_ID` | none | Stable server-owned namespace for every memory tool |
 | `NLA_MEM0_TIMEOUT_MS` | `30000` | Per-request timeout, 1–300000 ms |
 
 The plugin reads these values when OpenCode loads it. Restart OpenCode after a
-change. A tool-level `user_id` overrides the configured default; if neither is
-present, the call fails before sending a request.
+change. If `NLA_MEM0_USER_ID` is absent, a memory call fails before sending a
+request; OpenCode and NLA core still start normally.
 
 ## Tools and semantics
 
 The plugin exposes `memory_add`, `memory_search`, `memory_list`, `memory_get`,
 `memory_update`, `memory_delete`, and `memory_history`. All operations use the
-same stable `user_id`; the service returns 404 when an ID does not exist or is
+same configured `user_id`; the service returns 404 when an ID does not exist or is
 outside that namespace. Update replaces memory text. History returns Mem0's
 recorded ADD and UPDATE events while the scoped memory still exists; it is not
 available through this API after deletion.
@@ -77,13 +84,14 @@ still use the local embedder and persistent stores in the supplied deployment.
 
 ## Namespace and security boundary
 
-`user_id` is a logical application namespace, not authentication. The adapter
-checks ownership before get, update, delete, and history, and filters list/search
-by the same ID. This prevents accidental cross-namespace access through the
-seven tools, but anyone who can reach an unauthenticated adapter can choose a
-namespace. Bind the supplied service to loopback; use a trusted authenticated
-reverse proxy and TLS if remote access is required. Do not expose port 8765 to
-an untrusted network.
+`user_id` is a logical application namespace, not authentication. NLA tools do
+not accept it as an argument; the plugin supplies the configured value. The
+adapter checks ownership before get, update, delete, and history, and filters
+list/search by the same ID. This prevents accidental cross-namespace access
+through the seven tools, but anyone who can configure the plugin or reach an
+unauthenticated adapter directly can choose a namespace. Bind the supplied
+service to loopback; use a trusted authenticated reverse proxy and TLS if
+remote access is required. Do not expose port 8765 to an untrusted network.
 
 Memories persist independently of OpenCode sessions in the service's mounted
 `data/` directory: Qdrant stores vectors and SQLite stores history. Back up or
