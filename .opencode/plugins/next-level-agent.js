@@ -152,10 +152,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const failover = async (sessionID, reason) => {
     const state = trackedSessions.get(sessionID);
-    if (!state || state.switching || !state.pool.enabled) return;
+    if (!state || !state.pool.enabled) return;
+    if (state.switching) {
+      if (state.switchPhase === 'dispatch') state.pendingFailure ??= reason;
+      return;
+    }
     const failure = healthManager.failure(state.model, reason, '', modelCooldownMs(state.pool));
     state.healthClaim = false;
-    if (!['transient', 'defective', 'configuration'].includes(failure.category)) return;
+    if (!['transient', 'defective', 'configuration'].includes(failure.category)) { state.busy = false; return; }
     if (state.failovers >= state.pool.max_failovers) { state.busy = false; return; }
     let nextIndex = state.modelIndex + 1;
     while (nextIndex < state.pool.models.length && !healthManager.claim(state.pool.models[nextIndex])) nextIndex += 1;
@@ -165,6 +169,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     if (!model) { healthManager.release(nextModel); return; }
 
     state.switching = true;
+    state.switchPhase = 'abort';
+    state.pendingFailure = null;
+    state.pendingIdle = false;
     appendRunLog({
       event: 'model_failure', session_id: sessionID, agent: state.role,
       model: state.model, reason: failure.reason,
@@ -175,6 +182,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       state.modelIndex = nextIndex;
       state.failovers += 1;
       state.healthClaim = true;
+      state.switchPhase = 'dispatch';
       await client.session.promptAsync({
         path: { id: sessionID },
         body: {
@@ -194,16 +202,40 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         failover: state.failovers,
       });
     } catch (error) {
-      const failed = healthManager.failure(nextModel, error, '', modelCooldownMs(state.pool));
-      state.healthClaim = false;
-      state.busy = false;
+      if (state.switchPhase === 'dispatch') {
+        state.pendingFailure ??= error;
+      } else {
+        // The next provider was never called when aborting the old session failed.
+        healthManager.release(nextModel);
+        state.busy = false;
+      }
       appendRunLog({
         event: 'model_fallback_failed', session_id: sessionID, agent: state.role,
-        model: nextModel, reason: failed.reason,
+        model: nextModel, reason: classifyProviderError(error).reason,
       });
     } finally {
       state.switching = false;
+      state.switchPhase = null;
     }
+    const pendingFailure = state.pendingFailure;
+    state.pendingFailure = null;
+    if (pendingFailure) {
+      state.pendingIdle = false;
+      await failover(sessionID, pendingFailure);
+    } else if (state.pendingIdle) {
+      state.pendingIdle = false;
+      finishTrackedSession(state);
+    }
+  };
+
+  const finishTrackedSession = (state) => {
+    if (state.switching) {
+      if (state.switchPhase === 'dispatch') state.pendingIdle = true;
+      return;
+    }
+    if (state.healthClaim) healthManager.success(state.model);
+    state.healthClaim = false;
+    state.busy = false;
   };
 
   const startWatchdog = () => {
@@ -300,6 +332,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         }
 
         let timer = null;
+        let onAbort = null;
         try {
           let roleProfile = [];
           let capabilityCacheSource = 'tool-free';
@@ -346,6 +379,15 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             compactor_model: optimized.compactorMetadata?.model,
             compactor_fallback_reason: optimized.reason,
           });
+          if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
+          const cancellation = new Promise((_, reject) => {
+            onAbort = () => {
+              // Observe abort failures without allowing them to mask caller cancellation.
+              Promise.resolve().then(() => client.session.abort({ path: { id: childID } })).catch(() => {});
+              reject(new Error('NLA pooled task aborted by caller'));
+            };
+            context.abort.addEventListener('abort', onAbort, { once: true });
+          });
           attempted += 1;
           appendRunLog({ event: 'model_attempt_started', session_id: childID, parent_session_id: context.sessionID, agent: args.role, model: modelName, attempt: attempted });
           const request = client.session.prompt({
@@ -360,17 +402,16 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             throwOnError: true,
           });
           const timeoutMs = pool.idle_timeout_ms || 0;
-          const result = timeoutMs > 0
-            ? await Promise.race([
-                request,
+          const waits = [request, cancellation];
+          if (timeoutMs > 0) waits.push(
                 new Promise((_, reject) => {
                   timer = setTimeout(() => {
-                    void client.session.abort({ path: { id: childID } });
+                    Promise.resolve().then(() => client.session.abort({ path: { id: childID } })).catch(() => {});
                     reject(new Error(`NLA pooled task timed out after ${timeoutMs}ms`));
                   }, timeoutMs);
-                }),
-              ])
-            : await request;
+                }));
+          const result = await Promise.race(waits);
+          if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
           if (timer) clearTimeout(timer);
 
           if (result.data.info && result.data.info.error) {
@@ -431,6 +472,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             previous_model: modelName, model: attempts[index + 1], failover: index + 1,
           });
         } finally {
+          if (timer) clearTimeout(timer);
+          if (onAbort) context.abort.removeEventListener('abort', onAbort);
           healthManager.release(modelName);
         }
       }
@@ -773,11 +816,8 @@ ${toolMapping}
       if (event.type === 'session.status' && props.sessionID) {
         const state = trackedSessions.get(props.sessionID);
         if (state) {
-          if (props.status?.type === 'idle' && state.healthClaim && !state.switching) {
-            healthManager.success(state.model);
-            state.healthClaim = false;
-          }
-          state.busy = props.status && props.status.type !== 'idle';
+          if (props.status?.type === 'idle') finishTrackedSession(state);
+          else if (!state.switching) state.busy = true;
           touch(props.sessionID);
         }
       }
@@ -857,11 +897,7 @@ ${toolMapping}
       if (event.type === 'session.idle' && props.sessionID) {
         const state = trackedSessions.get(props.sessionID);
         if (state) {
-          if (state.healthClaim && !state.switching) {
-            healthManager.success(state.model);
-            state.healthClaim = false;
-          }
-          state.busy = false;
+          finishTrackedSession(state);
           touch(props.sessionID);
         }
         const compact = compactionState.get(props.sessionID);
