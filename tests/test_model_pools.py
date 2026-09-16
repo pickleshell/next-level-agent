@@ -1,7 +1,8 @@
 import json
-from config.model_pools import get_pool, next_model
+import pytest
+from config.model_pools import get_pool, load_pools, next_model
 
-EXPECTED = {"nla":["opencode-go/gpt-5.6-luna"],"router":["opencode/mimo-v2.5-free","opencode/nemotron-3-ultra-free","opencode-go/gpt-5.6-luna"],"supervisor":["opencode/nemotron-3-ultra-free","opencode-go/gpt-5.6-terra"],"scout":["opencode/mimo-v2.5-free","ollama/qwen3.8:latest"],"explorer":["ollama/qwen3.8:latest","opencode/mimo-v2.5-free"],"architect":["opencode/nemotron-3-ultra-free","ollama/qwen3.8:latest"],"implementer":["opencode/big-pickle","ollama/qwen3.8:latest"],"reviewer":["opencode/nemotron-3-ultra-free","opencode/big-pickle","opencode-go/gpt-5.6-luna"],"compactor":["qwen3.8:latest"]}
+EXPECTED = {role: pool["models"] for role, pool in json.load(open("config/model-pools.json"))["roles"].items()}
 
 def test_canonical_default_roles(monkeypatch):
     monkeypatch.delenv("NLA_MODEL_POOLS_PATH", raising=False)
@@ -18,6 +19,12 @@ def test_model_pool_override_replaces_default(monkeypatch, tmp_path):
     monkeypatch.setenv("NLA_MODEL_POOLS_PATH", str(override))
     assert get_pool("explorer")["models"] == ["fixture/override"]
     assert get_pool("architect") == {}
+
+
+def test_invalid_override_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("NLA_MODEL_POOLS_PATH", str(tmp_path / "missing.json"))
+    with pytest.raises(FileNotFoundError):
+        load_pools()
 
 def test_profile_and_bounded_defaults(monkeypatch):
     monkeypatch.delenv("NLA_MODEL_POOLS_PATH", raising=False)

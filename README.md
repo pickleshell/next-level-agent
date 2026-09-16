@@ -31,6 +31,26 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 Prompts define role behavior. The NLA plugin provides managed NLA delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
+### Runtime truth and introspection
+
+NLA resolves model pools through one runtime resolver. Precedence is an explicit
+request override, then `NLA_MODEL_POOLS_PATH`, then the portable repository
+default. An explicitly selected but missing or invalid file fails closed; it is
+never silently replaced by another pool. `nla_task` and the primary-only
+`nla_models` tool use the same resolved object. `nla_models` reports each role's
+primary and ordered fallbacks, enabled state, source, and resolution reason,
+without credentials.
+
+Persisted Work State separates NLA-owned intent from externally verifiable Git
+facts. At session restore, state inspection, and ledger save, NLA reconciles
+branch, HEAD, worktree status, changed files, and commits since a saved
+ancestor. A conflict is retained and surfaced; Git movement does not imply
+semantic task completion. Verification evidence is tied to the HEAD where it
+ran and is not claimed for a newer revision. Use `nla_work_state` for a current
+detailed snapshot.
+
+> Introspection must describe the configuration NLA actually executes, and persisted Work State must be reconciled with observable repository state before it is treated as current.
+
 ## At a Glance
 
 ```mermaid
@@ -104,11 +124,12 @@ Supervisor does not become a second coordinator. Architect does not take over th
 Router and Compactor have separate boundaries. Router handles task and model
 routing only: it classifies the task, selects the workflow route, and identifies
 the required model class or pool. It does not shape prompts or select tools.
-Compactor owns prompt optimization before model invocation as well as context
-compression. Given the already-bounded next step, it may remove redundant
-context, shape the prompt without changing its meaning or acceptance criteria,
-and prune or shortlist tool schemas so the target model receives only the small
-relevant subset. NLA does not introduce a separate Selector role.
+Compactor owns prompt optimization before model invocation. Given the
+already-bounded next step, it may remove redundant context, shape the prompt
+without changing its meaning or acceptance criteria, and prune or shortlist
+tool schemas so the target model receives only the small relevant subset.
+Context compression remains a separate OpenCode/NLA controlled-compaction
+path. NLA does not introduce a separate Selector role.
 
 ### Compactor prompt optimization
 
@@ -152,6 +173,40 @@ as child-session permission state, so retries in that child retain the same
 restriction. A configured utility-runtime Compactor may refine the shortlist.
 When it is not configured or its JSON is invalid, a deterministic role/step
 policy is used. Unknown roles fail closed.
+
+### Per-model optimization and provider cooldown
+
+Prompt optimization can be disabled for selected models while retaining the
+deterministic tool shortlist. A Compactor pool may define
+prompt_optimization.exclude_models with exact provider/model identifiers or
+provider wildcards, for example:
+
+~~~json
+{
+  "prompt_optimization": {
+    "exclude_models": [
+      "ollama/*",
+      "opencode/mimo-v2.5-free",
+      "opencode/big-pickle"
+    ]
+  }
+}
+~~~
+
+An excluded model does not receive a utility-Compactor request. This is useful
+for local, free, or latency-sensitive models; it does not disable controlled
+context compaction.
+
+Retryable provider failures also use a process-local model health list. A
+failed provider/model is placed into cooldown and skipped by later tasks in
+the same NLA process. The default cooldown is 30 seconds; a pool may override
+it with cooldown_ms, or the process-wide default may be changed with
+NLA_MODEL_COOLDOWN_MS. Successful recovery clears the entry. Cooldown
+decisions and expiry timestamps are written to the private agent-run log.
+The list is intentionally not persistent: restarting NLA resets it.
+
+These per-model optimization and cooldown additions are implemented but are
+still experimental and require broader live-provider validation.
 
 Stable role capability profiles are cached in the target project's ignored
 `.opencode/nla-role-capabilities.json`. Each entry is keyed by the role,

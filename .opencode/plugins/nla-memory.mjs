@@ -8,6 +8,8 @@ export const LEDGER_KEYS = [
   'pending_gate', 'next_step',
 ];
 
+export const RECONCILIATION_KEYS = ['repository_state', 'verification_evidence'];
+
 const SECRET_PATTERN = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|private[_-]?key|recovery[_-]?code)\s*[:=]\s*\S+/i;
 
 export function memoryRoot(homeDir = os.homedir(), env = process.env) {
@@ -49,6 +51,9 @@ export function normalizeLedger(input, sessionID, directory) {
   for (const key of LEDGER_KEYS) {
     if (Object.prototype.hasOwnProperty.call(source, key)) state[key] = source[key];
   }
+  for (const key of RECONCILIATION_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) state[key] = source[key];
+  }
   state.tier = Number.isInteger(state.tier) && state.tier >= 0 && state.tier <= 3 ? state.tier : null;
   for (const key of ['acceptance_criteria', 'approved_decisions', 'completed_tasks', 'changed_files', 'verification', 'blockers']) {
     state[key] = Array.isArray(state[key]) ? state[key].slice(0, 100) : [];
@@ -57,6 +62,8 @@ export function normalizeLedger(input, sessionID, directory) {
     state[key] = typeof state[key] === 'string' ? state[key].slice(0, 8000) : null;
   }
   state.active_task = state.active_task && typeof state.active_task === 'object' && !Array.isArray(state.active_task) ? state.active_task : null;
+  state.repository_state = state.repository_state && typeof state.repository_state === 'object' && !Array.isArray(state.repository_state) ? state.repository_state : null;
+  state.verification_evidence = Array.isArray(state.verification_evidence) ? state.verification_evidence.slice(0, 100) : [];
   const serialized = JSON.stringify(state);
   if (serialized.length > 128000) throw new Error('NLA ledger exceeds 128 KB');
   if (SECRET_PATTERN.test(serialized)) throw new Error('NLA ledger appears to contain a secret');
