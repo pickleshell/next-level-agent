@@ -103,7 +103,12 @@ export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalTh
       const response = await fetchImpl(request.url, {
         method: 'POST', headers: DEFAULT_HEADERS, body: JSON.stringify(request.body), signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`Utility provider HTTP ${response.status}: ${(await response.text()).slice(0, 180)}`);
+      if (!response.ok) {
+        const error = new Error(`Utility provider HTTP ${response.status}: ${(await response.text()).slice(0, 180)}`);
+        const retryAfter = response.headers?.get?.('retry-after');
+        if (retryAfter !== null && retryAfter !== undefined && Number.isFinite(Number(retryAfter))) error.retryAfter = Number(retryAfter);
+        throw error;
+      }
       let payload;
       try { payload = await response.json(); } catch { throw new Error('Utility provider returned invalid JSON'); }
       healthManager.success(model, endpointKey);
