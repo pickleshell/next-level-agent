@@ -177,7 +177,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       model: state.model, reason: failure.reason,
     });
     try {
-      await client.session.abort({ path: { id: sessionID } });
+      await stopChildSession(sessionID);
       state.model = nextModel;
       state.modelIndex = nextIndex;
       state.failovers += 1;
@@ -225,6 +225,19 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     } else if (state.pendingIdle) {
       state.pendingIdle = false;
       finishTrackedSession(state);
+    }
+  };
+
+  const stopChildSession = async (sessionID) => {
+    let timer;
+    try {
+      const response = await Promise.race([
+        client.session.abort({ path: { id: sessionID }, throwOnError: true }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Application error: child stop unconfirmed')), 5000); }),
+      ]);
+      if (response === false || response?.error || response?.data === false) throw new Error('Application error: child stop unconfirmed');
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   };
 
@@ -333,6 +346,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
         let timer = null;
         let onAbort = null;
+        let stopRequired = false;
+        let stopConfirmed = true;
         try {
           let roleProfile = [];
           let capabilityCacheSource = 'tool-free';
@@ -366,7 +381,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             model,
             policy: compactorPool?.prompt_optimization,
             runCompactor: configuredUtilityPool(compactorPool)
-              ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt, healthManager })
+              ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt, healthManager, signal: context.abort })
               : null,
           });
           const invocationTools = toolPermissionMap(optimized.tools);
@@ -406,7 +421,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           if (timeoutMs > 0) waits.push(
                 new Promise((_, reject) => {
                   timer = setTimeout(() => {
-                    Promise.resolve().then(() => client.session.abort({ path: { id: childID } })).catch(() => {});
+                    stopRequired = true;
                     reject(new Error(`NLA pooled task timed out after ${timeoutMs}ms`));
                   }, timeoutMs);
                 }));
@@ -446,6 +461,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           };
         } catch (error) {
           if (timer) clearTimeout(timer);
+          if (stopRequired && !context.abort.aborted) {
+            try {
+              await stopChildSession(childID);
+            } catch {
+              stopConfirmed = false;
+              appendRunLog({ event: 'child_stop_unconfirmed', session_id: childID, agent: args.role });
+            }
+          }
           if (context.abort.aborted) error = new Error('NLA pooled task aborted by caller');
           lastError = error;
           const reason = classifyProviderError(error).reason;
@@ -465,6 +488,11 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
               cooldown_ms: cooldown, reason: reason.slice(0, 180),
             });
           }
+          if (!stopConfirmed) {
+            lastError = new Error('Application error: child stop unconfirmed; fallback blocked');
+            lastError.code = 'NLA_CHILD_STOP_UNCONFIRMED';
+            break;
+          }
           if (index + 1 >= attempts.length || !['transient', 'defective', 'configuration'].includes(health.category)) break;
           appendRunLog({
             event: 'model_fallback_started', session_id: childID,
@@ -480,7 +508,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
       const reason = classifyProviderError(lastError).reason;
       if (!attempted) throw unavailablePoolError(healthManager.candidates(pool.models, maxAttempts), `NLA pooled task ${args.role}`);
-      throw new Error(`NLA pooled task failed for ${args.role} after ${attempted} model attempt(s): ${reason}`);
+      const failure = new Error(`NLA pooled task failed for ${args.role} after ${attempted} model attempt(s): ${reason}`);
+      failure.code = lastError?.code;
+      failure.attempted = attempted;
+      throw failure;
   };
 
   const pooledTaskWithTracking = async (args, context) => {
@@ -502,7 +533,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (!configuredUtilityPool(pool)) throw new Error(`Invalid utility-model configuration for role: ${args.role}`);
       appendRunLog({ event: 'utility_model_attempt_started', session_id: context.sessionID, agent: args.role, backend: pool.backend, models: pool.models });
       try {
-        const result = await runUtilityModel({ role: args.role, pool, prompt: args.prompt, healthManager });
+        const result = await runUtilityModel({ role: args.role, pool, prompt: args.prompt, healthManager, signal: context.abort });
         appendRunLog({ event: 'utility_model_attempt_succeeded', session_id: context.sessionID, agent: args.role, backend: pool.backend, model: result.metadata.model });
         return { title: `${args.description} (${args.role})`, ...result };
       } catch (error) {

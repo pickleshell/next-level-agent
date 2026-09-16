@@ -240,3 +240,75 @@ for (const mode of ['reject', 'early-idle', 'early-status-idle', 'early-error', 
   }
 }
 console.log('NLA switching event races, third fallback and active cancellation regressions passed');
+
+for (const outcome of ['reject', 'error-result', 'false-result', 'confirmed']) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-stop-check-'));
+  const oldPool = process.env.NLA_MODEL_POOLS_PATH;
+  const oldMemory = process.env.NLA_MEMORY_DIR;
+  let instance;
+  try {
+    process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
+    process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b'], max_failovers: 1, idle_timeout_ms: 5 } } }));
+    const calls = [];
+    let stopped = false;
+    let releaseStop;
+    let stopStarted;
+    const stopping = new Promise((resolve) => { stopStarted = resolve; });
+    instance = await NextLevelAgentPlugin({ directory: dir, client: { session: {
+      create: async () => ({ data: { id: 'child_123' } }),
+      abort: async (request) => {
+        assert.equal(request.throwOnError, true);
+        stopStarted();
+        await new Promise((resolve) => { releaseStop = resolve; });
+        if (outcome === 'reject') throw new Error('stop transport failed');
+        if (outcome === 'error-result') return { error: { message: 'stop failed' } };
+        if (outcome === 'false-result') return { data: false };
+        stopped = true;
+        return { data: true };
+      },
+      prompt: async (request) => {
+        calls.push(request.body.model.modelID);
+        if (calls.length === 1) return new Promise(() => {});
+        assert.equal(stopped, true, 'fallback requires confirmed stop');
+        return { data: { parts: [{ type: 'text', text: 'done' }] } };
+      },
+    } } });
+    await instance['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: dir });
+    const task = instance.tool.nla_task.execute({ role: 'architect', description: 'stop fixture', prompt: 'task' }, { sessionID: 'primary_123', directory: dir, abort: new AbortController().signal });
+    const observed = outcome === 'confirmed' ? task : assert.rejects(task, /caller_or_application_error/);
+    await stopping;
+    assert.deepEqual(calls, ['a'], 'no fallback while stop is pending');
+    releaseStop();
+    await observed;
+    assert.deepEqual(calls, outcome === 'confirmed' ? ['a', 'b'] : ['a']);
+  } finally {
+    await instance?.dispose();
+    for (const [key, value] of [['NLA_MODEL_POOLS_PATH', oldPool], ['NLA_MEMORY_DIR', oldMemory]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+for (const phase of ['fetch', 'body']) {
+  const controller = new AbortController();
+  const health = new ModelHealthManager();
+  let finish;
+  let providerSignal;
+  const task = runUtilityModel({ role: 'compactor', pool: { ...utilityPool, models: ['one'] }, prompt: 'task', signal: controller.signal, healthManager: health, fetchImpl: async (_url, options) => {
+    providerSignal = options.signal;
+    if (phase === 'fetch') return new Promise((resolve) => { finish = () => resolve(new Response(JSON.stringify({ message: { content: 'late' } }))); });
+    return { ok: true, json: () => new Promise((resolve) => { finish = () => resolve({ message: { content: 'late' } }); }) };
+  } });
+  const rejected = assert.rejects(task, /caller_or_application_error/);
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await rejected;
+  assert.equal(providerSignal.aborted, true);
+  assert.equal(health.state('one', utilityHealthEndpoint(utilityPool)).state, 'available');
+  finish();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(health.state('one', utilityHealthEndpoint(utilityPool)).state, 'available');
+}
+console.log('NLA confirmed-stop fallback and utility cancellation regressions passed');
