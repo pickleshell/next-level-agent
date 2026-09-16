@@ -37,7 +37,7 @@ export function resolveModelPools({ explicitPath = null, env = process.env, home
 }
 
 export function modelPoolSummary(resolved) {
-  return Object.entries(resolved.roles).map(([role, pool]) => ({ role, enabled: pool?.enabled !== false, primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null, fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [] }));
+  return Object.entries(resolved.roles).map(([role, pool]) => ({ role, enabled: Boolean(pool?.enabled), primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null, fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [] }));
 }
 
 export function formatModelPools(resolved) {

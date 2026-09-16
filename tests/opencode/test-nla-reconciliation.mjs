@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { reconcileGitWorkspace, reconcileWorkState } from '../../.opencode/plugins/nla-reconciliation.mjs';
+import { saveLedger, loadLedger, normalizeLedger } from '../../.opencode/plugins/nla-memory.mjs';
+import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 const run = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 const commit = (repo, name, content) => { fs.writeFileSync(path.join(repo, 'file.txt'), content); run(repo, 'add', 'file.txt'); run(repo, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', name); return run(repo, 'rev-parse', 'HEAD'); };
 const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-git-test-'));
@@ -19,10 +21,46 @@ try {
   const dirty = reconcileGitWorkspace(repo, { head: second, branch: 'main', worktree: 'clean' });
   assert.equal(dirty.observed.worktree, 'dirty'); assert.deepEqual(dirty.observed.changed_files, ['dirty.txt']); assert.ok(dirty.conflicts.includes('worktree_state_changed'));
   fs.rmSync(path.join(repo, 'dirty.txt')); assert.equal(reconcileGitWorkspace(repo, dirty.observed).observed.worktree, 'clean');
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'modified');
+  fs.writeFileSync(path.join(repo, ' spaced\nname.txt'), 'new');
+  const files = reconcileWorkState({ changed_files: ['stale.txt'], workflow_stage: 'implementation' }, repo);
+  assert.ok(files.changed_files.includes('file.txt'));
+  assert.ok(files.changed_files.includes(' spaced\nname.txt'));
+  assert.deepEqual(files.changed_files, files.repository_state.changed_files);
+  assert.deepEqual(files.repository_reconciliation.saved_changed_files, ['stale.txt']);
+  assert.ok(files.repository_reconciliation.conflicts.includes('changed_files_changed'));
+  fs.writeFileSync(path.join(repo, 'file.txt'), 'two');
+  fs.rmSync(path.join(repo, ' spaced\nname.txt'));
+  run(repo, 'mv', 'file.txt', 'renamed.txt');
+  assert.deepEqual(reconcileGitWorkspace(repo).observed.changed_files, ['renamed.txt']);
+  run(repo, 'mv', 'renamed.txt', 'file.txt');
   run(repo, 'checkout', '-b', 'feature');
   assert.ok(reconcileGitWorkspace(repo, { head: second, branch: 'main', worktree: 'clean' }).conflicts.includes('branch_changed'));
   assert.equal(reconcileGitWorkspace(repo, { head: 'deadbeef', branch: 'main', worktree: 'clean' }).observed.commits_since_saved_head.status, 'unavailable_or_non_ancestor');
   const ledger = reconcileWorkState({ workflow_stage: 'implementation', verification: ['tests passed'], verification_evidence: [{ head: first, command: 'tests' }], repository_state: { head: first, branch: 'main', worktree: 'clean' }, next_step: 'review' }, repo);
   assert.equal(ledger.workflow_stage, 'implementation'); assert.equal(ledger.repository_state.head, second); assert.equal(ledger.verification_status.all_current, false); assert.equal(ledger.verification_status.evidence[0].current, false);
+  const memory = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-resume-test-'));
+  const oldMemory = process.env.NLA_MEMORY_DIR;
+  let plugin;
+  try {
+    process.env.NLA_MEMORY_DIR = memory;
+    const sessionID = 'ses_resume_12345678';
+    saveLedger(memory, normalizeLedger({ workflow_stage: 'implementation', changed_files: ['stale.txt'], repository_state: { head: first }, verification_evidence: [{ head: first, command: 'tests' }] }, sessionID, repo));
+    const packets = [];
+    plugin = await NextLevelAgentPlugin({ directory: repo, client: { session: { prompt: async (request) => { packets.push(request.body.parts[0].text); } } } });
+    await plugin['chat.message']({ sessionID, agent: 'nla', directory: repo });
+    assert.match(packets[0], new RegExp(second));
+    assert.equal(loadLedger(memory, sessionID).repository_state.head, second);
+    assert.equal(loadLedger(memory, sessionID).verification_status.all_current, false);
+    saveLedger(memory, normalizeLedger({ workflow_stage: 'implementation', repository_state: { head: first } }, sessionID, repo));
+    await plugin.event({ event: { type: 'session.compacted', properties: { sessionID } } });
+    assert.match(packets[1], new RegExp(second));
+    assert.equal(loadLedger(memory, sessionID).repository_state.head, second);
+  } finally {
+    if (plugin) await plugin.dispose();
+    if (oldMemory === undefined) delete process.env.NLA_MEMORY_DIR;
+    else process.env.NLA_MEMORY_DIR = oldMemory;
+    fs.rmSync(memory, { recursive: true, force: true });
+  }
 } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 console.log('NLA Git reconciliation and revision-bound verification tests passed');

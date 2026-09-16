@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { modelPoolSummary } from '../../.opencode/plugins/nla-model-pools.mjs';
 import { availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
 
 const defaultPath = path.resolve('config/model-pools.json');
@@ -43,3 +44,5 @@ assert.deepEqual(availablePoolModels(['provider/down', 'provider/backup'], 2, he
 assert.deepEqual(availablePoolModels(['provider/down'], 1, health, 1_000), ['provider/down']);
 assert.equal(modelCooldownMs({ cooldown_ms: 1234 }, {}), 1234);
 console.log('NLA model-pool resolution, introspection, and retry tests passed');
+assert.equal(modelPoolSummary({ roles: { explorer: { models: ['fixture/model'] } } })[0].enabled, false);
+assert.equal(modelPoolSummary({ roles: { explorer: { enabled: true, models: ['fixture/model'] } } })[0].enabled, true);

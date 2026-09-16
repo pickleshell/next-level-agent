@@ -29,7 +29,7 @@ fs.readFileSync = function (...args) {
 };
 
 const mod = await import(pathToFileURL(pluginPath).href);
-const plugin = await mod.NextLevelAgentPlugin({ client: {}, directory: '.' });
+const plugin = await mod.NextLevelAgentPlugin({ client: {}, directory: process.env.TEST_HOME });
 const transform = plugin['experimental.chat.messages.transform'];
 
 const firstOutput = makeOutput(`${scenario} bootstrap first step`);

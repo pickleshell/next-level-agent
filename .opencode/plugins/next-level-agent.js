@@ -809,10 +809,12 @@ ${toolMapping}
         if (checkpoint) {
           const primary = primarySessions.get(props.sessionID) || { agent: 'nla', directory: checkpoint.directory || directory, model: defaultModel };
           try {
+            const restored = reconcileWorkState(checkpoint, primary.directory || directory);
+            saveLedger(stateRoot, restored);
             await client.session.prompt({
               path: { id: props.sessionID },
               query: { directory: primary.directory || directory },
-              body: { noReply: true, parts: [{ type: 'text', text: restorePacket(checkpoint) }] },
+              body: { noReply: true, parts: [{ type: 'text', text: restorePacket(restored) }] },
               throwOnError: true,
             });
             appendRunLog({ event: 'context_restored', session_id: props.sessionID, next_step: String(checkpoint.next_step || '').slice(0, 180) });
@@ -846,6 +848,18 @@ ${toolMapping}
       if (!sessionRoots.has(input.sessionID)) {
         sessionRoots.set(input.sessionID, input.sessionID);
         appendRunLog({ event: 'session_observed', session_id: input.sessionID, parent_session_id: null, kind: agent === 'nla' ? 'primary' : 'unknown', agent });
+      }
+      const firstObservation = !primarySessions.has(input.sessionID);
+      // Register before inserting a noReply packet: that prompt can re-enter this hook.
+      primarySessions.set(input.sessionID, { agent, model, directory: input.directory || directory });
+      if (agent === 'nla' && firstObservation) {
+        const saved = loadLedger(stateRoot, input.sessionID);
+        if (saved) {
+          const restored = reconcileWorkState(saved, input.directory || directory);
+          saveLedger(stateRoot, restored);
+          await client.session.prompt({ path: { id: input.sessionID }, query: { directory: input.directory || directory }, body: { noReply: true, parts: [{ type: 'text', text: restorePacket(restored) }] }, throwOnError: true });
+          appendRunLog({ event: 'work_state_reconciled_on_resume', session_id: input.sessionID, head: restored.repository_state?.head, conflicts: restored.repository_reconciliation.conflicts });
+        }
       }
       primarySessions.set(input.sessionID, { agent, model, directory: input.directory || directory });
       appendRunLog({ event: 'session_model_bound', session_id: input.sessionID, agent, model: model ? `${model.providerID}/${model.modelID}` : undefined });
