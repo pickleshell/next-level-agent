@@ -144,8 +144,10 @@ try {
   await assert.rejects(plugin.tool.nla_model_health_reset.execute({ binding: 'fixture/a' }, { ...context, sessionID: 'other' }), /primary/i);
   await plugin['tool.execute.before']({ tool: 'task', sessionID: 'primary_123' }, { args: { subagent_type: 'architect' } });
   await plugin.event({ event: { type: 'session.created', properties: { info: { id: 'native', parentID: 'primary_123' } } } });
-  await plugin.event({ event: { type: 'session.error', properties: { sessionID: 'native', error: new Error('rate limit token=SECRET') } } });
-  await plugin.event({ event: { type: 'session.error', properties: { sessionID: 'native', error: new Error('rate limit duplicate event') } } });
+  await Promise.all([
+    plugin.event({ event: { type: 'session.error', properties: { sessionID: 'native', error: new Error('rate limit token=SECRET') } } }),
+    plugin.event({ event: { type: 'session.error', properties: { sessionID: 'native', error: new Error('rate limit duplicate event') } } }),
+  ]);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(continued, ['c'], 'watchdog continuation skips shared cooling binding');
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'probe-in-flight');
@@ -161,3 +163,80 @@ try {
   fs.rmSync(fixture, { recursive: true, force: true });
 }
 console.log('NLA task, introspection, primary reset and watchdog health integration passed');
+
+// Exercise events delivered before promptAsync resolves, and real cancellation
+// while prompt is pending. No provider or OpenCode service is contacted.
+for (const mode of ['reject', 'early-idle', 'early-status-idle', 'early-error', 'cancel', 'cancel-reject-abort']) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-lifecycle-'));
+  const oldPool = process.env.NLA_MODEL_POOLS_PATH;
+  const oldMemory = process.env.NLA_MEMORY_DIR;
+  let instance;
+  try {
+    process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
+    process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b', 'p/c'], max_failovers: 2, idle_timeout_ms: 0 } } }));
+    const calls = [];
+    let finish;
+    let aborts = 0;
+    const event = async (type, extra = {}) => instance.event({ event: { type, properties: { sessionID: 'native_123', ...extra } } });
+    instance = await NextLevelAgentPlugin({ directory: dir, client: { session: {
+      create: async () => ({ data: { id: 'child_123' } }),
+      abort: async () => {
+        aborts += 1;
+        if (mode === 'cancel-reject-abort') throw new Error('abort transport failed');
+        // Old-attempt terminal events must not complete the new attempt.
+        await event('session.idle');
+        await event('session.error', { error: new Error('old attempt cancelled') });
+      },
+      prompt: async () => new Promise((resolve) => { finish = resolve; }),
+      promptAsync: async (request) => {
+        const model = request.body.model.modelID;
+        calls.push(model);
+        if (model === 'b' && mode === 'reject') throw new Error('429 rate limit');
+        if (model === 'b' && mode === 'early-error') {
+          await event('session.error', { error: new Error('429 rate limit') });
+          await event('session.idle');
+        } else if (mode === 'early-status-idle') {
+          await event('session.status', { status: { type: 'idle' } });
+        } else {
+          await event('session.idle');
+        }
+      },
+    } } });
+    await instance['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: dir });
+    const controller = new AbortController();
+    const ctx = { sessionID: 'primary_123', directory: dir, abort: controller.signal };
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    if (mode.startsWith('cancel')) {
+      const task = instance.tool.nla_task.execute({ role: 'architect', description: 'cancel fixture', prompt: 'bounded task' }, ctx);
+      const rejected = assert.rejects(task, /caller_or_application_error/);
+      await tick();
+      controller.abort();
+      await rejected;
+      await tick();
+      assert.equal(aborts, 1);
+      assert.equal((await instance.tool.nla_models.execute({}, ctx)).metadata.health[0].state, 'available');
+      finish({ data: { parts: [{ type: 'text', text: 'late success' }] } });
+      await tick();
+      assert.ok(!fs.readFileSync(path.join(dir, '.opencode', 'agent-run.log'), 'utf8').includes('model_attempt_succeeded'));
+    } else {
+      await instance['tool.execute.before']({ tool: 'task', sessionID: 'primary_123' }, { args: { subagent_type: 'architect' } });
+      await instance.event({ event: { type: 'session.created', properties: { info: { id: 'native_123', parentID: 'primary_123' } } } });
+      await event('session.error', { error: new Error('429 rate limit') });
+      await tick();
+      await tick();
+      assert.deepEqual(calls, ['reject', 'early-error'].includes(mode) ? ['b', 'c'] : ['b'], mode);
+      const health = (await instance.tool.nla_models.execute({}, ctx)).metadata.health;
+      assert.ok(health.every((entry) => entry.state !== 'probe-in-flight'), `${mode}: no leaked claim`);
+      assert.equal(health.find((entry) => entry.binding === `p/${calls.at(-1)}`).state, 'available');
+      if (calls.length === 2) assert.equal(health.find((entry) => entry.binding === 'p/b').state, 'cooling');
+    }
+  } finally {
+    await instance?.dispose();
+    for (const [key, value] of [['NLA_MODEL_POOLS_PATH', oldPool], ['NLA_MEMORY_DIR', oldMemory]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+console.log('NLA switching event races, third fallback and active cancellation regressions passed');

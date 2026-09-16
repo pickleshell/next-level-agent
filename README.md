@@ -212,6 +212,11 @@ claims are exclusive even for healthy calls: an in-flight binding is skipped,
 and cancellation or local preparation failure releases its claim. The watchdog
 uses the same health manager for NLA-controlled continuations and retains the
 claim until idle or error; asynchronous request acceptance is not recovery.
+Terminal events received during continuation dispatch are reconciled after the
+dispatch settles, with failures taking precedence over idle. A rejected
+continuation advances through the remaining eligible models within the budget.
+Cancelling an active `nla_task` requests child-session abort, releases its health
+claim and rejects the task; a late response cannot turn cancellation into success.
 Utility bindings include runtime, API, and the full endpoint identity (hashed
 to keep URL credentials out of diagnostics), not just the hostname.
 
