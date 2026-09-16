@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { modelPoolSummary } from '../../.opencode/plugins/nla-model-pools.mjs';
-import { ModelHealthManager, classifyProviderError } from '../../.opencode/plugins/nla-model-health.mjs';
-import { availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
+import { ModelHealthManager, classifyProviderError, retryAfterMs } from '../../.opencode/plugins/nla-model-health.mjs';
+import { runUtilityModel, utilityHealthEndpoint } from '../../.opencode/plugins/nla-utility-runtime.mjs';
+import { NextLevelAgentPlugin, availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
 
 const defaultPath = path.resolve('config/model-pools.json');
 const original = process.env.NLA_MODEL_POOLS_PATH;
@@ -42,7 +43,7 @@ assert.equal(retryableProviderError(new Error('Unexpected server error')), true)
 assert.equal(retryableProviderError(new Error('permission denied')), false);
 const health = new Map([['provider/down', { until: 2_000, reason: '502 overloaded' }]]);
 assert.deepEqual(availablePoolModels(['provider/down', 'provider/backup'], 2, health, 1_000), ['provider/backup']);
-assert.deepEqual(availablePoolModels(['provider/down'], 1, health, 1_000), ['provider/down']);
+assert.deepEqual(availablePoolModels(['provider/down'], 1, health, 1_000), []);
 assert.equal(modelCooldownMs({ cooldown_ms: 1234 }, {}), 1234);
 console.log('NLA model-pool resolution, introspection, and retry tests passed');
 assert.equal(modelPoolSummary({ roles: { explorer: { models: ['fixture/model'] } } })[0].enabled, false);
@@ -58,3 +59,105 @@ healthManager.failure('p/b', new Error('model not found'));
 assert.equal(healthManager.candidates(['p/b'], 1).allQuarantined, true);
 healthManager.reset('p/b');
 assert.equal(healthManager.candidates(['p/b'], 1).models[0], 'p/b');
+
+assert.equal(classifyProviderError(new Error('caller cancelled request after timeout')).category, 'non_provider');
+assert.equal(classifyProviderError({ status: 404, message: 'model endpoint missing' }).category, 'configuration');
+assert.equal(classifyProviderError({ status: 404, message: 'model missing' }).category, 'defective');
+assert.equal(classifyProviderError(new Error('HTTP 401')).category, 'configuration');
+assert.equal(retryAfterMs('60', 1000), 60000);
+assert.equal(retryAfterMs('Thu, 01 Jan 1970 00:02:00 GMT', 1000), 119000);
+assert.equal(retryAfterMs('-1', 1000), null);
+assert.equal(retryAfterMs('invalid', 1000), null);
+assert.equal(modelCooldownMs({ cooldown_ms: 0 }, { NLA_MODEL_COOLDOWN_MS: '99' }), 0);
+assert.equal(modelCooldownMs({}, { NLA_MODEL_COOLDOWN_MS: '99' }), 99);
+clock.value = 31000;
+assert.equal(healthManager.claim('p/a'), true);
+assert.equal(healthManager.claim('p/a'), false, 'only one recovery probe');
+assert.equal(healthManager.state('p/a').eligible, false);
+assert.throws(() => healthManager.reset('p/a'), /in-flight/);
+healthManager.failure('p/a', new Error('caller cancelled after timeout'));
+assert.equal(healthManager.claim('p/a'), true, 'cancel releases probe without poisoning');
+healthManager.failure('p/a', { status: 429, retryAfter: 'Thu, 01 Jan 1970 00:02:00 GMT' }, '', 10);
+assert.equal(healthManager.state('p/a').until, 120000);
+clock.value = 120000;
+assert.equal(healthManager.claim('p/a'), true);
+healthManager.success('p/a');
+assert.equal(healthManager.state('p/a').state, 'available');
+
+const utilityPool = { runtime: 'utility', backend: 'ollama', provider: { api: 'native', base_url: 'http://example.test/a?token=SECRET' }, models: ['one', 'two', 'three'], max_failovers: 1, request_timeout_ms: 1000, cooldown_ms: 77 };
+const endpoint = utilityHealthEndpoint(utilityPool);
+assert.notEqual(endpoint, utilityHealthEndpoint({ ...utilityPool, provider: { ...utilityPool.provider, base_url: 'http://example.test/b?token=SECRET' } }));
+assert.ok(!endpoint.includes('SECRET'));
+const utilityHealth = new ModelHealthManager({ now: () => 1000 });
+utilityHealth.failure('one', new Error('rate limit'), endpoint);
+const calls = [];
+const utilityResult = await runUtilityModel({ role: 'compactor', pool: utilityPool, prompt: 'test', healthManager: utilityHealth, fetchImpl: async (_url, options) => {
+  const model = JSON.parse(options.body).model;
+  calls.push(model);
+  if (model === 'two') return new Response('rate limit token=SECRET', { status: 429, headers: { 'retry-after': '60' } });
+  return new Response(JSON.stringify({ message: { content: 'ok' } }));
+} });
+assert.deepEqual(calls, ['two', 'three'], 'skips do not consume attempts');
+assert.equal(utilityResult.output, 'ok');
+assert.equal(utilityHealth.state('two', endpoint).until, 61000);
+await assert.rejects(runUtilityModel({ role: 'compactor', pool: { ...utilityPool, models: ['two'] }, prompt: 'test', healthManager: utilityHealth, fetchImpl: () => { throw new Error('must not call'); } }), /0 model attempts/);
+const secretHealth = new ModelHealthManager();
+await assert.rejects(runUtilityModel({ role: 'compactor', pool: { ...utilityPool, models: ['one'] }, prompt: 'test', healthManager: secretHealth, fetchImpl: async () => new Response('token=SECRET unauthorized', { status: 401 }) }), (error) => !error.message.includes('SECRET'));
+assert.ok(!JSON.stringify(secretHealth.snapshot()).includes('SECRET'));
+console.log('NLA health recovery, Retry-After, scoped bindings, budget and secret regressions passed');
+
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-health-plugin-'));
+const savedEnv = { pool: process.env.NLA_MODEL_POOLS_PATH, memory: process.env.NLA_MEMORY_DIR };
+let plugin;
+try {
+  const fixturePool = path.join(fixture, 'pools.json');
+  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], max_failovers: 2, cooldown_ms: 123456, idle_timeout_ms: 0 }, router: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], max_failovers: 2, idle_timeout_ms: 0 } } }));
+  process.env.NLA_MODEL_POOLS_PATH = fixturePool;
+  process.env.NLA_MEMORY_DIR = path.join(fixture, 'memory');
+  const actual = [];
+  const continued = [];
+  let serial = 0;
+  plugin = await NextLevelAgentPlugin({ directory: fixture, client: { session: {
+    create: async () => ({ data: { id: `child-${++serial}` } }),
+    abort: async () => {},
+    prompt: async (request) => {
+      const model = request.body.model.modelID;
+      actual.push(model);
+      if (model !== 'c') return { data: { info: { error: { name: 'APIError', data: { statusCode: 429, message: 'rate limit token=SECRET' } } } } };
+      return { data: { parts: [{ type: 'text', text: 'done' }] } };
+    },
+    promptAsync: async (request) => { continued.push(request.body.model.modelID); },
+  } } });
+  await plugin['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: fixture });
+  const context = { sessionID: 'primary_123', directory: fixture, abort: new AbortController().signal };
+  const result = await plugin.tool.nla_task.execute({ role: 'architect', description: 'fixture', prompt: 'do bounded task' }, context);
+  assert.deepEqual(actual, ['a', 'b', 'c']);
+  assert.equal(result.metadata.attempt, 3);
+  const inspection = await plugin.tool.nla_models.execute({}, context);
+  const cooling = inspection.metadata.health.find((item) => item.binding === 'fixture/a');
+  assert.ok(cooling.until - cooling.since === 123456, 'pool cooldown used by routing manager');
+  assert.equal(inspection.metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
+  actual.length = 0;
+  await plugin.tool.nla_task.execute({ role: 'router', description: 'next', prompt: 'next' }, context);
+  assert.deepEqual(actual, ['c'], 'health shared across roles');
+  await assert.rejects(plugin.tool.nla_model_health_reset.execute({ binding: 'unknown/secret' }, context), /Unknown configured/);
+  await assert.rejects(plugin.tool.nla_model_health_reset.execute({ binding: 'fixture/a' }, { ...context, sessionID: 'other' }), /primary/i);
+  await plugin['tool.execute.before']({ tool: 'task', sessionID: 'primary_123' }, { args: { subagent_type: 'architect' } });
+  await plugin.event({ event: { type: 'session.created', properties: { info: { id: 'native', parentID: 'primary_123' } } } });
+  await plugin.event({ event: { type: 'session.error', properties: { sessionID: 'native', error: new Error('rate limit token=SECRET') } } });
+  await plugin.event({ event: { type: 'session.error', properties: { sessionID: 'native', error: new Error('rate limit duplicate event') } } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(continued, ['c'], 'watchdog continuation skips shared cooling binding');
+  assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'probe-in-flight');
+  actual.length = 0;
+  await assert.rejects(plugin.tool.nla_task.execute({ role: 'router', description: 'busy', prompt: 'busy' }, context), (error) => error.code === 'NLA_MODEL_POOL_UNAVAILABLE' && error.attempted === 0);
+  assert.deepEqual(actual, [], 'no early probe when cooling or in-flight');
+  await plugin.event({ event: { type: 'session.idle', properties: { sessionID: 'native' } } });
+  assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
+  assert.ok(!fs.readFileSync(path.join(fixture, '.opencode', 'agent-run.log'), 'utf8').includes('SECRET'));
+} finally {
+  if (plugin) await plugin.dispose();
+  for (const [key, value] of [['NLA_MODEL_POOLS_PATH', savedEnv.pool], ['NLA_MEMORY_DIR', savedEnv.memory]]) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  fs.rmSync(fixture, { recursive: true, force: true });
+}
+console.log('NLA task, introspection, primary reset and watchdog health integration passed');

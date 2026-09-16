@@ -294,6 +294,19 @@ Rate limits, overloads, transient network errors, and bounded timeouts place a
 binding in a 30-second cooldown by default; `cooldown_ms`, environment policy,
 and a valid provider Retry-After may extend that delay. Missing or retired
 bindings and authorization/configuration failures are quarantined instead of
+being treated as transient overload. Numeric and HTTP-date `Retry-After` values
+can extend, but not shorten, the configured cooldown. Caller cancellation does
+not poison health. Claims are exclusive per binding and released on local
+failure; watchdog continuations retain their claim until idle/error, not merely
+until the asynchronous request is accepted. Utility endpoint identities include
+the runtime/API and complete URL and are hashed before introspection. Reset is
+primary-only, validates configured bindings, and rejects in-flight targets.
+Diagnostics contain bounded reason codes rather than raw provider errors.
+Unavailable pools expose a structured error with actual attempt count and retry
+or reset information. These rules are covered by deterministic manager,
+utility-runtime and public plugin-tool/event regression tests.
+
+Quarantined bindings are excluded rather than
 being retried on every cooldown cycle. Cooling or quarantined models are
 excluded before actual-call failover budgets are applied. If every model is
 cooling, NLA reports the earliest retry time without making a request. If every
