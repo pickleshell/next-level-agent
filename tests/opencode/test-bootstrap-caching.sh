@@ -15,7 +15,7 @@ run_present_file_check() {
 }
 
 run_missing_file_check() {
-    mv "$SUPERPOWERS_SKILLS_DIR/using-superpowers/SKILL.md" "$TEST_HOME/using-superpowers.SKILL.md.bak"
+    mv "$SUPERPOWERS_SKILLS_DIR/next-level-agent/SKILL.md" "$TEST_HOME/next-level-agent.SKILL.md.bak"
 
     node "$SCRIPT_DIR/test-bootstrap-caching.mjs" "$SUPERPOWERS_PLUGIN_FILE" missing
 }

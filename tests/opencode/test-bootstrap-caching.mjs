@@ -29,7 +29,7 @@ fs.readFileSync = function (...args) {
 };
 
 const mod = await import(pathToFileURL(pluginPath).href);
-const plugin = await mod.SuperpowersPlugin({ client: {}, directory: '.' });
+const plugin = await mod.NextLevelAgentPlugin({ client: {}, directory: '.' });
 const transform = plugin['experimental.chat.messages.transform'];
 
 const firstOutput = makeOutput(`${scenario} bootstrap first step`);
@@ -46,7 +46,7 @@ const result = {
   secondBootstrapParts: countBootstrapParts(secondOutput),
   staleMentionMapping: bootstrapText(firstOutput).includes('@mention'),
   staleTaskMapping: bootstrapText(firstOutput).includes('`Task` tool with subagents'),
-  mapsSubagentToTask: bootstrapText(firstOutput).includes('`task` with `subagent_type: "general"`'),
+  mapsSubagentToTask: bootstrapText(firstOutput).includes('`nla_task`'),
   mapsMutationToApplyPatch: bootstrapText(firstOutput).includes('`apply_patch`'),
   firstReadCount: afterFirst.readCount,
   secondReadCount: afterSecond.readCount,
@@ -69,7 +69,7 @@ if (failures.length > 0) {
 console.log(JSON.stringify(result, null, 2));
 
 function isBootstrapSkillPath(filePath) {
-  return String(filePath).replaceAll('\\', '/').includes('using-superpowers/SKILL.md');
+  return String(filePath).replaceAll('\\', '/').includes('next-level-agent/SKILL.md');
 }
 
 function makeOutput(text) {
@@ -114,10 +114,10 @@ function assertPresentBootstrap(result) {
     failures.push('expected OpenCode bootstrap not to teach @mention subagent syntax');
   }
   if (result.staleTaskMapping) {
-    failures.push('expected OpenCode bootstrap not to teach stale Task-tool mapping');
+    failures.push('expected NLA bootstrap not to teach stale Task-tool mapping');
   }
   if (!result.mapsSubagentToTask) {
-    failures.push('expected OpenCode bootstrap to map general-purpose subagents to task with subagent_type');
+    failures.push('expected NLA bootstrap to map bounded work to nla_task');
   }
   if (!result.mapsMutationToApplyPatch) {
     failures.push('expected OpenCode bootstrap to map file mutation to apply_patch');

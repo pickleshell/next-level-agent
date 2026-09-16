@@ -14,26 +14,48 @@ export XDG_CONFIG_HOME="$TEST_HOME/.config"
 export OPENCODE_CONFIG_DIR="$TEST_HOME/.config/opencode"
 
 # Standard install layout:
-#   $OPENCODE_CONFIG_DIR/superpowers/             ← package root
-#   $OPENCODE_CONFIG_DIR/superpowers/skills/      ← skills dir (../../skills from plugin)
-#   $OPENCODE_CONFIG_DIR/superpowers/.opencode/plugins/superpowers.js ← plugin file
-#   $OPENCODE_CONFIG_DIR/plugins/superpowers.js   ← symlink OpenCode reads
+#   $OPENCODE_CONFIG_DIR/nla/             ← package root
+#   $OPENCODE_CONFIG_DIR/nla/skills/      ← skills dir (../../skills from plugin)
+#   $OPENCODE_CONFIG_DIR/nla/.opencode/plugins/next-level-agent.js ← plugin file
+#   $OPENCODE_CONFIG_DIR/plugins/next-level-agent.js   ← symlink OpenCode reads
 
-SUPERPOWERS_DIR="$OPENCODE_CONFIG_DIR/superpowers"
+SUPERPOWERS_DIR="$OPENCODE_CONFIG_DIR/nla"
 SUPERPOWERS_SKILLS_DIR="$SUPERPOWERS_DIR/skills"
-SUPERPOWERS_PLUGIN_FILE="$SUPERPOWERS_DIR/.opencode/plugins/superpowers.js"
+SUPERPOWERS_PLUGIN_FILE="$SUPERPOWERS_DIR/.opencode/plugins/next-level-agent.js"
 
 # Install skills
 mkdir -p "$SUPERPOWERS_DIR"
 cp -r "$REPO_ROOT/skills" "$SUPERPOWERS_DIR/"
+cat > "$SUPERPOWERS_DIR/package.json" <<'EOF'
+{
+  "private": true,
+  "type": "module"
+}
+EOF
+mkdir -p "$SUPERPOWERS_DIR/node_modules/@opencode-ai/plugin"
+cat > "$SUPERPOWERS_DIR/node_modules/@opencode-ai/plugin/package.json" <<'EOF'
+{
+  "name": "@opencode-ai/plugin",
+  "private": true,
+  "type": "module",
+  "exports": "./index.js"
+}
+EOF
+cat > "$SUPERPOWERS_DIR/node_modules/@opencode-ai/plugin/index.js" <<'EOF'
+const chain = () => ({ describe: chain, max: chain, optional: chain });
+export const tool = (definition) => definition;
+tool.schema = { string: chain, enum: () => chain() };
+EOF
 
 # Install plugin
 mkdir -p "$(dirname "$SUPERPOWERS_PLUGIN_FILE")"
-cp "$REPO_ROOT/.opencode/plugins/superpowers.js" "$SUPERPOWERS_PLUGIN_FILE"
+cp -r "$REPO_ROOT/.opencode/plugins/." "$(dirname "$SUPERPOWERS_PLUGIN_FILE")/"
+mkdir -p "$SUPERPOWERS_DIR/config"
+cp "$REPO_ROOT/config/model-pools.json" "$SUPERPOWERS_DIR/config/model-pools.json"
 
 # Register plugin via symlink (what OpenCode actually reads)
 mkdir -p "$OPENCODE_CONFIG_DIR/plugins"
-ln -sf "$SUPERPOWERS_PLUGIN_FILE" "$OPENCODE_CONFIG_DIR/plugins/superpowers.js"
+ln -sf "$SUPERPOWERS_PLUGIN_FILE" "$OPENCODE_CONFIG_DIR/plugins/next-level-agent.js"
 
 # Create test skills in different locations for testing
 
@@ -70,7 +92,7 @@ echo "OPENCODE_CONFIG_DIR:  $OPENCODE_CONFIG_DIR"
 echo "Superpowers dir:      $SUPERPOWERS_DIR"
 echo "Skills dir:           $SUPERPOWERS_SKILLS_DIR"
 echo "Plugin file:          $SUPERPOWERS_PLUGIN_FILE"
-echo "Plugin registered at: $OPENCODE_CONFIG_DIR/plugins/superpowers.js"
+echo "Plugin registered at: $OPENCODE_CONFIG_DIR/plugins/next-level-agent.js"
 echo "Test project at:      $TEST_HOME/test-project"
 
 # Helper function for cleanup (call from tests or trap)
