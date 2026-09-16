@@ -1,14 +1,101 @@
 {
   "version": 1,
   "roles": {
-    "nla": {"enabled": false, "models": ["opencode/hy3-free"], "idle_timeout_ms": 0, "max_failovers": 0},
-    "router": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
-    "supervisor": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 180000, "max_failovers": 1},
-    "scout": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
-    "explorer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 90000, "max_failovers": 1},
-    "architect": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
-    "implementer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 300000, "max_failovers": 1},
-    "reviewer": {"enabled": true, "models": ["opencode/hy3-free", "opencode/mimo-v2.5-free"], "idle_timeout_ms": 180000, "max_failovers": 1},
-    "compactor": {"enabled": true, "models": ["opencode/mimo-v2.5-free", "opencode/hy3-free"], "idle_timeout_ms": 90000, "max_failovers": 1}
+    "nla": {
+      "enabled": false,
+      "models": [
+        "opencode-go/gpt-5.6-luna"
+      ],
+      "idle_timeout_ms": 0,
+      "max_failovers": 0
+    },
+    "router": {
+      "enabled": true,
+      "models": [
+        "opencode/mimo-v2.5-free",
+        "opencode/nemotron-3-ultra-free",
+        "opencode-go/gpt-5.6-luna"
+      ],
+      "idle_timeout_ms": 90000,
+      "max_failovers": 2
+    },
+    "supervisor": {
+      "enabled": true,
+      "models": [
+        "opencode/nemotron-3-ultra-free",
+        "opencode-go/gpt-5.6-terra"
+      ],
+      "idle_timeout_ms": 180000,
+      "max_failovers": 1
+    },
+    "scout": {
+      "enabled": true,
+      "models": [
+        "opencode/mimo-v2.5-free",
+        "ollama/qwen3.8:latest"
+      ],
+      "idle_timeout_ms": 180000,
+      "max_failovers": 1
+    },
+    "explorer": {
+      "enabled": true,
+      "models": [
+        "ollama/qwen3.8:latest",
+        "opencode/mimo-v2.5-free"
+      ],
+      "idle_timeout_ms": 180000,
+      "max_failovers": 1
+    },
+    "architect": {
+      "enabled": true,
+      "models": [
+        "opencode/nemotron-3-ultra-free",
+        "ollama/qwen3.8:latest"
+      ],
+      "idle_timeout_ms": 300000,
+      "max_failovers": 1
+    },
+    "implementer": {
+      "enabled": true,
+      "models": [
+        "opencode/big-pickle",
+        "ollama/qwen3.8:latest"
+      ],
+      "idle_timeout_ms": 300000,
+      "max_failovers": 1
+    },
+    "reviewer": {
+      "enabled": true,
+      "models": [
+        "opencode/nemotron-3-ultra-free",
+        "opencode/big-pickle",
+        "opencode-go/gpt-5.6-luna"
+      ],
+      "idle_timeout_ms": 180000,
+      "max_failovers": 2
+    },
+    "compactor": {
+      "enabled": true,
+      "prompt_optimization": {
+        "exclude_models": [
+          "ollama/*",
+          "opencode/mimo-v2.5-free",
+          "opencode/nemotron-3-ultra-free",
+          "opencode/big-pickle"
+        ]
+      },
+      "runtime": "utility",
+      "backend": "ollama",
+      "provider": {
+        "api": "native",
+        "base_url": "http://127.0.0.1:11434"
+      },
+      "models": [
+        "qwen3.8:latest"
+      ],
+      "request_timeout_ms": 120000,
+      "max_failovers": 0,
+      "output_format": "json"
+    }
   }
 }

@@ -53,4 +53,19 @@ assert.deepEqual(permissions, { '*': false, read: true, grep: true });
 assert.equal(Object.keys(permissions).length, 3, 'permission map must not enumerate or restore a full catalog');
 for (const roleTools of Object.values(ROLE_TOOL_CEILINGS)) assert.ok(roleTools.length <= 5);
 
+const policy = { exclude_models: ['ollama/*', 'opencode/mimo-v2.5-free'] };
+let compactorCalls = 0;
+const runCompactor = async () => { compactorCalls++; return '{"tools":["read","grep"]}'; };
+for (const model of ['ollama/qwen3.8:latest', 'opencode/mimo-v2.5-free']) {
+  const result = await optimizeInvocation({ role: 'explorer', prompt: bounded, model, policy, runCompactor });
+  assert.equal(result.source, 'deterministic-policy');
+  assert.equal(result.prompt, bounded);
+  assert.deepEqual(result.tools, ['read', 'grep']);
+}
+assert.equal(compactorCalls, 0);
+await optimizeInvocation({ role: 'explorer', prompt: bounded, model: 'opencode-go/gpt-5.6-luna', policy, runCompactor });
+assert.equal(compactorCalls, 1, 'paid fallback must recompute policy for its own model');
+await optimizeInvocation({ role: 'explorer', prompt: bounded, model: 'opencode-go/gpt-5.6-luna', policy: { enabled: false }, runCompactor });
+assert.equal(compactorCalls, 1);
+await assert.rejects(optimizeInvocation({ role: 'explorer', prompt: bounded, policy: { exclude_models: [42] }, runCompactor }), /Invalid/);
 console.log('NLA prompt optimizer tests passed');

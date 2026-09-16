@@ -246,6 +246,24 @@ larger OpenCode agent loop. It does not weaken or bypass the shortlist policy.
 
 ## Model Pools
 
+### Per-model Compactor prompt optimization
+
+The Compactor pool accepts `prompt_optimization` with `enabled` (default true)
+and `exclude_models` (default empty). Entries match exact target provider/model
+IDs or a prefix ending in `*`, such as `ollama/*`. The policy is evaluated for
+each actual child-model attempt, including fallbacks. Excluded models skip the
+utility Compactor call and retain the deterministic tool shortlist and original
+bounded prompt. Invalid policies reject the invocation rather than broaden tools.
+This setting does not disable recovery checkpoints or OpenCode native compaction.
+Omitting the policy preserves the previous behavior. Example:
+
+```json
+"prompt_optimization": {
+  "exclude_models": ["ollama/*", "opencode/mimo-v2.5-free"]
+}
+```
+
+
 Model pools are configured in [`config/model-pools.json`](../config/model-pools.json).
 
 Set `NLA_MODEL_POOLS_PATH` to an absolute path (or a path beginning with `~`) to
