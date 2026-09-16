@@ -31,26 +31,6 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 Prompts define role behavior. The NLA plugin provides managed NLA delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
-### Runtime truth and introspection
-
-NLA resolves model pools through one runtime resolver. Precedence is an explicit
-request override, then `NLA_MODEL_POOLS_PATH`, then the portable repository
-default. An explicitly selected but missing or invalid file fails closed; it is
-never silently replaced by another pool. `nla_task` and the primary-only
-`nla_models` tool use the same resolved object. `nla_models` reports each role's
-primary and ordered fallbacks, enabled state, source, and resolution reason,
-without credentials.
-
-Persisted Work State separates NLA-owned intent from externally verifiable Git
-facts. At session restore, state inspection, and ledger save, NLA reconciles
-branch, HEAD, worktree status, changed files, and commits since a saved
-ancestor. A conflict is retained and surfaced; Git movement does not imply
-semantic task completion. Verification evidence is tied to the HEAD where it
-ran and is not claimed for a newer revision. Use `nla_work_state` for a current
-detailed snapshot.
-
-> Introspection must describe the configuration NLA actually executes, and persisted Work State must be reconciled with observable repository state before it is treated as current.
-
 ## At a Glance
 
 ```mermaid
@@ -130,6 +110,16 @@ without changing its meaning or acceptance criteria, and prune or shortlist
 tool schemas so the target model receives only the small relevant subset.
 Context compression remains a separate OpenCode/NLA controlled-compaction
 path. NLA does not introduce a separate Selector role.
+
+### Model pools and effective configuration
+
+NLA resolves model pools through one runtime resolver. Precedence is an explicit
+request override, then `NLA_MODEL_POOLS_PATH`, then the portable repository
+default. An explicitly selected but missing or invalid file fails closed; it is
+never silently replaced by another pool. `nla_task` and the primary-only
+`nla_models` tool use the same resolved object. `nla_models` reports each role's
+primary and ordered fallbacks, enabled state, source, and resolution reason,
+without credentials.
 
 ### Compactor prompt optimization
 
@@ -290,6 +280,18 @@ its pool is unavailable, fails, or blocks the operation, controlled compaction
 stops rather than silently continuing to native summarization.
 
 Small tasks use a shorter workflow. NLA adds agents and gates when risk and uncertainty justify them.
+
+### Work State reconciliation and verification
+
+Persisted Work State separates NLA-owned intent from externally verifiable Git
+facts. At session restore, state inspection, and ledger save, NLA reconciles
+branch, HEAD, worktree status, changed files, and commits since a saved
+ancestor. A conflict is retained and surfaced; Git movement does not imply
+semantic task completion. Verification evidence is tied to the HEAD where it
+ran and is not claimed for a newer revision. Use `nla_work_state` for a current
+detailed snapshot.
+
+> Introspection must describe the configuration NLA actually executes, and persisted Work State must be reconciled with observable repository state before it is treated as current.
 
 ## Current Development Status
 
