@@ -89,7 +89,7 @@ function requestFor(config, model, prompt) {
   return request;
 }
 
-export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalThis.fetch, healthManager = new ModelHealthManager() }) {
+export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalThis.fetch, healthManager = new ModelHealthManager(), signal }) {
   const config = utilityConfig(pool);
   if (!config) throw new Error(`Role ${role} is not configured for the utility runtime`);
   if (typeof fetchImpl !== 'function') throw new Error('Utility-model runtime requires fetch');
@@ -101,39 +101,60 @@ export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalTh
   if (!selection.models.length) throw unavailablePoolError(selection, `Utility model ${role}`);
   let lastError;
   for (const model of attempts) {
+    if (signal?.aborted) throw new Error('Utility-model task cancelled by caller');
     if (attempted >= maxAttempts) break;
     if (!healthManager.claim(model, endpointKey)) continue;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    let timer;
+    let onAbort;
+    let timedOut = false;
     try {
       const request = requestFor(config, model, prompt);
-      attempted += 1;
-      const response = await fetchImpl(request.url, {
-        method: 'POST', headers: DEFAULT_HEADERS, body: JSON.stringify(request.body), signal: controller.signal,
+      const interruption = new Promise((_, reject) => {
+        onAbort = () => {
+          reject(new Error('Utility-model task cancelled by caller'));
+          controller.abort();
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`Utility-model request timed out after ${config.timeoutMs}ms`));
+          controller.abort();
+        }, config.timeoutMs);
       });
-      if (!response.ok) {
-        const error = new Error(`Utility provider HTTP ${response.status}: ${(await response.text()).slice(0, 180)}`);
-        error.statusCode = response.status;
-        const retryAfter = response.headers?.get?.('retry-after');
-        if (retryAfter !== null && retryAfter !== undefined) error.retryAfter = retryAfter;
-        throw error;
-      }
-      let payload;
-      try { payload = await response.json(); } catch { throw new Error('Utility provider returned invalid JSON'); }
-      const output = parseUtilityResponse(payload, config.api);
+      attempted += 1;
+      const operation = (async () => {
+        const response = await fetchImpl(request.url, {
+          method: 'POST', headers: DEFAULT_HEADERS, body: JSON.stringify(request.body), signal: controller.signal,
+        });
+        if (!response.ok) {
+          const error = new Error(`Utility provider HTTP ${response.status}: ${(await response.text()).slice(0, 180)}`);
+          error.statusCode = response.status;
+          const retryAfter = response.headers?.get?.('retry-after');
+          if (retryAfter !== null && retryAfter !== undefined) error.retryAfter = retryAfter;
+          throw error;
+        }
+        let payload;
+        try { payload = await response.json(); } catch { throw new Error('Utility provider returned invalid JSON'); }
+        const output = parseUtilityResponse(payload, config.api);
+        return { output, payload };
+      })();
+      const { output, payload } = await Promise.race([operation, interruption]);
+      if (signal?.aborted) throw new Error('Utility-model task cancelled by caller');
       healthManager.success(model, endpointKey);
       return {
         output,
         metadata: { role, runtime: 'utility', backend: config.backend, model, usage: payload.usage || null, cost: payload.cost ?? null },
       };
     } catch (error) {
-      lastError = error && error.name === 'AbortError'
+      lastError = signal?.aborted ? new Error('Utility-model task cancelled by caller') : timedOut
         ? new Error(`Utility-model request timed out after ${config.timeoutMs}ms`)
         : error;
       const health = healthManager.failure(model, lastError, endpointKey, modelCooldownMs(pool));
       if (!['transient', 'defective', 'configuration'].includes(health.category)) break;
     } finally {
       clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
       healthManager.release(model, endpointKey);
     }
   }

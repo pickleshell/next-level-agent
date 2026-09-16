@@ -217,6 +217,12 @@ dispatch settles, with failures taking precedence over idle. A rejected
 continuation advances through the remaining eligible models within the budget.
 Cancelling an active `nla_task` requests child-session abort, releases its health
 claim and rejects the task; a late response cannot turn cancellation into success.
+After a child timeout, fallback waits up to five seconds for a successful abort
+response. A failed, negative or unconfirmed stop blocks fallback with
+`NLA_CHILD_STOP_UNCONFIRMED`. This prevents a new attempt from overlapping the
+old attempt in the same child session. Utility tasks and invocation-time
+Compactor requests also receive caller cancellation; cancellation interrupts
+both the request and response-body wait and cannot be returned as success.
 Utility bindings include runtime, API, and the full endpoint identity (hashed
 to keep URL credentials out of diagnostics), not just the hostname.
 
