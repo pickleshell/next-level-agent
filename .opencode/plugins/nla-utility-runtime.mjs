@@ -1,4 +1,9 @@
-import { ModelHealthManager } from './nla-model-health.mjs';
+import { ModelHealthManager, modelCooldownMs, classifyProviderError, unavailablePoolError } from './nla-model-health.mjs';
+import { createHash } from 'node:crypto';
+
+export function utilityHealthEndpoint(pool) {
+  return createHash('sha256').update(JSON.stringify([pool.runtime, pool.backend, pool.provider?.api, pool.provider?.base_url])).digest('hex');
+}
 
 const DEFAULT_HEADERS = { 'content-type': 'application/json' };
 
@@ -89,42 +94,49 @@ export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalTh
   if (!config) throw new Error(`Role ${role} is not configured for the utility runtime`);
   if (typeof fetchImpl !== 'function') throw new Error('Utility-model runtime requires fetch');
   const maxAttempts = Number(pool.max_failovers || 0) + 1;
-  const endpointKey = config.baseURL.origin;
+  const endpointKey = utilityHealthEndpoint(pool);
   const selection = healthManager.candidates(config.models, maxAttempts, endpointKey);
-  const attempts = selection.models;
-  if (!attempts.length) throw new Error(selection.allQuarantined ? `Utility model unavailable for ${role}: all models quarantined` : `Utility model unavailable for ${role}: all models cooling until ${selection.earliestRetryAt ? new Date(selection.earliestRetryAt).toISOString() : 'unknown'}`);
+  const attempts = config.models;
+  let attempted = 0;
+  if (!selection.models.length) throw unavailablePoolError(selection, `Utility model ${role}`);
   let lastError;
   for (const model of attempts) {
+    if (attempted >= maxAttempts) break;
     if (!healthManager.claim(model, endpointKey)) continue;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.timeoutMs);
     try {
       const request = requestFor(config, model, prompt);
+      attempted += 1;
       const response = await fetchImpl(request.url, {
         method: 'POST', headers: DEFAULT_HEADERS, body: JSON.stringify(request.body), signal: controller.signal,
       });
       if (!response.ok) {
         const error = new Error(`Utility provider HTTP ${response.status}: ${(await response.text()).slice(0, 180)}`);
+        error.statusCode = response.status;
         const retryAfter = response.headers?.get?.('retry-after');
-        if (retryAfter !== null && retryAfter !== undefined && Number.isFinite(Number(retryAfter))) error.retryAfter = Number(retryAfter);
+        if (retryAfter !== null && retryAfter !== undefined) error.retryAfter = retryAfter;
         throw error;
       }
       let payload;
       try { payload = await response.json(); } catch { throw new Error('Utility provider returned invalid JSON'); }
+      const output = parseUtilityResponse(payload, config.api);
       healthManager.success(model, endpointKey);
       return {
-        output: parseUtilityResponse(payload, config.api),
+        output,
         metadata: { role, runtime: 'utility', backend: config.backend, model, usage: payload.usage || null, cost: payload.cost ?? null },
       };
     } catch (error) {
       lastError = error && error.name === 'AbortError'
         ? new Error(`Utility-model request timed out after ${config.timeoutMs}ms`)
         : error;
-      const health = healthManager.failure(model, lastError, endpointKey, pool.cooldown_ms || undefined);
+      const health = healthManager.failure(model, lastError, endpointKey, modelCooldownMs(pool));
       if (!['transient', 'defective', 'configuration'].includes(health.category)) break;
     } finally {
       clearTimeout(timer);
+      healthManager.release(model, endpointKey);
     }
   }
-  throw new Error(`Utility-model task failed for ${role} after ${attempts.length} model attempt(s): ${lastError && lastError.message || lastError}`);
+  const timeout = lastError?.message === `Utility-model request timed out after ${config.timeoutMs}ms` ? `; timed out after ${config.timeoutMs}ms` : '';
+  throw new Error(`Utility-model task failed for ${role} after ${attempted} model attempt(s): ${classifyProviderError(lastError).reason}${timeout}`);
 }

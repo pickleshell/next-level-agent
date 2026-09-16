@@ -16,7 +16,7 @@ import {
   thresholdState, writeNotebookPage,
 } from './nla-memory.mjs';
 import { intelligentCheckpoint } from './nla-compaction.mjs';
-import { configuredUtilityPool, runUtilityModel } from './nla-utility-runtime.mjs';
+import { configuredUtilityPool, runUtilityModel, utilityHealthEndpoint } from './nla-utility-runtime.mjs';
 import {
   optimizeInvocation, requiredRoleTools, roleIsToolFree, ROLE_TOOL_CEILINGS, toolPermissionMap,
 } from './nla-prompt-optimizer.mjs';
@@ -25,7 +25,8 @@ import {
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
-import { ModelHealthManager, classifyProviderError } from './nla-model-health.mjs';
+import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
+export { modelCooldownMs };
 
 export { formatModelPools };
 
@@ -94,27 +95,14 @@ function splitModel(model) {
 
 export function retryableProviderError(error) { return classifyProviderError(error).category === 'transient'; }
 
-const DEFAULT_MODEL_COOLDOWN_MS = 30 * 1000;
-
-export function modelCooldownMs(pool = {}, env = process.env) {
-  const configured = pool.cooldown_ms ?? env.NLA_MODEL_COOLDOWN_MS;
-  const value = configured === undefined ? DEFAULT_MODEL_COOLDOWN_MS : Number(configured);
-  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_MODEL_COOLDOWN_MS;
-}
-
 export function availablePoolModels(models, maxAttempts, health = new Map(), now = Date.now()) {
-  const candidates = models.slice(0, Math.min(models.length, maxAttempts)).filter((model) => {
+  const candidates = models.filter((model) => {
     const entry = health.get(model);
     return !entry || entry.until <= now;
-  });
+  }).slice(0, maxAttempts);
   if (candidates.length) return candidates;
 
-  // Never deadlock a pool: when every configured model is cooling down, probe
-  // the one that becomes available first.
-  const probe = models
-    .slice(0, Math.min(models.length, maxAttempts))
-    .sort((left, right) => (health.get(left)?.until || 0) - (health.get(right)?.until || 0))[0];
-  return probe ? [probe] : [];
+  return [];
 }
 
 function showNlaBanner() {
@@ -140,7 +128,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const resolvedPools = effectiveModelPools();
   const pools = resolvedPools.roles;
   const pendingTasks = new Map();
-  const modelHealth = new Map();
   const healthManager = new ModelHealthManager();
   const trackedSessions = new Map();
   const primarySessions = new Map();
@@ -166,19 +153,28 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const failover = async (sessionID, reason) => {
     const state = trackedSessions.get(sessionID);
     if (!state || state.switching || !state.pool.enabled) return;
-    const nextIndex = state.modelIndex + 1;
-    const nextModel = state.pool.models && state.pool.models[nextIndex];
-    if (!nextModel || state.failovers >= state.pool.max_failovers || !retryableProviderError(reason)) return;
+    const failure = healthManager.failure(state.model, reason, '', modelCooldownMs(state.pool));
+    state.healthClaim = false;
+    if (!['transient', 'defective', 'configuration'].includes(failure.category)) return;
+    if (state.failovers >= state.pool.max_failovers) { state.busy = false; return; }
+    let nextIndex = state.modelIndex + 1;
+    while (nextIndex < state.pool.models.length && !healthManager.claim(state.pool.models[nextIndex])) nextIndex += 1;
+    const nextModel = state.pool.models[nextIndex];
+    if (!nextModel) { state.busy = false; return; }
     const model = splitModel(nextModel);
-    if (!model) return;
+    if (!model) { healthManager.release(nextModel); return; }
 
     state.switching = true;
     appendRunLog({
       event: 'model_failure', session_id: sessionID, agent: state.role,
-      model: state.model, reason: String(reason).slice(0, 180),
+      model: state.model, reason: failure.reason,
     });
     try {
       await client.session.abort({ path: { id: sessionID } });
+      state.model = nextModel;
+      state.modelIndex = nextIndex;
+      state.failovers += 1;
+      state.healthClaim = true;
       await client.session.promptAsync({
         path: { id: sessionID },
         body: {
@@ -190,9 +186,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           }],
         },
       });
-      state.model = nextModel;
-      state.modelIndex = nextIndex;
-      state.failovers += 1;
       state.lastActivity = Date.now();
       state.busy = true;
       appendRunLog({
@@ -201,9 +194,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         failover: state.failovers,
       });
     } catch (error) {
+      const failed = healthManager.failure(nextModel, error, '', modelCooldownMs(state.pool));
+      state.healthClaim = false;
+      state.busy = false;
       appendRunLog({
         event: 'model_fallback_failed', session_id: sessionID, agent: state.role,
-        model: nextModel, reason: String(error && error.message || error).slice(0, 180),
+        model: nextModel, reason: failed.reason,
       });
     } finally {
       state.switching = false;
@@ -259,18 +255,18 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
       const maxAttempts = (pool.max_failovers || 0) + 1;
       const selection = healthManager.candidates(pool.models, maxAttempts);
-      const attempts = selection.models;
-      if (!attempts.length) {
-        const detail = selection.allQuarantined ? 'all configured models are quarantined; reset an exact binding' : `all configured models are cooling; earliest retry at ${selection.earliestRetryAt ? new Date(selection.earliestRetryAt).toISOString() : 'unknown'}`;
-        throw new Error(`NLA pooled task unavailable for ${args.role}: ${detail}`);
+      const attempts = pool.models;
+      let attempted = 0;
+      if (!selection.models.length) {
+        throw unavailablePoolError(selection, `NLA pooled task ${args.role}`);
       }
-      for (const modelName of pool.models.slice(0, maxAttempts)) {
-        const entry = modelHealth.get(modelName);
-        if (entry && entry.until > Date.now()) {
+      for (const modelName of pool.models) {
+        const entry = healthManager.state(modelName);
+        if (!entry.eligible) {
           appendRunLog({
             event: 'model_cooldown_skipped', session_id: context.sessionID,
             parent_session_id: context.sessionID, agent: args.role,
-            model: modelName, unavailable_until: new Date(entry.until).toISOString(),
+            model: modelName, unavailable_until: entry.until ? new Date(entry.until).toISOString() : undefined,
             reason: entry.reason,
           });
         }
@@ -283,6 +279,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       const childID = created.data.id;
       sessionRoots.set(childID, sessionRoots.get(context.sessionID) || context.sessionID);
       activeChildren.set(context.sessionID, (activeChildren.get(context.sessionID) || 0) + 1);
+      context.onChildCreated?.();
       appendRunLog({
         event: 'pooled_subagent_created', session_id: childID,
         parent_session_id: context.sessionID, agent: args.role,
@@ -291,20 +288,16 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
       let lastError = null;
       for (let index = 0; index < attempts.length; index += 1) {
+        if (attempted >= maxAttempts) break;
         if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
         const modelName = attempts[index];
         if (!healthManager.claim(modelName)) continue;
         const model = splitModel(modelName);
         if (!model) {
+          healthManager.release(modelName);
           lastError = new Error(`Invalid model identifier in ${args.role} pool: ${modelName}`);
           continue;
         }
-
-        appendRunLog({
-          event: 'model_attempt_started', session_id: childID,
-          parent_session_id: context.sessionID, agent: args.role,
-          model: modelName, attempt: index + 1,
-        });
 
         let timer = null;
         try {
@@ -353,6 +346,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             compactor_model: optimized.compactorMetadata?.model,
             compactor_fallback_reason: optimized.reason,
           });
+          attempted += 1;
+          appendRunLog({ event: 'model_attempt_started', session_id: childID, parent_session_id: context.sessionID, agent: args.role, model: modelName, attempt: attempted });
           const request = client.session.prompt({
             path: { id: childID },
             query: { directory: context.directory || directory },
@@ -381,8 +376,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           if (result.data.info && result.data.info.error) {
             const modelError = result.data.info.error;
             const detail = modelError.data && (modelError.data.message || modelError.data.responseBody);
-            const status = modelError.data && modelError.data.statusCode;
-            throw new Error(`${modelError.name || 'ModelError'}${status ? ` ${status}` : ''}: ${detail || JSON.stringify(modelError)}`);
+            const providerError = new Error(detail || modelError.name || 'ModelError');
+            providerError.data = modelError.data;
+            throw providerError;
           }
 
           const output = (result.data.parts || [])
@@ -395,7 +391,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           appendRunLog({
             event: 'model_attempt_succeeded', session_id: childID,
             parent_session_id: context.sessionID, agent: args.role,
-            model: modelName, attempt: index + 1,
+            model: modelName, attempt: attempted,
           });
           healthManager.success(modelName);
           appendRunLog({ event: 'model_health_available', session_id: childID, agent: args.role, model: modelName });
@@ -403,24 +399,24 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             title: `${args.description} (${args.role})`,
             output,
             metadata: {
-              sessionID: childID, role: args.role, model: modelName, attempt: index + 1,
+              sessionID: childID, role: args.role, model: modelName, attempt: attempted,
               tools: optimized.tools, toolOptimization: optimized.source, capabilityCache: capabilityCacheSource,
             },
           };
         } catch (error) {
           if (timer) clearTimeout(timer);
+          if (context.abort.aborted) error = new Error('NLA pooled task aborted by caller');
           lastError = error;
-          const reason = error instanceof Error ? error.message : String(error);
+          const reason = classifyProviderError(error).reason;
           appendRunLog({
             event: 'model_attempt_failed', session_id: childID,
             parent_session_id: context.sessionID, agent: args.role,
-            model: modelName, attempt: index + 1, reason: reason.slice(0, 180),
+            model: modelName, attempt: attempted, reason: reason.slice(0, 180),
           });
-          const health = healthManager.failure(modelName, error);
+          const health = healthManager.failure(modelName, error, '', modelCooldownMs(pool));
           if (health.category === 'transient') {
             const cooldown = modelCooldownMs(pool);
-            const until = Date.now() + cooldown;
-            modelHealth.set(modelName, { until, reason: reason.slice(0, 180) });
+            const until = healthManager.state(modelName).until;
             appendRunLog({
               event: 'model_cooldown_started', session_id: childID,
               parent_session_id: context.sessionID, agent: args.role,
@@ -434,20 +430,26 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             parent_session_id: context.sessionID, agent: args.role,
             previous_model: modelName, model: attempts[index + 1], failover: index + 1,
           });
+        } finally {
+          healthManager.release(modelName);
         }
       }
 
-      const reason = lastError instanceof Error ? lastError.message : String(lastError || 'unknown failure');
-      throw new Error(`NLA pooled task failed for ${args.role} after ${attempts.length} model attempt(s): ${reason}`);
+      const reason = classifyProviderError(lastError).reason;
+      if (!attempted) throw unavailablePoolError(healthManager.candidates(pool.models, maxAttempts), `NLA pooled task ${args.role}`);
+      throw new Error(`NLA pooled task failed for ${args.role} after ${attempted} model attempt(s): ${reason}`);
   };
 
   const pooledTaskWithTracking = async (args, context) => {
+    let childCreated = false;
     try {
-      return await runPooledTask(args, context);
+      return await runPooledTask(args, { ...context, onChildCreated: () => { childCreated = true; } });
     } finally {
-      const count = Math.max(0, (activeChildren.get(context.sessionID) || 1) - 1);
-      if (count) activeChildren.set(context.sessionID, count);
-      else activeChildren.delete(context.sessionID);
+      if (childCreated) {
+        const count = Math.max(0, (activeChildren.get(context.sessionID) || 1) - 1);
+        if (count) activeChildren.set(context.sessionID, count);
+        else activeChildren.delete(context.sessionID);
+      }
     }
   };
 
@@ -504,7 +506,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
       appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
-      const health = healthManager.snapshot();
+      const health = Object.values(pools).flatMap((pool) => (pool.models || []).map((binding) => {
+        const endpoint = pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '';
+        return { ...healthManager.state(binding, endpoint), endpoint };
+      }));
       return { title: 'Effective NLA model pools', output: `${formatModelPools(resolvedPools)}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), health } };
     },
   });
@@ -514,8 +519,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     args: { binding: tool.schema.string().describe('Exact provider/model binding'), endpoint: tool.schema.string().optional().describe('Optional exact runtime endpoint identity') },
     execute: async (args, context) => {
       assertPrimaryNla(context.sessionID);
+      const valid = Object.values(pools).some((pool) => (pool.models || []).includes(args.binding) && (pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '') === (args.endpoint || ''));
+      if (!valid) throw new Error('Unknown configured model binding; use nla_models for exact binding and endpoint');
       healthManager.reset(args.binding, args.endpoint || '');
-      appendRunLog({ event: 'model_health_reset', session_id: context.sessionID, binding: args.binding, endpoint: args.endpoint || undefined });
+      appendRunLog({ event: 'model_health_reset', session_id: context.sessionID, binding: args.binding });
       return { title: 'Model health reset', output: `Reset health for ${args.binding}.` };
     },
   });
@@ -766,6 +773,10 @@ ${toolMapping}
       if (event.type === 'session.status' && props.sessionID) {
         const state = trackedSessions.get(props.sessionID);
         if (state) {
+          if (props.status?.type === 'idle' && state.healthClaim && !state.switching) {
+            healthManager.success(state.model);
+            state.healthClaim = false;
+          }
           state.busy = props.status && props.status.type !== 'idle';
           touch(props.sessionID);
         }
@@ -846,6 +857,10 @@ ${toolMapping}
       if (event.type === 'session.idle' && props.sessionID) {
         const state = trackedSessions.get(props.sessionID);
         if (state) {
+          if (state.healthClaim && !state.switching) {
+            healthManager.success(state.model);
+            state.healthClaim = false;
+          }
           state.busy = false;
           touch(props.sessionID);
         }

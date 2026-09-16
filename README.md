@@ -206,6 +206,24 @@ probe the same model. Utility-model and Compactor calls use the same health
 manager. Native OpenCode model selection remains outside NLA's interception
 boundary until a subsequent NLA-controlled continuation.
 
+`Retry-After` accepts both seconds and HTTP-date values and cannot shorten the
+configured cooldown. Caller cancellation is not a provider failure. Binding
+claims are exclusive even for healthy calls: an in-flight binding is skipped,
+and cancellation or local preparation failure releases its claim. The watchdog
+uses the same health manager for NLA-controlled continuations and retains the
+claim until idle or error; asynchronous request acceptance is not recovery.
+Utility bindings include runtime, API, and the full endpoint identity (hashed
+to keep URL credentials out of diagnostics), not just the hostname.
+
+`nla_models` includes health for every configured binding, including available
+ones. Primary-only `nla_model_health_reset` accepts only an exact configured
+binding and its introspected endpoint identity; unknown or in-flight targets
+are rejected. Unavailable pools expose `NLA_MODEL_POOL_UNAVAILABLE`, actual
+attempt count, earliest retry, and whether reset is required. Provider errors
+are logged and returned as bounded reason codes, not raw credential-bearing
+messages. Healthy concurrent calls may use a fallback or receive an in-flight
+unavailable result rather than sharing the same binding.
+
 These per-model optimization and cooldown additions are implemented but are
 still experimental and require broader live-provider validation.
 
