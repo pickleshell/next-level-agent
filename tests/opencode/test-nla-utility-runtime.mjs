@@ -34,7 +34,7 @@ assert.equal(result.output, '{"ok":true}');
 assert.equal(result.metadata.model, 'working');
 assert.equal(requests[0].url, '/api/chat');
 assert.equal(requests[0].body.stream, false);
-assert.equal(requests[0].body.think, false);
+assert.equal(requests[0].body.think, true);
 assert.equal(requests[0].body.format, 'json');
 server.close();
 await once(server, 'close');

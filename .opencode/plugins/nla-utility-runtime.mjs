@@ -65,7 +65,7 @@ function endpoint(baseURL, suffix) {
 
 function requestFor(config, model, prompt) {
   if (config.api === 'native') {
-    const body = { model, stream: false, think: false, messages: [{ role: 'user', content: prompt }] };
+    const body = { model, stream: false, think: true, messages: [{ role: 'user', content: prompt }] };
     if (config.outputFormat === 'json') body.format = 'json';
     return {
       url: endpoint(config.baseURL, 'api/chat'),
