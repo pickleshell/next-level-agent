@@ -94,8 +94,23 @@ function compactorPrompt(role, prompt, ceiling, fallback) {
   ].join('\n');
 }
 
-export async function optimizeInvocation({ role, prompt, roleProfile = ROLE_TOOL_CEILINGS[role], runCompactor }) {
+export function compactorOptimizationEnabled(model, policy) {
+  if (policy === undefined) return true;
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw new Error('Invalid prompt_optimization policy');
+  if (policy.enabled !== undefined && typeof policy.enabled !== 'boolean') throw new Error('Invalid prompt_optimization enabled');
+  const excluded = policy.exclude_models ?? [];
+  if (!Array.isArray(excluded) || excluded.some(pattern => typeof pattern !== 'string' || !pattern.includes('/') || pattern.includes('*') && !/^[^*]+\*$/.test(pattern))) {
+    throw new Error('Invalid prompt_optimization exclude_models');
+  }
+  return policy.enabled !== false && !excluded.some(pattern =>
+    pattern.endsWith('*') ? typeof model === 'string' && model.startsWith(pattern.slice(0, -1)) : model === pattern);
+}
+
+export async function optimizeInvocation({ role, prompt, roleProfile = ROLE_TOOL_CEILINGS[role], runCompactor, model, policy }) {
   const fallback = deterministicToolShortlist(role, prompt, roleProfile);
+  if (!compactorOptimizationEnabled(model, policy)) {
+    return { prompt, tools: fallback, source: fallback.length ? 'deterministic-policy' : 'tool-free', reason: 'Compactor prompt optimization disabled by model policy' };
+  }
   if (fallback.length === 0 || typeof runCompactor !== 'function') {
     return { prompt, tools: fallback, source: fallback.length ? 'deterministic' : 'tool-free' };
   }

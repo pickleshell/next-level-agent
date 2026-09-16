@@ -73,7 +73,7 @@ export function modelPoolsPath(homeDir = os.homedir()) {
   return normalizePath(process.env.NLA_MODEL_POOLS_PATH, homeDir) || DEFAULT_MODEL_POOLS_PATH;
 }
 
-function loadModelPools() {
+export function loadModelPools() {
   const configPath = modelPoolsPath();
   try {
     const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -296,6 +296,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             role: args.role,
             prompt: args.prompt,
             roleProfile,
+            model,
+            policy: compactorPool?.prompt_optimization,
             runCompactor: configuredUtilityPool(compactorPool)
               ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt })
               : null,

@@ -1,49 +1,35 @@
 import json
-import os
-import sys
+from config.model_pools import get_pool, next_model
 
-sys.path.insert(0, '.')
+EXPECTED = {"nla":["opencode-go/gpt-5.6-luna"],"router":["opencode/mimo-v2.5-free","opencode/nemotron-3-ultra-free","opencode-go/gpt-5.6-luna"],"supervisor":["opencode/nemotron-3-ultra-free","opencode-go/gpt-5.6-terra"],"scout":["opencode/mimo-v2.5-free","ollama/qwen3.8:latest"],"explorer":["ollama/qwen3.8:latest","opencode/mimo-v2.5-free"],"architect":["opencode/nemotron-3-ultra-free","ollama/qwen3.8:latest"],"implementer":["opencode/big-pickle","ollama/qwen3.8:latest"],"reviewer":["opencode/nemotron-3-ultra-free","opencode/big-pickle","opencode-go/gpt-5.6-luna"],"compactor":["qwen3.8:latest"]}
 
+def test_canonical_default_roles(monkeypatch):
+    monkeypatch.delenv("NLA_MODEL_POOLS_PATH", raising=False)
+    for role, models in EXPECTED.items():
+        assert get_pool(role)["models"] == models
+        assert next_model(role, models[-1]) is None
+        if len(models) > 1:
+            assert next_model(role, models[0]) == models[1]
+    assert get_pool("nla")["enabled"] is False
 
-def test_get_pool_for_implementer_has_real_free_models():
-    from config.model_pools import get_pool, next_model
-    pool = get_pool("implementer")
-    assert pool["enabled"] is True
-    assert pool["models"] == ["opencode/hy3-free", "opencode/mimo-v2.5-free"]
-    assert next_model("implementer", "opencode/hy3-free") == "opencode/mimo-v2.5-free"
-
-
-def test_primary_nla_is_not_silently_replaced():
-    from config.model_pools import get_pool, next_model
-    pool = get_pool("nla")
-    assert pool["enabled"] is False
-    assert next_model("nla", "opencode/hy3-free") is None
-
-
-def test_model_pool_path_can_be_overridden(monkeypatch, tmp_path):
-    from config.model_pools import config_path, get_pool
+def test_model_pool_override_replaces_default(monkeypatch, tmp_path):
     override = tmp_path / "local-pools.json"
-    override.write_text(json.dumps({"roles": {"compactor": {"enabled": True, "models": ["local/test"]}}}))
+    override.write_text(json.dumps({"roles": {"explorer": {"models": ["fixture/override"]}}}))
     monkeypatch.setenv("NLA_MODEL_POOLS_PATH", str(override))
-    assert config_path() == os.path.abspath(override)
-    assert get_pool("compactor")["models"] == ["local/test"]
+    assert get_pool("explorer")["models"] == ["fixture/override"]
+    assert get_pool("architect") == {}
 
-
-def test_every_enabled_pool_is_bounded():
-    with open("config/model-pools.json", "r") as f:
-        roles = json.load(f)["roles"]
-    for role, pool in roles.items():
-        if pool["enabled"]:
-            assert len(pool["models"]) == 2, role
-            assert pool["max_failovers"] == 1, role
-            assert pool["idle_timeout_ms"] > 0, role
-
-
-def test_public_architect_pool_uses_healthy_smoke_tested_default():
-    from config.model_pools import get_pool
-    pool = get_pool("architect")
-    assert pool["models"][0] == "opencode/mimo-v2.5-free"
-    assert not any("nvidia/qwen/qwen3-coder-480b-a35b-instruct" == model for model in pool["models"])
-    with open("opencode.json", "r") as f:
+def test_profile_and_bounded_defaults(monkeypatch):
+    monkeypatch.delenv("NLA_MODEL_POOLS_PATH", raising=False)
+    with open("opencode.json") as f:
         profile = json.load(f)
-    assert profile["agent"]["architect"]["model"] == pool["models"][0]
+    for role in EXPECTED:
+        pool = get_pool(role)
+        if pool.get("runtime") == "utility":
+            assert pool["request_timeout_ms"] > 0
+            model = "ollama/" + pool["models"][0]
+        else:
+            assert pool["idle_timeout_ms"] > 0 or not pool["enabled"]
+            model = pool["models"][0]
+        assert 0 <= pool["max_failovers"] <= len(pool["models"]) - 1
+        assert profile["agent"][role]["model"] == model
