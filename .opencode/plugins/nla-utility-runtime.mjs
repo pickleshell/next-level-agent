@@ -1,3 +1,5 @@
+import { ModelHealthManager } from './nla-model-health.mjs';
+
 const DEFAULT_HEADERS = { 'content-type': 'application/json' };
 
 function utilityConfig(pool) {
@@ -82,13 +84,18 @@ function requestFor(config, model, prompt) {
   return request;
 }
 
-export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalThis.fetch }) {
+export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalThis.fetch, healthManager = new ModelHealthManager() }) {
   const config = utilityConfig(pool);
   if (!config) throw new Error(`Role ${role} is not configured for the utility runtime`);
   if (typeof fetchImpl !== 'function') throw new Error('Utility-model runtime requires fetch');
-  const attempts = config.models.slice(0, Math.min(config.models.length, Number(pool.max_failovers || 0) + 1));
+  const maxAttempts = Number(pool.max_failovers || 0) + 1;
+  const endpointKey = config.baseURL.origin;
+  const selection = healthManager.candidates(config.models, maxAttempts, endpointKey);
+  const attempts = selection.models;
+  if (!attempts.length) throw new Error(selection.allQuarantined ? `Utility model unavailable for ${role}: all models quarantined` : `Utility model unavailable for ${role}: all models cooling until ${selection.earliestRetryAt ? new Date(selection.earliestRetryAt).toISOString() : 'unknown'}`);
   let lastError;
   for (const model of attempts) {
+    if (!healthManager.claim(model, endpointKey)) continue;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.timeoutMs);
     try {
@@ -99,6 +106,7 @@ export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalTh
       if (!response.ok) throw new Error(`Utility provider HTTP ${response.status}: ${(await response.text()).slice(0, 180)}`);
       let payload;
       try { payload = await response.json(); } catch { throw new Error('Utility provider returned invalid JSON'); }
+      healthManager.success(model, endpointKey);
       return {
         output: parseUtilityResponse(payload, config.api),
         metadata: { role, runtime: 'utility', backend: config.backend, model, usage: payload.usage || null, cost: payload.cost ?? null },
@@ -107,6 +115,8 @@ export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalTh
       lastError = error && error.name === 'AbortError'
         ? new Error(`Utility-model request timed out after ${config.timeoutMs}ms`)
         : error;
+      const health = healthManager.failure(model, lastError, endpointKey, pool.cooldown_ms || undefined);
+      if (!['transient', 'defective', 'configuration'].includes(health.category)) break;
     } finally {
       clearTimeout(timer);
     }

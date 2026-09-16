@@ -195,6 +195,17 @@ NLA_MODEL_COOLDOWN_MS. Successful recovery clears the entry. Cooldown
 decisions and expiry timestamps are written to the private agent-run log.
 The list is intentionally not persistent: restarting NLA resets it.
 
+Rate limits, overloads, transient network failures, and bounded timeouts are
+cooling failures. A retired or missing model binding, or a provider
+authorization/configuration failure, is quarantined and is not retried every
+30 seconds. When all models cool, NLA reports the earliest retry time and makes
+no provider call; when all are quarantined, an explicit reset/probe is required.
+Skipped models do not consume the pool's actual-call failover budget. Recovery
+probes are claimed per provider/model binding so concurrent tasks do not all
+probe the same model. Utility-model and Compactor calls use the same health
+manager. Native OpenCode model selection remains outside NLA's interception
+boundary until a subsequent NLA-controlled continuation.
+
 These per-model optimization and cooldown additions are implemented but are
 still experimental and require broader live-provider validation.
 

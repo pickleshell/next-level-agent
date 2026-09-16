@@ -25,6 +25,7 @@ import {
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
+import { ModelHealthManager, classifyProviderError } from './nla-model-health.mjs';
 
 export { formatModelPools };
 
@@ -91,14 +92,7 @@ function splitModel(model) {
   return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
 }
 
-export function retryableProviderError(error) {
-  const text = error instanceof Error
-    ? `${error.name}: ${error.message}`
-    : typeof error === 'string'
-      ? error
-      : JSON.stringify(error || {});
-  return /\b(404|410|429|500|502|503|504)\b|model not found|end of life|\bgone\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset|unexpected server error/i.test(text);
-}
+export function retryableProviderError(error) { return classifyProviderError(error).category === 'transient'; }
 
 const DEFAULT_MODEL_COOLDOWN_MS = 30 * 1000;
 
@@ -147,6 +141,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const pools = resolvedPools.roles;
   const pendingTasks = new Map();
   const modelHealth = new Map();
+  const healthManager = new ModelHealthManager();
   const trackedSessions = new Map();
   const primarySessions = new Map();
   const activeChildren = new Map();
@@ -263,7 +258,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       }
 
       const maxAttempts = (pool.max_failovers || 0) + 1;
-      const attempts = availablePoolModels(pool.models, maxAttempts, modelHealth);
+      const selection = healthManager.candidates(pool.models, maxAttempts);
+      const attempts = selection.models;
+      if (!attempts.length) {
+        const detail = selection.allQuarantined ? 'all configured models are quarantined; reset an exact binding' : `all configured models are cooling; earliest retry at ${selection.earliestRetryAt ? new Date(selection.earliestRetryAt).toISOString() : 'unknown'}`;
+        throw new Error(`NLA pooled task unavailable for ${args.role}: ${detail}`);
+      }
       for (const modelName of pool.models.slice(0, maxAttempts)) {
         const entry = modelHealth.get(modelName);
         if (entry && entry.until > Date.now()) {
@@ -293,6 +293,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       for (let index = 0; index < attempts.length; index += 1) {
         if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
         const modelName = attempts[index];
+        if (!healthManager.claim(modelName)) continue;
         const model = splitModel(modelName);
         if (!model) {
           lastError = new Error(`Invalid model identifier in ${args.role} pool: ${modelName}`);
@@ -339,7 +340,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             model,
             policy: compactorPool?.prompt_optimization,
             runCompactor: configuredUtilityPool(compactorPool)
-              ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt })
+              ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt, healthManager })
               : null,
           });
           const invocationTools = toolPermissionMap(optimized.tools);
@@ -396,10 +397,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             parent_session_id: context.sessionID, agent: args.role,
             model: modelName, attempt: index + 1,
           });
-          if (modelHealth.has(modelName)) {
-            modelHealth.delete(modelName);
-            appendRunLog({ event: 'model_cooldown_cleared', session_id: childID, agent: args.role, model: modelName });
-          }
+          healthManager.success(modelName);
+          appendRunLog({ event: 'model_health_available', session_id: childID, agent: args.role, model: modelName });
           return {
             title: `${args.description} (${args.role})`,
             output,
@@ -417,7 +416,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             parent_session_id: context.sessionID, agent: args.role,
             model: modelName, attempt: index + 1, reason: reason.slice(0, 180),
           });
-          if (retryableProviderError(error)) {
+          const health = healthManager.failure(modelName, error);
+          if (health.category === 'transient') {
             const cooldown = modelCooldownMs(pool);
             const until = Date.now() + cooldown;
             modelHealth.set(modelName, { until, reason: reason.slice(0, 180) });
@@ -428,7 +428,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
               cooldown_ms: cooldown, reason: reason.slice(0, 180),
             });
           }
-          if (index + 1 >= attempts.length || !retryableProviderError(error)) break;
+          if (index + 1 >= attempts.length || !['transient', 'defective', 'configuration'].includes(health.category)) break;
           appendRunLog({
             event: 'model_fallback_started', session_id: childID,
             parent_session_id: context.sessionID, agent: args.role,
@@ -457,7 +457,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (!configuredUtilityPool(pool)) throw new Error(`Invalid utility-model configuration for role: ${args.role}`);
       appendRunLog({ event: 'utility_model_attempt_started', session_id: context.sessionID, agent: args.role, backend: pool.backend, models: pool.models });
       try {
-        const result = await runUtilityModel({ role: args.role, pool, prompt: args.prompt });
+        const result = await runUtilityModel({ role: args.role, pool, prompt: args.prompt, healthManager });
         appendRunLog({ event: 'utility_model_attempt_succeeded', session_id: context.sessionID, agent: args.role, backend: pool.backend, model: result.metadata.model });
         return { title: `${args.description} (${args.role})`, ...result };
       } catch (error) {
@@ -504,7 +504,19 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
       appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
-      return { title: 'Effective NLA model pools', output: formatModelPools(resolvedPools), metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools) } };
+      const health = healthManager.snapshot();
+      return { title: 'Effective NLA model pools', output: `${formatModelPools(resolvedPools)}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), health } };
+    },
+  });
+
+  const nlaModelHealthReset = tool({
+    description: 'Reset health for one exact provider/model binding. Primary NLA only; this does not change configuration or credentials.',
+    args: { binding: tool.schema.string().describe('Exact provider/model binding'), endpoint: tool.schema.string().optional().describe('Optional exact runtime endpoint identity') },
+    execute: async (args, context) => {
+      assertPrimaryNla(context.sessionID);
+      healthManager.reset(args.binding, args.endpoint || '');
+      appendRunLog({ event: 'model_health_reset', session_id: context.sessionID, binding: args.binding, endpoint: args.endpoint || undefined });
+      return { title: 'Model health reset', output: `Reset health for ${args.binding}.` };
     },
   });
 
@@ -688,6 +700,7 @@ ${toolMapping}
       nla_task: nlaTask,
       nla_state: nlaState,
       nla_models: nlaModels,
+      nla_model_health_reset: nlaModelHealthReset,
       nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
       nla_compact: nlaCompact,
@@ -875,7 +888,7 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -886,7 +899,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,
