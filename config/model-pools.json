@@ -24,7 +24,7 @@
         "opencode-go/gpt-5.6-terra"
       ],
       "idle_timeout_ms": 180000,
-      "max_failovers": 1
+      "max_failovers": 2
     },
     "scout": {
       "enabled": true,
@@ -52,7 +52,7 @@
         "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 300000,
-      "max_failovers": 1
+      "max_failovers": 2
     },
     "implementer": {
       "enabled": true,

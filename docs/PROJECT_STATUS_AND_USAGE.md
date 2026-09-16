@@ -289,6 +289,18 @@ Omitting the policy preserves the previous behavior. Example:
 
 Model pools are configured in [`config/model-pools.json`](../config/model-pools.json).
 
+NLA keeps one process-local health manager for child and utility invocations.
+Rate limits, overloads, transient network errors, and bounded timeouts place a
+binding in a 30-second cooldown by default; `cooldown_ms`, environment policy,
+and a valid provider Retry-After may extend that delay. Missing or retired
+bindings and authorization/configuration failures are quarantined instead of
+being retried on every cooldown cycle. Cooling or quarantined models are
+excluded before actual-call failover budgets are applied. If every model is
+cooling, NLA reports the earliest retry time without making a request. If every
+model is quarantined, an explicit exact-binding reset/probe is required.
+Successful recovery clears cooldown. The state resets when the NLA process
+restarts and is visible through model introspection and private telemetry.
+
 Set `NLA_MODEL_POOLS_PATH` to an absolute path (or a path beginning with `~`) to
 load a complete machine-local pool file instead. If unset, NLA uses the
 repository default. This supports local provider experiments without committing
