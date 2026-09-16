@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/setup.sh"
 # Trap to cleanup on exit
 trap cleanup_test_env EXIT
 
-plugin_link="$OPENCODE_CONFIG_DIR/plugins/superpowers.js"
+plugin_link="$OPENCODE_CONFIG_DIR/plugins/next-level-agent.js"
 
 # Test 1: Verify plugin file exists and is registered
 echo "Test 1: Checking plugin registration..."
@@ -42,12 +42,12 @@ else
     exit 1
 fi
 
-# Test 3: Check using-superpowers skill exists (critical for bootstrap)
-echo "Test 3: Checking using-superpowers skill (required for bootstrap)..."
-if [ -f "$SUPERPOWERS_SKILLS_DIR/using-superpowers/SKILL.md" ]; then
-    echo "  [PASS] using-superpowers skill exists"
+# Test 3: Check NLA bootstrap skill exists (critical for bootstrap)
+echo "Test 3: Checking next-level-agent skill (required for bootstrap)..."
+if [ -f "$SUPERPOWERS_SKILLS_DIR/next-level-agent/SKILL.md" ]; then
+    echo "  [PASS] next-level-agent skill exists"
 else
-    echo "  [FAIL] using-superpowers skill not found (required for bootstrap)"
+    echo "  [FAIL] next-level-agent skill not found (required for bootstrap)"
     exit 1
 fi
 
