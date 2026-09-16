@@ -23,6 +23,10 @@ import {
 import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
+import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
+import { reconcileWorkState } from './nla-reconciliation.mjs';
+
+export { formatModelPools };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,15 +77,12 @@ export function modelPoolsPath(homeDir = os.homedir()) {
   return normalizePath(process.env.NLA_MODEL_POOLS_PATH, homeDir) || DEFAULT_MODEL_POOLS_PATH;
 }
 
-export function loadModelPools() {
-  const configPath = modelPoolsPath();
-  try {
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    return parsed && typeof parsed.roles === 'object' ? parsed.roles : {};
-  } catch (error) {
-    console.error(`[Next Level Agent] could not load model pools from ${configPath}: ${error.message}`);
-    return {};
-  }
+export function loadModelPools(options = {}) {
+  return resolveModelPools({ defaultPath: DEFAULT_MODEL_POOLS_PATH, ...options }).roles;
+}
+
+export function effectiveModelPools(options = {}) {
+  return resolveModelPools({ defaultPath: DEFAULT_MODEL_POOLS_PATH, ...options });
 }
 
 function splitModel(model) {
@@ -97,6 +98,29 @@ export function retryableProviderError(error) {
       ? error
       : JSON.stringify(error || {});
   return /\b(404|410|429|500|502|503|504)\b|model not found|end of life|\bgone\b|timeout|timed out|upstream|overloaded|temporar(?:y|ily)|network|unavailable|connection reset|unexpected server error/i.test(text);
+}
+
+const DEFAULT_MODEL_COOLDOWN_MS = 30 * 1000;
+
+export function modelCooldownMs(pool = {}, env = process.env) {
+  const configured = pool.cooldown_ms ?? env.NLA_MODEL_COOLDOWN_MS;
+  const value = configured === undefined ? DEFAULT_MODEL_COOLDOWN_MS : Number(configured);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_MODEL_COOLDOWN_MS;
+}
+
+export function availablePoolModels(models, maxAttempts, health = new Map(), now = Date.now()) {
+  const candidates = models.slice(0, Math.min(models.length, maxAttempts)).filter((model) => {
+    const entry = health.get(model);
+    return !entry || entry.until <= now;
+  });
+  if (candidates.length) return candidates;
+
+  // Never deadlock a pool: when every configured model is cooling down, probe
+  // the one that becomes available first.
+  const probe = models
+    .slice(0, Math.min(models.length, maxAttempts))
+    .sort((left, right) => (health.get(left)?.until || 0) - (health.get(right)?.until || 0))[0];
+  return probe ? [probe] : [];
 }
 
 function showNlaBanner() {
@@ -119,8 +143,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const softContextTokens = Number(process.env.NLA_CONTEXT_SOFT_TOKENS || 50000);
   const hardContextTokens = Number(process.env.NLA_CONTEXT_HARD_TOKENS || 70000);
 
-  const pools = loadModelPools();
+  const resolvedPools = effectiveModelPools();
+  const pools = resolvedPools.roles;
   const pendingTasks = new Map();
+  const modelHealth = new Map();
   const trackedSessions = new Map();
   const primarySessions = new Map();
   const activeChildren = new Map();
@@ -219,6 +245,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     }
   };
 
+  appendRunLog({ event: 'model_pools_resolved', source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools) });
+
   const safeToolData = (args) => {
     const source = args && typeof args === 'object' ? args : {};
     const detail = { arg_keys: Object.keys(source).sort().slice(0, 12) };
@@ -234,7 +262,19 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
       }
 
-      const attempts = pool.models.slice(0, Math.min(pool.models.length, (pool.max_failovers || 0) + 1));
+      const maxAttempts = (pool.max_failovers || 0) + 1;
+      const attempts = availablePoolModels(pool.models, maxAttempts, modelHealth);
+      for (const modelName of pool.models.slice(0, maxAttempts)) {
+        const entry = modelHealth.get(modelName);
+        if (entry && entry.until > Date.now()) {
+          appendRunLog({
+            event: 'model_cooldown_skipped', session_id: context.sessionID,
+            parent_session_id: context.sessionID, agent: args.role,
+            model: modelName, unavailable_until: new Date(entry.until).toISOString(),
+            reason: entry.reason,
+          });
+        }
+      }
       const created = await client.session.create({
         body: { parentID: context.sessionID, title: args.description },
         query: { directory: context.directory || directory },
@@ -356,6 +396,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             parent_session_id: context.sessionID, agent: args.role,
             model: modelName, attempt: index + 1,
           });
+          if (modelHealth.has(modelName)) {
+            modelHealth.delete(modelName);
+            appendRunLog({ event: 'model_cooldown_cleared', session_id: childID, agent: args.role, model: modelName });
+          }
           return {
             title: `${args.description} (${args.role})`,
             output,
@@ -373,6 +417,17 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             parent_session_id: context.sessionID, agent: args.role,
             model: modelName, attempt: index + 1, reason: reason.slice(0, 180),
           });
+          if (retryableProviderError(error)) {
+            const cooldown = modelCooldownMs(pool);
+            const until = Date.now() + cooldown;
+            modelHealth.set(modelName, { until, reason: reason.slice(0, 180) });
+            appendRunLog({
+              event: 'model_cooldown_started', session_id: childID,
+              parent_session_id: context.sessionID, agent: args.role,
+              model: modelName, unavailable_until: new Date(until).toISOString(),
+              cooldown_ms: cooldown, reason: reason.slice(0, 180),
+            });
+          }
           if (index + 1 >= attempts.length || !retryableProviderError(error)) break;
           appendRunLog({
             event: 'model_fallback_started', session_id: childID,
@@ -431,14 +486,39 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const nlaState = tool({
     description: 'Replace the primary NLA session ledger with a complete structured snapshot. Call after classification, approvals, milestones, blockers, and before completion.',
     args: {
-      snapshot: tool.schema.string().describe('Complete JSON object containing goal, tier, workflow_stage, acceptance_criteria, approved_decisions, completed_tasks, active_task, changed_files, verification, blockers, pending_gate, and next_step'),
+      snapshot: tool.schema.string().describe('Complete JSON object containing intent fields plus optional repository_state and verification_evidence bound to a HEAD'),
     },
     execute: async (args, context) => {
       assertPrimaryNla(context.sessionID);
       const ledger = parseLedgerJSON(args.snapshot, context.sessionID, context.directory || directory);
-      const file = saveLedger(stateRoot, ledger);
+      const reconciled = reconcileWorkState(ledger, context.directory || directory);
+      const file = saveLedger(stateRoot, reconciled);
       appendRunLog({ event: 'session_ledger_saved', session_id: context.sessionID, workflow_stage: ledger.workflow_stage, tier: ledger.tier });
-      return { title: 'NLA session ledger saved', output: `Saved private session ledger. Next step: ${ledger.next_step || 'not recorded'}`, metadata: { file } };
+      return { title: 'NLA session ledger saved', output: `Saved private session ledger. Next step: ${reconciled.next_step || 'not recorded'}\n\nRepository reconciliation:\n${JSON.stringify(reconciled.repository_state, null, 2)}`, metadata: { file, repository: reconciled.repository_state, verification: reconciled.verification_status } };
+    },
+  });
+
+  const nlaModels = tool({
+    description: 'Report the effective NLA model pools consumed by nla_task, including ordered fallbacks, enabled state, source, and resolution reason. Never includes credentials.',
+    args: {},
+    execute: async (_args, context) => {
+      assertPrimaryNla(context.sessionID);
+      appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
+      return { title: 'Effective NLA model pools', output: formatModelPools(resolvedPools), metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools) } };
+    },
+  });
+
+  const nlaWorkState = tool({
+    description: 'Reconcile and report the primary NLA ledger against current Git branch, HEAD, worktree, changed files, commits since saved HEAD, and revision-bound verification evidence.',
+    args: {},
+    execute: async (_args, context) => {
+      assertPrimaryNla(context.sessionID);
+      const ledger = loadLedger(stateRoot, context.sessionID);
+      if (!ledger) throw new Error('No saved NLA ledger exists for this session');
+      const reconciled = reconcileWorkState(ledger, context.directory || directory);
+      saveLedger(stateRoot, reconciled);
+      appendRunLog({ event: 'work_state_reconciled', session_id: context.sessionID, head: reconciled.repository_state?.head, worktree: reconciled.repository_state?.worktree, conflicts: reconciled.repository_reconciliation?.conflicts });
+      return { title: 'Reconciled NLA Work State', output: JSON.stringify(reconciled, null, 2), metadata: { repository: reconciled.repository_state, verification: reconciled.verification_status } };
     },
   });
 
@@ -578,6 +658,8 @@ When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → \`todowrite\`
 	- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
+	- Inspect effective model routing → \`nla_models\`
+	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
 	- Safely compact context → \`nla_compact\` with the complete current ledger
 - Invoke a skill → OpenCode's native \`skill\` tool
@@ -605,6 +687,8 @@ ${toolMapping}
     tool: {
       nla_task: nlaTask,
       nla_state: nlaState,
+      nla_models: nlaModels,
+      nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
       nla_compact: nlaCompact,
     },
@@ -636,6 +720,14 @@ ${toolMapping}
           parent_session_id: parentID, root_session_id: rootID,
           kind: parentID ? 'subagent' : 'primary',
         });
+        if (!parentID) {
+          const saved = loadLedger(stateRoot, props.info.id);
+          if (saved) {
+            const reconciled = reconcileWorkState(saved, props.info.directory || directory);
+            saveLedger(stateRoot, reconciled);
+            appendRunLog({ event: 'work_state_reconciled_on_session_start', session_id: props.info.id, head: reconciled.repository_state?.head, worktree: reconciled.repository_state?.worktree, conflicts: reconciled.repository_reconciliation?.conflicts });
+          }
+        }
       }
       if (event.type === 'session.created' && props.info && props.info.parentID) {
         const queue = pendingTasks.get(props.info.parentID) || [];
@@ -769,7 +861,7 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -780,7 +872,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,

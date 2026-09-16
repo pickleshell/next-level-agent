@@ -46,6 +46,29 @@ If you need another coding-agent CLI, you are welcome to implement and test the 
 
 API keys and provider credentials do not belong in this repository, model-pool configuration, ledger, Notebook, or telemetry.
 
+## Runtime truth
+
+The effective model-pool resolver has explicit precedence: a request/runtime
+override when supplied, `NLA_MODEL_POOLS_PATH`, and finally the repository
+default. Overrides are complete pool files and invalid or missing overrides fail
+closed. The repository default is portable; operator-specific bindings belong in
+the external override. Startup telemetry records the selected source and
+resolution reason without secrets. `nla_models` reports the same resolved roles
+consumed by `nla_task`; `nla_work_state` reports a reconciled ledger.
+
+Work State has two authority classes. NLA owns intent and semantic fields such
+as goals, approvals, workflow stage, acceptance criteria, blockers, and planned
+next steps. Git owns observable repository facts: branch, HEAD, clean/dirty
+status, changed files, and commits since a recorded ancestor. Reconciliation is
+performed on session restore, detailed-state inspection, and ledger saves. It
+preserves conflicts rather than inferring completion from a changed HEAD.
+
+Verification evidence is revision-bound. Evidence recorded for an older HEAD is
+retained as historical evidence and marked non-current after HEAD advances;
+tests are not represented as validating a newer revision unless run there.
+
+> Introspection must describe the configuration NLA actually executes, and persisted Work State must be reconciled with observable repository state before it is treated as current.
+
 ## Running NLA Against a Project
 
 There is no transactional installer in the current NLA Core. The supported development setup uses OpenCode's custom-config mechanism and keeps the NLA clone in a stable location.
