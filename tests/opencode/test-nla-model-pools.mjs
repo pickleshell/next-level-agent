@@ -166,7 +166,7 @@ console.log('NLA task, introspection, primary reset and watchdog health integrat
 
 // Exercise events delivered before promptAsync resolves, and real cancellation
 // while prompt is pending. No provider or OpenCode service is contacted.
-for (const mode of ['reject', 'early-idle', 'early-status-idle', 'early-error', 'cancel', 'cancel-reject-abort']) {
+for (const mode of ['reject', 'response-error', 'early-idle', 'early-status-idle', 'early-error', 'cancel', 'cancel-reject-abort']) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-lifecycle-'));
   const oldPool = process.env.NLA_MODEL_POOLS_PATH;
   const oldMemory = process.env.NLA_MEMORY_DIR;
@@ -193,6 +193,7 @@ for (const mode of ['reject', 'early-idle', 'early-status-idle', 'early-error', 
         const model = request.body.model.modelID;
         calls.push(model);
         if (model === 'b' && mode === 'reject') throw new Error('429 rate limit');
+        if (model === 'b' && mode === 'response-error') return { error: { statusCode: 429, message: 'rate limit' } };
         if (model === 'b' && mode === 'early-error') {
           await event('session.error', { error: new Error('429 rate limit') });
           await event('session.idle');
@@ -225,7 +226,7 @@ for (const mode of ['reject', 'early-idle', 'early-status-idle', 'early-error', 
       await event('session.error', { error: new Error('429 rate limit') });
       await tick();
       await tick();
-      assert.deepEqual(calls, ['reject', 'early-error'].includes(mode) ? ['b', 'c'] : ['b'], mode);
+      assert.deepEqual(calls, ['reject', 'response-error', 'early-error'].includes(mode) ? ['b', 'c'] : ['b'], mode);
       const health = (await instance.tool.nla_models.execute({}, ctx)).metadata.health;
       assert.ok(health.every((entry) => entry.state !== 'probe-in-flight'), `${mode}: no leaked claim`);
       assert.equal(health.find((entry) => entry.binding === `p/${calls.at(-1)}`).state, 'available');

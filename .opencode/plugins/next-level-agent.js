@@ -183,7 +183,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       state.failovers += 1;
       state.healthClaim = true;
       state.switchPhase = 'dispatch';
-      await client.session.promptAsync({
+      const continuation = await client.session.promptAsync({
         path: { id: sessionID },
         body: {
           agent: state.role,
@@ -193,7 +193,16 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             text: 'NLA model-pool continuation: the previous provider failed or became unresponsive. Continue the original bounded subtask from the existing session context. Do not repeat completed work; report factual evidence when finished.',
           }],
         },
+        throwOnError: true,
       });
+      const continuationError = continuation?.error || continuation?.data?.error || continuation?.data?.info?.error;
+      if (continuationError) {
+        const detail = continuationError.data && (continuationError.data.message || continuationError.data.responseBody);
+        const error = new Error(detail || continuationError.message || continuationError.name || 'Model continuation failed');
+        error.data = continuationError.data;
+        error.statusCode = continuationError.statusCode ?? continuationError.status;
+        throw error;
+      }
       state.lastActivity = Date.now();
       state.busy = true;
       appendRunLog({
@@ -661,7 +670,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       model: primaryModel ? `${primaryModel.providerID}/${primaryModel.modelID}` : undefined,
       tokens_before: current.tokensBeforeCompaction, compaction_number: current.compactionCount,
     });
-    const context = { sessionID, directory: primary.directory || directory, abort: { aborted: false } };
+    const context = { sessionID, directory: primary.directory || directory, abort: new AbortController().signal };
     try {
       const audit = await pooledTaskWithTracking({
         role: 'supervisor',
