@@ -65,3 +65,10 @@ assert.throws(
 );
 
 console.log('NLA Compactor tests passed');
+
+const revisionLedger = { ...ledger, repository_state: { head: 'fixture-head' }, verification_evidence: [{ head: 'fixture-head', command: 'tests' }] };
+for (const replacement of [{}, { repository_state: { head: 'invented' }, verification_evidence: [] }]) {
+  const preserved = parseCompactorOutput(JSON.stringify({ ...intelligent, ...replacement }), revisionLedger, sessionID, directory);
+  assert.deepEqual(preserved.repository_state, revisionLedger.repository_state);
+  assert.deepEqual(preserved.verification_evidence, revisionLedger.verification_evidence);
+}

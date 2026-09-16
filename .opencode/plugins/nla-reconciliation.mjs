@@ -1,7 +1,19 @@
 import { execFileSync } from 'node:child_process';
 
 function git(directory, args) { return execFileSync('git', ['-C', directory, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
-function changedFiles(directory) { const output = git(directory, ['status', '--porcelain=v1', '--untracked-files=all']); return output ? output.split('\n').map((line) => line.slice(3).trim()).filter(Boolean) : []; }
+function changedFiles(directory) {
+  const output = execFileSync('git', ['-C', directory, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const records = output.split('\0');
+  const files = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    files.push(record.slice(3));
+    // With -z a rename/copy has a second record containing its original path.
+    if (/[RC]/.test(record.slice(0, 2))) index += 1;
+  }
+  return files;
+}
 function commitsSince(directory, savedHead, currentHead) {
   if (!savedHead) return { status: 'not_recorded', commits: [] };
   try {
@@ -28,8 +40,12 @@ export function reconcileGitWorkspace(directory, saved = null) {
 export function reconcileWorkState(ledger, directory = ledger.directory) {
   const saved = ledger.repository_state && typeof ledger.repository_state === 'object' ? ledger.repository_state : null;
   const reconciliation = reconcileGitWorkspace(directory, saved);
+  const savedChangedFiles = ledger.changed_files || [];
+  if (reconciliation.observed.git_backed && JSON.stringify(savedChangedFiles) !== JSON.stringify(reconciliation.observed.changed_files)) {
+    reconciliation.conflicts.push('changed_files_changed');
+  }
   const currentHead = reconciliation.observed.head || null;
   const evidence = Array.isArray(ledger.verification_evidence) ? ledger.verification_evidence : [];
   const verification = evidence.length ? evidence.map((item) => ({ ...item, current: Boolean(item && item.head && item.head === currentHead) })) : (ledger.verification || []).map((item) => ({ evidence: item, head: null, current: false, reason: 'legacy evidence has no recorded HEAD' }));
-  return { ...ledger, repository_state: reconciliation.observed, repository_reconciliation: { saved: reconciliation.saved, conflicts: reconciliation.conflicts, commits_since_saved_head: reconciliation.observed.commits_since_saved_head }, verification_status: { current_head: currentHead, evidence: verification, all_current: verification.length > 0 && verification.every((item) => item.current) } };
+  return { ...ledger, changed_files: reconciliation.observed.git_backed ? reconciliation.observed.changed_files : savedChangedFiles, repository_state: reconciliation.observed, repository_reconciliation: { saved: reconciliation.saved, saved_changed_files: savedChangedFiles, conflicts: reconciliation.conflicts, commits_since_saved_head: reconciliation.observed.commits_since_saved_head }, verification_status: { current_head: currentHead, evidence: verification, all_current: verification.length > 0 && verification.every((item) => item.current) } };
 }

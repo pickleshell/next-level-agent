@@ -38,6 +38,10 @@ export function parseCompactorOutput(output, ledger, sessionID, directory) {
     }
   }
   const checkpoint = normalizeLedger(parsed, sessionID, directory);
+  // Objective state and evidence belong to the runtime, never to a model rewrite.
+  for (const key of ['repository_state', 'verification_evidence', 'repository_reconciliation', 'verification_status']) {
+    if (Object.prototype.hasOwnProperty.call(ledger, key)) checkpoint[key] = ledger[key];
+  }
   for (const key of CRITICAL_EXACT_KEYS) {
     if (JSON.stringify(checkpoint[key]) !== JSON.stringify(ledger[key])) {
       throw new Error(`Compactor checkpoint altered ${key}`);
