@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from '../../.opencode/plugins/nla-capability-cache.mjs';
-import { deterministicToolShortlist, ROLE_TOOL_CEILINGS } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
+import { deterministicToolShortlist, roleCapabilityCeiling, requiredRoleTools, parseCompactorToolOutput, ROLE_TOOL_CEILINGS } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 
 const catalog = ROLE_TOOL_CEILINGS.implementer.map((id) => ({
   id, description: `${id} description`, parameters: { type: 'object', properties: { value: { type: 'string' } } },
@@ -59,4 +59,15 @@ assert.throws(
   /lacks a tool required by the bounded step: write/,
 );
 
+const patchCatalog = ['read', 'grep', 'glob', 'bash', 'apply_patch', 'task'].map(id => ({ id, parameters: { type: 'object' } }));
+const patchCeiling = roleCapabilityCeiling('implementer', patchCatalog);
+const patchProfile = resolveRoleCapabilityProfile({ ...base, ceiling: patchCeiling,
+  required: requiredRoleTools('implementer', patchCeiling), catalog: patchCatalog, cache: hit.cache });
+assert.equal(patchProfile.source, 'cache-miss');
+assert.deepEqual(patchProfile.tools, ['read', 'grep', 'apply_patch', 'bash']);
+assert.deepEqual(deterministicToolShortlist('implementer', 'Implement and create a new file; run tests.', patchProfile.tools), ['read', 'apply_patch', 'bash']);
+assert.deepEqual(parseCompactorToolOutput('{"tools":["read","apply_patch"]}', 'implementer', undefined, patchProfile.tools), ['read', 'apply_patch']);
+assert.throws(() => parseCompactorToolOutput('{"tools":["read","bash"]}', 'implementer', undefined, patchProfile.tools), /omitted a required/);
+assert.throws(() => parseCompactorToolOutput('{"tools":["read","task"]}', 'implementer', undefined, patchProfile.tools), /outside the role/);
+assert.deepEqual(roleCapabilityCeiling('implementer', catalog), ROLE_TOOL_CEILINGS.implementer);
 console.log('NLA capability cache tests passed');
