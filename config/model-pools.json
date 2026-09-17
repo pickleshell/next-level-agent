@@ -7,12 +7,11 @@
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 0,
-      "max_failovers": 0
+      "max_failovers": 1
     },
     "router": {
       "enabled": true,
       "models": [
-        "opencode-go/gpt-5.6-luna",
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 90000,
@@ -24,13 +23,13 @@
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 180000,
-      "max_failovers": 2
+      "max_failovers": 1
     },
     "scout": {
       "enabled": true,
       "models": [
         "opencode-go/gpt-5.6-luna",
-        "ollama/ollama/qwen3.8:latest"
+        "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 180000,
       "max_failovers": 1
@@ -38,10 +37,10 @@
     "explorer": {
       "enabled": true,
       "models": [
-        "ollama/ollama/qwen3.8:latest",
-        "opencode-go/gpt-5.6-luna"
+        "opencode-go/gpt-5.6-luna",
+        "ollama/qwen3.8:latest"
       ],
-      "idle_timeout_ms": 180000,
+      "idle_timeout_ms": 900000,
       "max_failovers": 1
     },
     "architect": {
@@ -49,24 +48,28 @@
       "models": [
         "opencode/gpt-5.6-sol",
         "command-code/gpt-5.6-sol",
-        "ollama/ollama/qwen3.8:latest"
+        "opencode-go/gpt-5.6-luna",
+        "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 300000,
-      "max_failovers": 2
+      "max_failovers": 3
     },
     "implementer": {
       "enabled": true,
       "models": [
-        "ollama/ollama/qwen3.8:latest"
+        "opencode/big-pickle",
+        "opencode-go/gpt-5.6-luna",
+        "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 300000,
-      "max_failovers": 0
+      "max_failovers": 3
     },
     "reviewer": {
       "enabled": true,
       "models": [
         "command-code/gpt-5.6-luna",
-        "ollama/ollama/qwen3.8:latest"
+        "opencode-go/gpt-5.6-luna",
+        "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 180000,
       "max_failovers": 2
@@ -88,11 +91,13 @@
         "base_url": "http://127.0.0.1:11434"
       },
       "models": [
+        "opencode-go/gpt-5.6-luna",
         "ollama/qwen3.8:latest"
       ],
       "request_timeout_ms": 120000,
-      "max_failovers": 0,
-      "output_format": "json"
+      "max_failovers": 1,
+      "output_format": "json",
+      "idle_timeout_ms": 900000
     }
   }
 }
