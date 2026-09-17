@@ -18,7 +18,7 @@ import {
 import { intelligentCheckpoint } from './nla-compaction.mjs';
 import { configuredUtilityPool, runUtilityModel, utilityHealthEndpoint } from './nla-utility-runtime.mjs';
 import {
-  optimizeInvocation, requiredRoleTools, roleIsToolFree, ROLE_TOOL_CEILINGS, toolPermissionMap,
+  optimizeInvocation, requiredRoleTools, roleCapabilityCeiling, roleIsToolFree, ROLE_TOOL_CEILINGS, toolPermissionMap,
 } from './nla-prompt-optimizer.mjs';
 import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
@@ -361,16 +361,16 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           let roleProfile = [];
           let capabilityCacheSource = 'tool-free';
           if (!roleIsToolFree(args.role)) {
-            const ceiling = ROLE_TOOL_CEILINGS[args.role];
-            if (!ceiling) throw new Error(`No safe tool policy is defined for role: ${args.role}`);
+            if (!ROLE_TOOL_CEILINGS[args.role]) throw new Error(`No safe tool policy is defined for role: ${args.role}`);
             const listed = await client.tool.list({
               query: { directory: context.directory || directory, provider: model.providerID, model: model.modelID },
               throwOnError: true,
             });
+            const ceiling = roleCapabilityCeiling(args.role, listed.data);
             const resolved = resolveRoleCapabilityProfile({
               role: args.role,
               ceiling,
-              required: requiredRoleTools(args.role),
+              required: requiredRoleTools(args.role, ceiling),
               catalog: listed.data,
               cache: capabilityCache,
               configSignature: capabilityHash({ role: args.role, pool, model, ceiling }),
@@ -516,9 +516,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       }
 
       const reason = classifyProviderError(lastError).reason;
-      if (!attempted) throw unavailablePoolError(healthManager.candidates(pool.models, maxAttempts), `NLA pooled task ${args.role}`);
+      if (!attempted && !lastError) throw unavailablePoolError(healthManager.candidates(pool.models, maxAttempts), `NLA pooled task ${args.role}`);
       const failure = new Error(`NLA pooled task failed for ${args.role} after ${attempted} model attempt(s): ${reason}`);
-      failure.code = lastError?.code;
+      failure.code = lastError?.code || (!attempted ? 'NLA_TASK_PREPARATION_FAILED' : undefined);
+      if (!attempted) failure.message = `NLA pooled task preparation failed for ${args.role}; no model request was started: ${reason}`;
       failure.attempted = attempted;
       throw failure;
   };

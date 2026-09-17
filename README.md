@@ -238,6 +238,12 @@ unavailable result rather than sharing the same binding.
 These per-model optimization and cooldown additions are implemented but are
 still experimental and require broader live-provider validation.
 
+Implementer capabilities follow the selected model's OpenCode tool catalog:
+models exposing `apply_patch` receive that editing tool instead of `edit`/`write`.
+The bounded allowlist and required editing capability still apply. Preparation
+failures before a model request are reported as `NLA_TASK_PREPARATION_FAILED`,
+not as model cooldown or an in-flight claim.
+
 Stable role capability profiles are cached in the target project's ignored
 `.opencode/nla-role-capabilities.json`. Each entry is keyed by the role,
 NLA capability-cache version, relevant model-pool/config signature, and hashes

@@ -313,3 +313,45 @@ for (const phase of ['fetch', 'body']) {
   assert.equal(health.state('one', utilityHealthEndpoint(utilityPool)).state, 'available');
 }
 console.log('NLA confirmed-stop fallback and utility cancellation regressions passed');
+
+for (const validCatalog of [true, false]) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-patch-tools-'));
+  const oldPool = process.env.NLA_MODEL_POOLS_PATH;
+  const oldMemory = process.env.NLA_MEMORY_DIR;
+  let instance;
+  try {
+    process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
+    process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { implementer: { enabled: true, models: ['opencode-go/gpt-5.6-luna'], max_failovers: 0 } } }));
+    let requests = 0;
+    instance = await NextLevelAgentPlugin({ directory: dir, client: {
+      tool: { list: async () => ({ data: ['read', 'grep', 'bash', ...(validCatalog ? ['apply_patch'] : [])].map(id => ({ id, parameters: { type: 'object' } })) }) },
+      session: {
+        create: async () => ({ data: { id: 'child_123' } }),
+        prompt: async request => {
+          requests++;
+          assert.equal(request.body.tools.apply_patch, true);
+          assert.equal(request.body.tools['*'], false);
+          assert.equal(request.body.tools.edit, undefined);
+          assert.equal(request.body.tools.write, undefined);
+          return { data: { parts: [{ type: 'text', text: 'done' }] } };
+        },
+      },
+    } });
+    await instance['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: dir });
+    const ctx = { sessionID: 'primary_123', directory: dir, abort: new AbortController().signal };
+    const task = instance.tool.nla_task.execute({ role: 'implementer', description: 'patch fixture', prompt: 'Implement a new file and run tests.' }, ctx);
+    if (validCatalog) await task;
+    else await assert.rejects(task, error => error.code === 'NLA_TASK_PREPARATION_FAILED' && error.attempted === 0 && !/cooling or in-flight/.test(error.message));
+    assert.equal(requests, validCatalog ? 1 : 0);
+    const health = (await instance.tool.nla_models.execute({}, ctx)).metadata.health;
+    assert.ok(health.every(entry => entry.state === 'available'));
+  } finally {
+    await instance?.dispose();
+    for (const [key, value] of [['NLA_MODEL_POOLS_PATH', oldPool], ['NLA_MEMORY_DIR', oldMemory]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+console.log('NLA model-specific patch tools and preparation failure regressions passed');
