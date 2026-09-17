@@ -120,6 +120,10 @@ never silently replaced by another pool. `nla_task` and the primary-only
 `nla_models` tool use the same resolved object. `nla_models` reports each role's
 primary and ordered fallbacks, enabled state, source, and resolution reason,
 without credentials.
+For personal deployments, the operator recommendation is
+`opencode-go/gpt-5.6-luna` as the primary NLA coordinator. Its predictable behavior,
+reliable tool use, and low cost make it a practical default; operators must still verify
+live provider availability and choose role pools appropriate to their own environment.
 
 ### Compactor prompt optimization
 
