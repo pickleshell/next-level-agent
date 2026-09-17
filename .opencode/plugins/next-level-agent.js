@@ -919,7 +919,7 @@ ${toolMapping}
             await client.session.prompt({
               path: { id: props.sessionID },
               query: { directory: primary.directory || directory },
-              body: { noReply: true, parts: [{ type: 'text', text: restorePacket(restored) }] },
+              body: { noReply: true, system: restorePacket(restored), parts: [{ type: 'text', text: '[NLA internal checkpoint restored]' }] },
               throwOnError: true,
             });
             appendRunLog({ event: 'context_restored', session_id: props.sessionID, next_step: String(checkpoint.next_step || '').slice(0, 180) });
@@ -962,7 +962,7 @@ ${toolMapping}
         if (saved) {
           const restored = reconcileWorkState(saved, input.directory || directory);
           saveLedger(stateRoot, restored);
-          await client.session.prompt({ path: { id: input.sessionID }, query: { directory: input.directory || directory }, body: { noReply: true, parts: [{ type: 'text', text: restorePacket(restored) }] }, throwOnError: true });
+          await client.session.prompt({ path: { id: input.sessionID }, query: { directory: input.directory || directory }, body: { noReply: true, system: restorePacket(restored), parts: [{ type: 'text', text: '[NLA internal checkpoint restored]' }] }, throwOnError: true });
           appendRunLog({ event: 'work_state_reconciled_on_resume', session_id: input.sessionID, head: restored.repository_state?.head, conflicts: restored.repository_reconciliation.conflicts });
         }
       }

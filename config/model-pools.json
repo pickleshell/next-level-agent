@@ -12,7 +12,7 @@
     "router": {
       "enabled": true,
       "models": [
-        "opencode/mimo-v2.5-free",
+        "opencode-go/gpt-5.6-luna",
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 90000,
@@ -21,7 +21,7 @@
     "supervisor": {
       "enabled": true,
       "models": [
-        "opencode-go/gpt-5.6-terra"
+        "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 180000,
       "max_failovers": 2
@@ -29,8 +29,8 @@
     "scout": {
       "enabled": true,
       "models": [
-        "opencode/mimo-v2.5-free",
-        "ollama/qwen3.8:latest"
+        "opencode-go/gpt-5.6-luna",
+        "ollama/ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 180000,
       "max_failovers": 1
@@ -38,8 +38,8 @@
     "explorer": {
       "enabled": true,
       "models": [
-        "ollama/qwen3.8:latest",
-        "opencode/mimo-v2.5-free"
+        "ollama/ollama/qwen3.8:latest",
+        "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 180000,
       "max_failovers": 1
@@ -49,7 +49,7 @@
       "models": [
         "opencode/gpt-5.6-sol",
         "command-code/gpt-5.6-sol",
-        "ollama/qwen3.8:latest"
+        "ollama/ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 300000,
       "max_failovers": 2
@@ -57,7 +57,7 @@
     "implementer": {
       "enabled": true,
       "models": [
-        "ollama/qwen3.8:latest"
+        "ollama/ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 300000,
       "max_failovers": 0
@@ -66,7 +66,7 @@
       "enabled": true,
       "models": [
         "command-code/gpt-5.6-luna",
-        "ollama/qwen3.8:latest"
+        "ollama/ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 180000,
       "max_failovers": 2
@@ -76,9 +76,9 @@
       "prompt_optimization": {
         "exclude_models": [
           "ollama/*",
-          "opencode/mimo-v2.5-free",
-          "opencode/nemotron-3-ultra-free",
-          "opencode/big-pickle"
+          "opencode-go/gpt-5.6-luna",
+          "command-code/gpt-5.6-luna",
+          "opencode-go/gpt-5.6-luna"
         ]
       },
       "runtime": "utility",
@@ -88,7 +88,7 @@
         "base_url": "http://127.0.0.1:11434"
       },
       "models": [
-        "qwen3.8:latest"
+        "ollama/qwen3.8:latest"
       ],
       "request_timeout_ms": 120000,
       "max_failovers": 0,

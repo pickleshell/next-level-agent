@@ -22,7 +22,7 @@
     "router": {
       "description": "Risk-based task routing and delegation control",
       "mode": "subagent",
-      "model": "opencode/mimo-v2.5-free",
+      "model": "opencode-go/gpt-5.6-luna",
       "prompt": "You are the Next-Level Agent Router. Classify the task as Tier 0, 1, 2, or 3. Definitions: Tier 0 is a direct answer or focused read-only exploration; Tier 1 is a direct small edit with targeted verification; Tier 2 requires explore, implement, verify, independent review when required, and checkpoint; Tier 3 requires explore or research, an architecture decision, explicit approval, implementation, verification, independent review, and checkpoint. Return only: tier, rationale, ordered route, required roles, gate state, packet contents, and budgets. Do not edit files or execute tools. Tier 0 and Tier 1 must not delegate."
     },
     "supervisor": {
@@ -34,13 +34,13 @@
     "scout": {
       "description": "Documentation and dependency research",
       "mode": "subagent",
-      "model": "opencode/mimo-v2.5-free",
+      "model": "opencode-go/gpt-5.6-luna",
       "prompt": "You are the Next-Level Agent Scout. Perform bounded documentation or dependency research only. Return sources, versions, concise findings, and uncertainty. Do not edit project files."
     },
     "explorer": {
       "description": "Fast, read-only repository exploration",
       "mode": "subagent",
-      "model": "ollama/qwen3.8:latest",
+      "model": "ollama/ollama/qwen3.8:latest",
       "prompt": "You are the Next-Level Agent Explorer. Perform read-only repository discovery. Return only relevant files, facts, risks, and a short recommended next step. Do not edit files or dump large logs."
     },
     "architect": {
@@ -52,19 +52,19 @@
     "implementer": {
       "description": "Focused implementation with verification",
       "mode": "subagent",
-      "model": "opencode/big-pickle",
+      "model": "opencode-go/gpt-5.6-luna",
       "prompt": "You are the Next-Level Agent Implementer. Make only scoped changes from the bounded task packet. Verify the result with targeted tests and report changed files, evidence, failures, and next step."
     },
     "reviewer": {
       "description": "Independent code review",
       "mode": "subagent",
-      "model": "opencode/nemotron-3-ultra-free",
+      "model": "command-code/gpt-5.6-luna",
       "prompt": "You are the Next-Level Agent Reviewer. Independently inspect the requested scope and evidence. Report Blocker, Major, Minor, and PASS findings with file references. Do not modify files."
     },
     "compactor": {
       "description": "Faithful bounded context summarization",
       "mode": "subagent",
-      "model": "ollama/qwen3.8:latest",
+      "model": "ollama/ollama/qwen3.8:latest",
       "prompt": "You are the Next-Level Agent Compactor. Convert the supplied bounded session state into a concise checkpoint. Preserve goal, acceptance criteria, decisions, evidence, changed files, failures, budgets, and exact next step. Exclude transcript dumps, secrets, and irrelevant tool output."
     },
     "nla": {
