@@ -15,6 +15,8 @@ python3 -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
 
 `npm run test:nla` covers the OpenCode-side memory, Compactor checkpoint,
 utility runtime, prompt optimizer, capability cache, and model-pool retry logic.
+It also covers the optional Browser contract, stdio MCP adapter, ownership,
+task permissions, deterministic evidence and child-session dispatch.
 The Python tests cover the standalone model-pool helpers and compact/checkpoint
 helpers. GitHub Actions installs `pytest` in an isolated runner environment.
 It also installs the pinned `@opencode-ai/plugin` version used by the checked-in
@@ -28,6 +30,12 @@ Individual deterministic entry points include:
 - `node tests/opencode/test-nla-prompt-optimizer.mjs`
 - `node tests/opencode/test-nla-capability-cache.mjs`
 - `node tests/opencode/test-nla-model-pools.mjs`
+- `npm run test:browser`
+
+Real-browser checks are separately opt-in, use local fixture services and reuse
+an operator-supplied MCP package/browser without installing either. See
+[Browser verification](BROWSER.md#verification). A real browser smoke does not
+claim that a live provider-driven OpenCode child session was exercised.
 
 ## Broader inherited tests
 

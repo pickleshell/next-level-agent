@@ -49,8 +49,10 @@ flowchart TB
     V --> RG{Independent review required?}
     RG -->|No| X
     RG -->|Yes| R[Reviewer]
+    N -. optional browser tasks .-> B[Browser]
     D --> X[Acceptance]
     R --> X
+    B --> X
 
     P[Role-specific model pools<br/>preferred model to fallback] -. models .-> E
     P -. models .-> A
@@ -96,6 +98,7 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Architect** | Compares designs and defines boundaries, interfaces, failure handling, risks, and tests | Tier 3 design gate |
 | **Implementer** | Performs a bounded code change and returns verification evidence | Approved Tier 2/3 implementation |
 | **Reviewer** | Independently checks the scope, change, evidence, and quality | Risk-based review gate |
+| **Browser** | Researches sites, extracts information, interacts with web applications, and verifies browser state within task-owned permissions | Optional isolated browser tasks through a backend-independent capability; initially Playwright MCP |
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
 | **Compactor** | Optimizes model input: compresses structured state, shapes prompts, and prunes tool schemas to a small relevant shortlist | Before controlled compaction and before model invocation when prompt optimization is enabled |
 
@@ -118,6 +121,7 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Architect** | A strong reasoning model such as Sol, even at a higher price | Architect is invoked selectively at design gates, rather than for every edit. A strong, more expensive model is justified when it prevents costly mistakes in interfaces, safety, failure handling, and tradeoffs; price alone does not establish quality. Keep its input focused on requirements and relevant evidence. **For example:** Sol → Luna. |
 | **Implementer** | A fast, cheap or free model that demonstrably codes well | Repeated edit/test cycles favor speed and low cost. Any capable coding model can fit a bounded task, including local models, provided editing tools, tests, and scope discipline work. Measure time and cost per accepted change, including retries; escalate persistent failures. **For example:** Big Pickle or local Qwen3.8 → Luna. |
 | **Reviewer** | A stable model with inexpensive input tokens and demonstrated defect detection | Reviews consume diffs, contracts, and test evidence, so input cost and reliable reasoning matter more than output speed alone. Use an independent session and preferably a different model from the implementer. Provide enough surrounding code to assess behavior; a different model is not proof of review quality. **For example:** evaluate Big Pickle or Qwen3.7 Plus; Luna is the dependable default/fallback. Reserve expensive expert review for an explicitly approved, bounded scope. |
+| **Browser** | A reliable, economical tool-using model | Favor faithful extraction, semantic locators, task permission discipline and deterministic checks over expensive reasoning. Page content is untrusted, and cloud inference may receive extracted data. **For example:** Luna; evaluate local Qwen for private browser observations. Optional: configure a backend and enable the role first. |
 | **Supervisor** | Luna, or another model validated for workflow auditing | Favor reliable judgment over coding throughput: detect missing approvals, repeated failures, stale evidence, and unsupported completion claims. Use compact state/evidence packets to keep auditing inexpensive. **For example:** Luna. |
 | **Compactor** | **Luna or a capable local Qwen model** | Large inputs favor local privacy or inexpensive cloud input tokens. Faithful compression is essential: losing constraints, approvals, blockers, or revision-bound evidence can compromise later execution. Test preservation and structured output, not just compression ratio; excessive compaction can add latency. **For example:** local Qwen3.8 → Luna, or Luna first for predictable compression. |
 
@@ -462,6 +466,7 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 
 - [Installation](INSTALL.md): supported Alpha setup for OpenCode.
 - [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md): status, limitations, telemetry, storage, evidence, and roadmap.
+- [Optional Browser role](docs/BROWSER.md): Playwright MCP installation, isolated configuration, target policy, and Browser-role boundaries.
 - [Installation and Testing](docs/NLA_INSTALL_AND_TEST.md): detailed runtime behavior and verification.
 - [Original Draft 0.4](TECHNICAL_SPECIFICATION.md): the original product and architecture specification.
 - [Draft 0.4 Implementation Status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md): what is implemented, partial, absent, or intentionally deferred.

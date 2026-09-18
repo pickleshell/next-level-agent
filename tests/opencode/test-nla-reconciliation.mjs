@@ -47,14 +47,14 @@ try {
     const sessionID = 'ses_resume_12345678';
     saveLedger(memory, normalizeLedger({ workflow_stage: 'implementation', changed_files: ['stale.txt'], repository_state: { head: first }, verification_evidence: [{ head: first, command: 'tests' }] }, sessionID, repo));
     const packets = [];
-    plugin = await NextLevelAgentPlugin({ directory: repo, client: { session: { prompt: async (request) => { packets.push(request.body.parts[0].text); } } } });
+    plugin = await NextLevelAgentPlugin({ directory: repo, client: { session: { prompt: async (request) => { packets.push(request.body); } } } });
     await plugin['chat.message']({ sessionID, agent: 'nla', directory: repo });
-    assert.match(packets[0], new RegExp(second));
+    assert.match(packets[0].system, new RegExp(second));
     assert.equal(loadLedger(memory, sessionID).repository_state.head, second);
     assert.equal(loadLedger(memory, sessionID).verification_status.all_current, false);
     saveLedger(memory, normalizeLedger({ workflow_stage: 'implementation', repository_state: { head: first } }, sessionID, repo));
     await plugin.event({ event: { type: 'session.compacted', properties: { sessionID } } });
-    assert.match(packets[1], new RegExp(second));
+    assert.match(packets[1].system, new RegExp(second));
     assert.equal(loadLedger(memory, sessionID).repository_state.head, second);
   } finally {
     if (plugin) await plugin.dispose();

@@ -71,6 +71,18 @@ tests are not represented as validating a newer revision unless run there.
 
 ## Running NLA Against a Project
 
+### Optional browser work
+
+Browser is an optional universal role for research, extraction, web interaction
+and browser verification through ordinary `nla_task`. It is disabled by default.
+An operator-configured backend and task-owned permissions are required; NLA
+does not install browser software or grant unrestricted web access itself.
+The initial backend is Playwright MCP behind four bounded NLA tools.
+See [Browser setup and boundaries](BROWSER.md) for installation, target policy,
+isolated sessions, explicit resume, evidence and unsupported streaming probes.
+
+### Project launch
+
 There is no transactional installer in the current NLA Core. The supported development setup uses OpenCode's custom-config mechanism and keeps the NLA clone in a stable location.
 
 Clone NLA once:
