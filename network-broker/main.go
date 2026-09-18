@@ -76,6 +76,28 @@ type managedMCP struct {
 	path     string
 }
 
+type boundedWriter struct {
+	w   io.Writer
+	n   int
+	max int
+}
+
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	if w.n >= w.max {
+		return len(p), nil
+	}
+	keep := len(p)
+	if remaining := w.max - w.n; keep > remaining {
+		keep = remaining
+	}
+	n, err := w.w.Write(p[:keep])
+	w.n += n
+	if n < len(p) && err == nil {
+		return len(p), nil
+	}
+	return n, err
+}
+
 var sessionsMu sync.Mutex
 var sessions = map[string]*session{}
 var validHost = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
@@ -95,6 +117,34 @@ func main() {
 }
 func serve(path string) error {
 	reapStale()
+	if rawFDs := os.Getenv("LISTEN_FDS"); rawFDs != "" {
+		if rawFDs != "1" {
+			return errors.New("invalid systemd socket activation fd count")
+		}
+		if os.Getenv("LISTEN_PID") != strconv.Itoa(os.Getpid()) {
+			return errors.New("invalid systemd socket activation pid")
+		}
+		f := os.NewFile(3, "nla-browser-broker")
+		if f == nil {
+			return errors.New("systemd socket activation fd unavailable")
+		}
+		l, err := net.FileListener(f)
+		_ = f.Close()
+		if err != nil {
+			return fmt.Errorf("systemd socket activation: %w", err)
+		}
+		if _, ok := l.(*net.UnixListener); !ok {
+			_ = l.Close()
+			return errors.New("systemd socket activation did not provide a Unix listener")
+		}
+		defer l.Close()
+		for {
+			c, err := l.Accept()
+			if err == nil {
+				go handle(c)
+			}
+		}
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -126,6 +176,11 @@ func serve(path string) error {
 	}
 }
 func reapStale() {
+	if paths, err := filepath.Glob("/run/nla-browser/nla-mcp-*.sock"); err == nil {
+		for _, path := range paths {
+			_ = os.Remove(path)
+		}
+	}
 	if out, err := exec.Command("ip", "netns", "list").Output(); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
@@ -281,20 +336,32 @@ func launch(id, t string, uid uint32) Response {
 	}
 	// Keep the broker-to-owner endpoint in the fixed shared temp directory;
 	// never inherit a privileged broker's TMPDIR from an operator environment.
-	path := filepath.Join("/tmp", "nla-mcp-"+s.info.ID+".sock")
+	mcpDir := os.Getenv("NLA_BROKER_MCP_DIR")
+	if mcpDir == "" {
+		mcpDir = "/tmp"
+	}
+	path := filepath.Join(mcpDir, "nla-mcp-"+s.info.ID+".sock")
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return Response{Error: "MCP endpoint unavailable"}
 	}
-	_ = os.Chmod(path, 0660)
-	_ = os.Chown(path, int(s.ownerUID), -1)
+	if err := os.Chmod(path, 0660); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return Response{Error: "MCP endpoint permissions unavailable"}
+	}
+	if err := os.Chown(path, int(s.ownerUID), -1); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return Response{Error: "MCP endpoint ownership unavailable"}
+	}
 	// Entering a named netns requires privilege.  Drop it before the approved
 	// browser command, never in the caller and never after the browser starts.
-	setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--"}
+	setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--no-new-privs", "--"}
 	cmd := exec.Command("ip", append(setpriv, command...)...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/next", "TMPDIR=/tmp", "LANG=C", "USER=next", "LOGNAME=next"}
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &boundedWriter{w: os.Stderr, max: 16 * 1024}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		_ = ln.Close()

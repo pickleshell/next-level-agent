@@ -1,28 +1,29 @@
 [Unit]
 Description=NLA Browser per-session network policy broker
-After=local-fs.target
+Requires=nla-browser-network-broker.socket
+After=local-fs.target nla-browser-network-broker.socket
+BindsTo=nla-browser-network-broker.socket
 
 [Service]
 Type=simple
 User=root
-Group=nla-browser
+Group=root
 ExecStart=/usr/local/libexec/nlabridged serve /run/nla-browser/broker.sock
+ExecStartPre=/usr/bin/chown root:nla-browser /run/nla-browser
 Restart=on-failure
 RestartSec=2s
-Environment=NLA_BROKER_SOCKET_GID=__NLA_BROWSER_GID__
-NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
+Environment=NLA_BROKER_MCP_DIR=/run/nla-browser
+EnvironmentFile=/etc/nla-browser/network-broker.env
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LockPersonality=yes
-ReadWritePaths=/run/nla-browser /run/netns
+PrivateMounts=no
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=15s
+KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target
