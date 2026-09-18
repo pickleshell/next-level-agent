@@ -1,0 +1,544 @@
+package main
+
+// nlabridged is a narrow privileged broker. IPC accepts a typed policy only.
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+type Origin struct {
+	Scheme string `json:"scheme"`
+	Host   string `json:"host"`
+	Ports  []int  `json:"ports"`
+}
+type Policy struct {
+	Allowed        []Origin `json:"allowed_origins"`
+	AllowPrivate   bool     `json:"allow_private_addresses"`
+	AllowWebSocket bool     `json:"allow_websocket"`
+	MaxRedirects   int      `json:"max_redirects"`
+}
+type Request struct {
+	Op        string  `json:"op"`
+	SessionID string  `json:"session_id,omitempty"`
+	Token     string  `json:"token,omitempty"`
+	Policy    *Policy `json:"policy,omitempty"`
+}
+type Response struct {
+	OK      bool         `json:"ok"`
+	Error   string       `json:"error,omitempty"`
+	Session *SessionInfo `json:"session,omitempty"`
+}
+type SessionInfo struct {
+	ID           string    `json:"session_id"`
+	Token        string    `json:"session_token"`
+	Namespace    string    `json:"namespace"`
+	Proxy        string    `json:"proxy"`
+	PolicyDigest string    `json:"policy_digest"`
+	State        string    `json:"state"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+type session struct {
+	info      SessionInfo
+	policy    Policy
+	hostAddr  string
+	ownerUID  uint32
+	pinned    map[string]map[string]struct{}
+	redirects int
+	server    *http.Server
+	listener  net.Listener
+	mu        sync.Mutex
+}
+
+var sessionsMu sync.Mutex
+var sessions = map[string]*session{}
+var validHost = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+var lookupIP = net.LookupIP
+
+const defaultMaxRedirects = 10
+
+func main() {
+	if len(os.Args) != 3 || os.Args[1] != "serve" {
+		fmt.Fprintln(os.Stderr, "usage: nlabridged serve SOCKET")
+		os.Exit(2)
+	}
+	if err := serve(os.Args[2]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+func serve(path string) error {
+	reapStale()
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return err
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	if err = os.Chmod(path, 0660); err != nil {
+		return err
+	}
+	if rawGID := os.Getenv("NLA_BROKER_SOCKET_GID"); rawGID != "" {
+		gid, err := strconv.Atoi(rawGID)
+		if err != nil || gid < 0 {
+			return errors.New("invalid NLA_BROKER_SOCKET_GID")
+		}
+		if err := os.Chown(path, os.Getuid(), gid); err != nil {
+			return fmt.Errorf("socket group: %w", err)
+		}
+	}
+	for {
+		c, err := l.Accept()
+		if err == nil {
+			go handle(c)
+		}
+	}
+}
+func reapStale() {
+	if out, err := exec.Command("ip", "netns", "list").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && strings.HasPrefix(fields[0], "nla-") {
+				cleanup(fields[0])
+			}
+		}
+	}
+	if out, err := exec.Command("ip", "-br", "link").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && strings.HasPrefix(fields[0], "nlah-") {
+				_ = run("ip", "link", "del", fields[0])
+			}
+		}
+	}
+	if out, err := exec.Command("nft", "-a", "list", "chain", "ip", "filter", "INPUT").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if !strings.Contains(line, "nla-") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) > 2 && fields[len(fields)-2] == "handle" {
+				_ = run("nft", "delete", "rule", "ip", "filter", "INPUT", "handle", fields[len(fields)-1])
+			}
+		}
+	}
+}
+func handle(c net.Conn) {
+	defer c.Close()
+	var q Request
+	if json.NewDecoder(bufio.NewReader(io.LimitReader(c, 1<<20))).Decode(&q) != nil {
+		return
+	}
+	uid, ok := peerUID(c)
+	if !ok {
+		_ = json.NewEncoder(c).Encode(Response{Error: "peer credentials unavailable"})
+		return
+	}
+	var r Response
+	switch q.Op {
+	case "create":
+		r = create(q.Policy, uid)
+	case "status":
+		r = status(q.SessionID, q.Token, uid)
+	case "destroy":
+		r = destroy(q.SessionID, q.Token, uid)
+	default:
+		r.Error = "unsupported operation"
+	}
+	_ = json.NewEncoder(c).Encode(r)
+}
+func create(p *Policy, uid uint32) Response {
+	if p == nil {
+		return Response{Error: "policy required"}
+	}
+	if e := validate(p); e != nil {
+		return Response{Error: e.Error()}
+	}
+	if p.MaxRedirects == 0 {
+		p.MaxRedirects = defaultMaxRedirects
+	}
+	pinned, e := pinPolicy(*p)
+	if e != nil {
+		return Response{Error: "DNS policy unavailable: " + e.Error()}
+	}
+	id := random("nla-")
+	name := "nla-" + id[4:16]
+	hostAddr := sessionAddress(id)
+	if e := startNamespace(name, id, hostAddr); e != nil {
+		return Response{Error: "network boundary unavailable: " + e.Error()}
+	}
+	s := &session{policy: *p, hostAddr: hostAddr, ownerUID: uid, pinned: pinned, info: SessionInfo{ID: id, Token: random("tok-"), Namespace: name, PolicyDigest: digest(*p), State: "READY", CreatedAt: time.Now().UTC()}}
+	s.server = &http.Server{Handler: proxyHandler(s)}
+	l, e := net.Listen("tcp", hostAddr+":0")
+	if e != nil {
+		cleanup(name)
+		return Response{Error: "proxy listen failed"}
+	}
+	s.listener = l
+	s.info.Proxy = l.Addr().String()
+	port := l.Addr().(*net.TCPAddr).Port
+	if e = allowHostPort(id, port); e != nil {
+		_ = l.Close()
+		cleanup(name)
+		return Response{Error: "host ingress policy failed: " + e.Error()}
+	}
+	if e = allowNamespaceProxy(name, id, hostAddr, port); e != nil {
+		_ = l.Close()
+		denyHostPort(id)
+		cleanup(name)
+		return Response{Error: "namespace egress policy failed: " + e.Error()}
+	}
+	go s.server.Serve(l)
+	sessionsMu.Lock()
+	sessions[id] = s
+	sessionsMu.Unlock()
+	return Response{OK: true, Session: &s.info}
+}
+func status(id, t string, uid uint32) Response {
+	s, ok := owned(id, t, uid)
+	if !ok {
+		return Response{Error: "session not found or not owned"}
+	}
+	return Response{OK: true, Session: &s.info}
+}
+func destroy(id, t string, uid uint32) Response {
+	s, ok := owned(id, t, uid)
+	if !ok {
+		return Response{Error: "session not found or not owned"}
+	}
+	s.mu.Lock()
+	s.info.State = "DESTROYING"
+	s.mu.Unlock()
+	_ = s.server.Shutdown(context.Background())
+	_ = s.listener.Close()
+	denyHostPort(s.info.ID)
+	cleanup(s.info.Namespace)
+	sessionsMu.Lock()
+	delete(sessions, id)
+	sessionsMu.Unlock()
+	return Response{OK: true}
+}
+func owned(id, t string, uid uint32) (*session, bool) {
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
+	s, ok := sessions[id]
+	return s, ok && t != "" && t == s.info.Token && uid == s.ownerUID
+}
+
+func peerUID(c net.Conn) (uint32, bool) {
+	u, ok := c.(*net.UnixConn)
+	if !ok {
+		return 0, false
+	}
+	var cred *syscall.Ucred
+	var err error
+	raw, err := u.SyscallConn()
+	if err != nil {
+		return 0, false
+	}
+	_ = raw.Control(func(fd uintptr) {
+		cred, err = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	})
+	if err != nil || cred == nil {
+		return 0, false
+	}
+	return cred.Uid, true
+}
+func validate(p *Policy) error {
+	if len(p.Allowed) == 0 || len(p.Allowed) > 128 {
+		return errors.New("allowed_origins must contain 1..128 entries")
+	}
+	if p.MaxRedirects < 0 || p.MaxRedirects > 20 {
+		return errors.New("max_redirects must be 0..20")
+	}
+	for _, o := range p.Allowed {
+		if o.Scheme != "http" && o.Scheme != "https" {
+			return errors.New("only http/https origins are accepted")
+		}
+		if o.Host == "" || !validHost.MatchString(o.Host) {
+			return errors.New("invalid policy host")
+		}
+		if strings.Contains(o.Host, ":") {
+			return errors.New("IPv6 and malformed host authorities are unsupported in N1")
+		}
+		if ip := net.ParseIP(o.Host); ip != nil && ip.To4() == nil {
+			return errors.New("IPv6 is fail-closed and unsupported in N1")
+		}
+		if len(o.Ports) == 0 || len(o.Ports) > 16 {
+			return errors.New("explicit ports required")
+		}
+		for _, port := range o.Ports {
+			if port < 1 || port > 65535 {
+				return errors.New("invalid policy port")
+			}
+		}
+	}
+	return nil
+}
+func digest(p Policy) string {
+	b, _ := json.Marshal(p)
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+func random(pre string) string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	return pre + hex.EncodeToString(b)
+}
+func pinPolicy(p Policy) (map[string]map[string]struct{}, error) {
+	pinned := make(map[string]map[string]struct{})
+	for _, origin := range p.Allowed {
+		host := strings.ToLower(strings.TrimSuffix(origin.Host, "."))
+		ips, err := lookupIP(host)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", host, err)
+		}
+		set := make(map[string]struct{})
+		for _, ip := range ips {
+			if ip.To4() == nil {
+				continue
+			}
+			if !p.AllowPrivate && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+				continue
+			}
+			set[ip.To4().String()] = struct{}{}
+		}
+		if len(set) == 0 {
+			return nil, fmt.Errorf("no approved IPv4 address for %s", host)
+		}
+		pinned[host] = set
+	}
+	return pinned, nil
+}
+func allowed(p Policy, raw string, connect bool) bool {
+	u, e := url.Parse(raw)
+	if e != nil || u.Hostname() == "" {
+		return false
+	}
+	h := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	sc := strings.ToLower(u.Scheme)
+	if connect && sc == "" {
+		sc = "https"
+	}
+	port := 0
+	if u.Port() != "" {
+		port, _ = strconv.Atoi(u.Port())
+	} else if sc == "https" || sc == "wss" {
+		port = 443
+	} else {
+		port = 80
+	}
+	for _, o := range p.Allowed {
+		if strings.EqualFold(o.Scheme, sc) && strings.EqualFold(o.Host, h) {
+			for _, x := range o.Ports {
+				if x == port {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+func proxyHandler(s *session) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect {
+			connect(w, r, s)
+			return
+		}
+		if !r.URL.IsAbs() || !allowed(s.policy, r.URL.String(), false) {
+			http.Error(w, "POLICY_DENIED", 403)
+			return
+		}
+		tr := &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				return dialPolicy(ctx, network, address, s.policy, s.pinned)
+			},
+		}
+		q := r.Clone(r.Context())
+		q.RequestURI = ""
+		resp, e := tr.RoundTrip(q)
+		if e != nil {
+			http.Error(w, "upstream unavailable", 502)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 && resp.Header.Get("Location") != "" {
+			s.mu.Lock()
+			s.redirects++
+			tooMany := s.redirects > s.policy.MaxRedirects
+			s.mu.Unlock()
+			if tooMany {
+				http.Error(w, "REDIRECT_LIMIT", http.StatusLoopDetected)
+				return
+			}
+		} else {
+			s.mu.Lock()
+			s.redirects = 0
+			s.mu.Unlock()
+		}
+		for k, v := range resp.Header {
+			for _, x := range v {
+				w.Header().Add(k, x)
+			}
+		}
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	})
+}
+func connect(w http.ResponseWriter, r *http.Request, s *session) {
+	if !s.policy.AllowWebSocket || !allowed(s.policy, "https://"+r.Host, true) {
+		http.Error(w, "POLICY_DENIED", 403)
+		return
+	}
+	up, e := dialPolicy(context.Background(), "tcp", r.Host, s.policy, s.pinned)
+	if e != nil {
+		http.Error(w, "upstream unavailable", 502)
+		return
+	}
+	h, ok := w.(http.Hijacker)
+	if !ok {
+		_ = up.Close()
+		http.Error(w, "hijack unavailable", 500)
+		return
+	}
+	cl, rw, e := h.Hijack()
+	if e != nil {
+		_ = up.Close()
+		return
+	}
+	_, _ = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+	_ = rw.Flush()
+	go func() { _, _ = io.Copy(up, cl); _ = up.Close() }()
+	go func() { _, _ = io.Copy(cl, up); _ = cl.Close() }()
+}
+func dialPolicy(ctx context.Context, network, address string, p Policy, pinned map[string]map[string]struct{}) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, errors.New("invalid upstream authority")
+	}
+	ips, err := lookupIP(host)
+	if err != nil {
+		return nil, errors.New("DNS resolution failed")
+	}
+	d := net.Dialer{Timeout: 5 * time.Second}
+	for _, ip := range ips {
+		if ip.To4() == nil {
+			continue
+		}
+		if _, ok := pinned[strings.ToLower(strings.TrimSuffix(host, "."))][ip.To4().String()]; !ok {
+			continue
+		}
+		if !p.AllowPrivate && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+			continue
+		}
+		conn, e := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if e == nil {
+			return conn, nil
+		}
+	}
+	return nil, errors.New("no policy-approved address")
+}
+func sessionAddress(id string) string {
+	v, _ := strconv.ParseUint(id[4:6], 16, 8)
+	return fmt.Sprintf("10.200.%d.1", 10+v%240)
+}
+
+func startNamespace(name, id, hostAddr string) error {
+	if e := run("ip", "netns", "add", name); e != nil {
+		return e
+	}
+	hi := "nlah-" + id[4:12]
+	ni := "nlan-" + id[4:12]
+	bad := func() { cleanup(name); _ = run("ip", "link", "del", hi) }
+	nsAddr := strings.TrimSuffix(hostAddr, ".1") + ".2/24"
+	cmds := [][]string{{"ip", "link", "add", hi, "type", "veth", "peer", "name", ni}, {"ip", "link", "set", ni, "netns", name}, {"ip", "addr", "add", hostAddr + "/24", "dev", hi}, {"ip", "link", "set", hi, "up"}, {"ip", "netns", "exec", name, "ip", "addr", "add", nsAddr, "dev", ni}, {"ip", "netns", "exec", name, "ip", "link", "set", "lo", "up"}, {"ip", "netns", "exec", name, "ip", "link", "set", ni, "up"}, {"ip", "netns", "exec", name, "ip", "route", "add", "default", "via", hostAddr}}
+	for _, a := range cmds {
+		if e := run(a[0], a[1:]...); e != nil {
+			bad()
+			return e
+		}
+	}
+	rules := fmt.Sprintf("table inet nla_%s {\n chain output {\n  type filter hook output priority 0; policy drop;\n  oifname \"lo\" accept\n  ct state established,related accept\n }\n}\n", id[4:12])
+	if e := input("ip", []string{"netns", "exec", name, "nft", "-f", "-"}, rules); e != nil {
+		bad()
+		return e
+	}
+	return nil
+}
+func cleanup(n string) {
+	_ = run("ip", "netns", "delete", n)
+	suffix := strings.TrimPrefix(n, "nla-")
+	if len(suffix) >= 8 {
+		_ = run("ip", "link", "del", "nlah-"+suffix[:8])
+	}
+}
+func hostTable(id string) string { return "nla_host_" + id[4:12] }
+func allowNamespaceProxy(name, id, hostAddr string, port int) error {
+	table := "nla_" + id[4:12]
+	return run("ip", "netns", "exec", name, "nft", "add", "rule", "inet", table,
+		"output", "ip", "daddr", hostAddr, "tcp", "dport", strconv.Itoa(port), "accept")
+}
+func allowHostPort(id string, port int) error {
+	iface := "nlah-" + id[4:12]
+	return run("nft", "insert", "rule", "ip", "filter", "INPUT",
+		"iifname", iface, "tcp", "dport", strconv.Itoa(port), "accept",
+		"comment", "nla-"+id[4:12])
+}
+func denyHostPort(id string) {
+	marker := "nla-" + id[4:12]
+	out, err := exec.Command("nft", "-a", "list", "chain", "ip", "filter", "INPUT").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, marker) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[len(fields)-2] == "handle" {
+			_ = run("nft", "delete", "rule", "ip", "filter", "INPUT", "handle", fields[len(fields)-1])
+		}
+	}
+}
+func run(bin string, a ...string) error {
+	c := exec.Command(bin, a...)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w: %s", strings.Join(append([]string{bin}, a...), " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+func input(bin string, a []string, s string) error {
+	c := exec.Command(bin, a...)
+	c.Stdin = strings.NewReader(s)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w: %s", strings.Join(append([]string{bin}, a...), " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
