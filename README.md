@@ -509,4 +509,4 @@ Assistant Notebook comes from [pickleshell/skills](https://github.com/pickleshel
 See [NLA_MODIFICATIONS.md](NLA_MODIFICATIONS.md) for the separation between
 original NLA components and inherited Superpowers components.
 
-> If you want to go far, go together. If you want to go fast, go alone.
+> If you want to go fast, go alone.
