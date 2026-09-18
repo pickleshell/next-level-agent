@@ -111,15 +111,15 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 
 | Role | Recommended model or model class | Selection guidance |
 | --- | --- | --- |
-| **NLA** | **Luna** | Prefer predictable instruction following, reliable delegation and tool use, and preservation of approvals and task state. Keep Luna as the coordinator rather than optimizing this role solely for price or speed. **For example:** Luna. |
-| **Router** | A fast, inexpensive model with reliable structured output; Luna when uncertain | Routing is usually a small bounded decision. Validate workflow classification and role selection before choosing a cheaper model. **For example:** Luna; evaluate local Qwen3.8 for bounded routing if local latency is acceptable. |
-| **Explorer** | A capable local model such as Qwen, or an inexpensive cloud model with a large context window | Local repository and file searches can consume substantial context. Prioritize tool use, accurate file/symbol references, and enough usable context; use Luna as fallback. **For example:** local Qwen3.8 → Luna. |
-| **Scout** | An inexpensive model with reliable research tools; a local model when its tool support is sufficient | This role researches external documentation, not only local files. Prioritize source attribution and version accuracy; use a large-context model for lengthy documents and Luna as fallback. **For example:** Luna, or local Qwen3.8 with working documentation/search tools. |
-| **Architect** | A strong reasoning model such as Sol | Spend capability on interfaces, safety boundaries, failure modes, and design tradeoffs. Luna is the recommended fallback when Sol is unavailable or the choice is uncertain. **For example:** Sol → Luna. |
-| **Implementer** | Any model demonstrated to code well in the target runtime, including local, free, or inexpensive models | Match capability to the bounded task. Verify editing tools, tests, and instruction following; escalate difficult changes to a stronger coding model and retain Luna as the final fallback. **For example:** Big Pickle or local Qwen3.8 → Luna. |
-| **Reviewer** | An affordable model validated for independent code review; Luna is a practical default | Prefer an independent session and, where practical, a different model from the implementer. Large review inputs can dominate cost: provide a bounded diff and relevant contracts, and check input-token pricing before escalating. **For example:** evaluate Big Pickle where free access is available, or Qwen3.7 Plus for a different model family; retain Luna as fallback. Use expensive expert models only for an explicitly approved, bounded review. |
-| **Supervisor** | Luna, or another strong model validated for workflow auditing | Prioritize detecting missing approvals, loops, stale evidence, and unsupported completion claims. This role needs sound judgment more than maximum coding throughput. **For example:** Luna. |
-| **Compactor** | **Luna or a capable local Qwen model** | Validate faithful compression, structured output, and preservation of constraints and evidence. Local execution can reduce cloud cost for large inputs; ensure sufficient context and use Luna as fallback. **For example:** local Qwen3.8 → Luna, or Luna first when predictable compression is the priority. |
+| **NLA** | **Luna** | The coordinator runs throughout the task: prioritize stable delegation, tool use, approval handling, and state preservation, with affordable input tokens for its growing context. A cheap coordinator that loses control can waste the entire workflow. **For example:** Luna. |
+| **Router** | A fast, inexpensive model with reliable structured output; Luna when uncertain | Frequent, small decisions favor low latency and low cost. Validate classification and escalation: a routing mistake can skip a required gate or send work to an unsuitable role. **For example:** Luna; evaluate local Qwen3.8 if local latency is acceptable. |
+| **Explorer** | A capable local model, or an inexpensive cloud model with a large usable context window | Repository discovery reads substantial file content. Favor private local inference, low input cost, accurate file/symbol references, and reliable search tools. Return focused evidence rather than copying whole files to the coordinator. **For example:** local Qwen3.8 → Luna. |
+| **Scout** | An inexpensive model with reliable research tools and sufficient context | External research favors source accuracy, version checking, and economical processing of long documents. A local model can perform inference locally, but web searches still send queries externally. Avoid including private repository content in search queries. **For example:** Luna, or local Qwen3.8 with working documentation/search tools. |
+| **Architect** | A strong reasoning model such as Sol, even at a higher price | Architect is invoked selectively at design gates, rather than for every edit. A strong, more expensive model is justified when it prevents costly mistakes in interfaces, safety, failure handling, and tradeoffs; price alone does not establish quality. Keep its input focused on requirements and relevant evidence. **For example:** Sol → Luna. |
+| **Implementer** | A fast, cheap or free model that demonstrably codes well | Repeated edit/test cycles favor speed and low cost. Any capable coding model can fit a bounded task, including local models, provided editing tools, tests, and scope discipline work. Measure time and cost per accepted change, including retries; escalate persistent failures. **For example:** Big Pickle or local Qwen3.8 → Luna. |
+| **Reviewer** | A stable model with inexpensive input tokens and demonstrated defect detection | Reviews consume diffs, contracts, and test evidence, so input cost and reliable reasoning matter more than output speed alone. Use an independent session and preferably a different model from the implementer. Provide enough surrounding code to assess behavior; a different model is not proof of review quality. **For example:** evaluate Big Pickle or Qwen3.7 Plus; Luna is the dependable default/fallback. Reserve expensive expert review for an explicitly approved, bounded scope. |
+| **Supervisor** | Luna, or another model validated for workflow auditing | Favor reliable judgment over coding throughput: detect missing approvals, repeated failures, stale evidence, and unsupported completion claims. Use compact state/evidence packets to keep auditing inexpensive. **For example:** Luna. |
+| **Compactor** | **Luna or a capable local Qwen model** | Large inputs favor local privacy or inexpensive cloud input tokens. Faithful compression is essential: losing constraints, approvals, blockers, or revision-bound evidence can compromise later execution. Test preservation and structured output, not just compression ratio; excessive compaction can add latency. **For example:** local Qwen3.8 → Luna, or Luna first for predictable compression. |
 
 The examples illustrate model choices and fallback order, not a ready-to-copy
 configuration. Verify provider access and configure the appropriate runtime/backend,
@@ -138,6 +138,40 @@ adequate memory and request timeouts. Keep fallback pools short and ordered;
 cooldown and defective-model handling can skip an unavailable binding, but do
 not make an unsuitable model reliable. These recommendations do not change
 repository defaults or your operator override automatically.
+
+### Balancing quality, privacy, speed, and autonomy
+
+Spend model capability where errors have the greatest downstream cost: the
+coordinator, architecture decisions, and independent verification. Use fast,
+economical models for bounded execution and high-volume discovery. Validate
+each role with representative tasks in the actual NLA runtime; a coding score
+alone does not establish delegation, review, or faithful compaction ability.
+Compare total cost and elapsed time per verified result, including retries,
+review fixes, provider queues, and local inference contention.
+
+For sensitive work, keep file-heavy roles local and send cloud roles only the
+minimum necessary context. **A cloud fallback changes the privacy boundary:**
+when repository content must remain local, configure local-only pools for those
+roles and accept an explicit unavailable result instead of cloud failover.
+This includes Compactor, which may receive sensitive state. Local inference
+does not itself isolate shell tools, network access, telemetry, or logs; those
+boundaries must also match the workspace's privacy requirements.
+
+For autonomy, favor providers with reliable access and sufficient capacity over
+free endpoints with unpredictable throttling. Where cloud use is permitted,
+Luna is the recommended final fallback. Two providers serving the same model
+can improve access resilience, but do not provide independent model judgment;
+shared provider infrastructure can also make their outages correlated. Configure
+bounded timeouts and a small fallback list, and inspect effective model health
+before a long run. An unavailable pool should remain an observable blocker,
+not an excuse to skip review or approvals.
+
+For speed, pass bounded task packets and concise results between fresh child
+sessions. Size local context and concurrency to available memory: several
+parallel roles sharing one GPU can be slower than sequential execution. Keep
+the coordinator focused on orchestration and use selective design/review gates
+according to the existing workflow. These are selection and deployment
+guidelines, not additional runtime guarantees or automatic policy changes.
 
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
