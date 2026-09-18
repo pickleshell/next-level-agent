@@ -1,0 +1,15 @@
+[Unit]
+Description=NLA Browser broker IPC socket
+PartOf=nla-browser-network-broker.service
+
+[Socket]
+ListenStream=/run/nla-browser/broker.sock
+SocketUser=root
+SocketGroup=nla-browser
+SocketMode=0660
+DirectoryMode=0751
+RemoveOnStop=yes
+Service=nla-browser-network-broker.service
+
+[Install]
+WantedBy=sockets.target
