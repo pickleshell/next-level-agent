@@ -7,7 +7,7 @@
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 0,
-      "max_failovers": 1
+      "max_failovers": 0
     },
     "router": {
       "enabled": true,
@@ -15,15 +15,15 @@
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 90000,
-      "max_failovers": 2
+      "max_failovers": 0
     },
     "supervisor": {
       "enabled": true,
       "models": [
-        "opencode-go/gpt-5.6-luna"
+        "opencode/gpt-5.6-sol"
       ],
       "idle_timeout_ms": 180000,
-      "max_failovers": 1
+      "max_failovers": 0
     },
     "scout": {
       "enabled": true,
@@ -62,37 +62,29 @@
         "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 300000,
-      "max_failovers": 3
+      "max_failovers": 2
     },
     "reviewer": {
       "enabled": true,
       "models": [
+        "opencode/nemotron-3-ultra-free",
         "command-code/gpt-5.6-luna",
         "opencode-go/gpt-5.6-luna",
         "ollama/qwen3.8:latest"
       ],
       "idle_timeout_ms": 180000,
-      "max_failovers": 2
-    },
-    "browser": {
-      "enabled": false,
-      "models": [
-        "opencode-go/gpt-5.6-luna"
-      ],
-      "idle_timeout_ms": 180000,
-      "max_failovers": 0
+      "max_failovers": 3
     },
     "compactor": {
       "enabled": true,
       "prompt_optimization": {
         "exclude_models": [
           "ollama/*",
-          "opencode-go/gpt-5.6-luna",
-          "command-code/gpt-5.6-luna",
-          "opencode-go/gpt-5.6-luna"
+          "opencode/nemotron-3-ultra-free",
+          "opencode/big-pickle"
         ]
       },
-      "runtime": "utility",
+      "runtime": "agent",
       "backend": "ollama",
       "provider": {
         "api": "native",
@@ -102,10 +94,9 @@
         "opencode-go/gpt-5.6-luna",
         "ollama/qwen3.8:latest"
       ],
-      "request_timeout_ms": 120000,
+      "idle_timeout_ms": 900000,
       "max_failovers": 1,
-      "output_format": "json",
-      "idle_timeout_ms": 900000
+      "output_format": "json"
     }
   }
 }

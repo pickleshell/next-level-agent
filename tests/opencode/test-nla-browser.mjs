@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { BrowserCapability, BROWSER_TOOLS, browserOrigin, loadBrowserConfig, validateBrowserTask } from '../../.opencode/plugins/nla-browser.mjs';
 import { BrowserMcpClient, BrowserError } from '../../.opencode/plugins/nla-browser-mcp.mjs';
 import { operation } from '../../.opencode/plugins/nla-browser-playwright.mjs';
@@ -23,6 +24,59 @@ try {
   assert.throws(() => validateBrowserTask(task({ permissions: { navigation: 'yes' } }), config));
   assert.throws(() => validateBrowserTask(task({ success_criteria: [{ id: 'unsafe', check: 'eval' }] }), config));
   assert.deepEqual(deterministicToolShortlist('browser', 'click fill screenshot and observe'), BROWSER_TOOLS);
+
+  // Broker requests must not half-close the client before a delayed response.
+  // This reproduces the real OpenCode failure where create received EPIPE and
+  // the client observed an empty response before launch was sent.
+  const brokerSocket = path.join(root, 'broker.sock');
+  let requestNumber = 0; let endedBeforeResponse = false;
+  const broker = net.createServer(socket => {
+    let buffer = '';
+    let responded = false;
+    socket.on('end', () => { if (!responded) endedBeforeResponse = true; });
+    socket.on('data', chunk => {
+      buffer += chunk;
+      if (!buffer.includes('\n')) return;
+      const request = JSON.parse(buffer); buffer = '';
+      const op = request.op; const n = ++requestNumber;
+      const response = op === 'create'
+        ? { ok: true, session: { session_id: 'broker-session', session_token: 'broker-token' } }
+        : op === 'launch' ? { ok: true, endpoint: '/tmp/fake-mcp.sock' } : { ok: true };
+      setTimeout(() => { responded = true; socket.end(JSON.stringify({ ...response, request: n }) + '\n'); }, 30);
+    });
+  });
+  await new Promise((resolve, reject) => { broker.once('error', reject); broker.listen(brokerSocket, resolve); });
+  const brokerManager = new BrowserCapability({
+    config: { ...config, broker_socket: brokerSocket, broker_allow_private_addresses: true },
+    root,
+    backendFactory: () => ({ start: async () => ({}), invoke: async () => ({ status: 'PASS' }), close: async () => {} }),
+  });
+  const brokerSession = await brokerManager.begin(task(), 'broker-parent', root);
+  brokerManager.bind(brokerSession, 'broker-child');
+  await brokerManager.execute('broker-child', brokerSession.id, 'session', { operation: 'preflight' });
+  assert.equal(JSON.parse((await brokerManager.finish(brokerSession)).output).result, 'PASS');
+  assert.equal(endedBeforeResponse, false, 'broker client must remain open until delayed response arrives');
+  assert.equal(requestNumber, 3);
+  const cancelledBroker = new BrowserCapability({
+    config: { ...config, broker_socket: brokerSocket, broker_allow_private_addresses: true },
+    root,
+    backendFactory: () => ({ start: async () => ({}), invoke: async () => ({ status: 'PASS' }), close: async () => {} }),
+  });
+  const cancelController = new AbortController();
+  setTimeout(() => cancelController.abort(), 5);
+  await assert.rejects(cancelledBroker.begin(task(), 'cancel-parent', root, cancelController.signal), e => e.code === 'CANCELLED');
+  assert.equal(requestNumber, 5, 'cancellation during broker create must destroy the created network session');
+  await cancelledBroker.dispose();
+  const constructionFailure = new BrowserCapability({
+    config: { ...config, broker_socket: brokerSocket, broker_allow_private_addresses: true },
+    root,
+    backendFactory: () => { throw new Error('backend construction failed'); },
+  });
+  await assert.rejects(constructionFailure.begin(task(), 'construction-parent', root), /backend construction failed/);
+  assert.equal(requestNumber, 8, 'backend construction failure must destroy the launched network session');
+  await constructionFailure.dispose();
+  await brokerManager.dispose();
+  await new Promise(resolve => broker.close(resolve));
 
   // Actual stdio client and adapter: init/list/call/structured results/close.
   const manager = make();
@@ -89,6 +143,15 @@ try {
   const beforeNoWait = Date.now();
   assert.equal((await operation(checkedPage, noWaitInput)).status, 'FAIL');
   assert.ok(Date.now() - beforeNoWait < 3000, 'omitted wait_ms must terminate inside the backend');
+  let savedDownload;
+  const downloadPage = {
+    context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
+    url: () => 'http://example.test/download',
+    getByRole: () => ({ getAttribute: async () => null, click: async () => {} }),
+    waitForEvent: async () => ({ saveAs: async artifact => { savedDownload = artifact; } }),
+  };
+  const download = await operation(downloadPage, { kind:'download', locator:{role:'link',name:'Download'}, artifact:path.join(root,'download.bin'), permissions:{downloads:true,authentication:false} });
+  assert.equal(download.status,'PASS'); assert.equal(download.artifact,savedDownload,'A saved download must have an evidence reference');
   const notRun = await manager.begin(task(), 'parent', root); manager.bind(notRun, 'no-preflight');
   assert.equal(JSON.parse((await manager.finish(notRun)).output).result, 'NOT_RUN');
 
@@ -102,6 +165,22 @@ try {
   const unavailable = make({ backendFactory: () => ({ start: async () => { throw new BrowserError('AUTH_REQUIRED'); }, close: async () => { closed++; } }) });
   await assert.rejects(unavailable.begin(task(), 'parent', root), e => e.code === 'AUTH_REQUIRED');
   assert.equal(unavailable.sessions.size, 0); assert.equal(closed, 1);
+  const blockedPreflight = make({ backendFactory: () => ({ start: async () => ({}), invoke: async () => ({status:'BLOCKED',reason:'UNREACHABLE'}), close: async () => {} }) });
+  const blockedChild = await blockedPreflight.begin(task(), 'parent', root);
+  blockedPreflight.bind(blockedChild, 'blocked-child');
+  await assert.rejects(blockedPreflight.execute('blocked-child', blockedChild.id, 'session', {operation:'preflight'}), e => e.code === 'UNREACHABLE');
+  assert.equal(blockedChild.preflight, false);
+  assert.equal(JSON.parse((await blockedPreflight.finish(blockedChild)).output).result, 'BLOCKED');
+
+  const poisoned = make({ backendFactory: () => ({
+    start: async () => ({}),
+    invoke: async input => { if (input.kind === 'navigate') throw new BrowserError('UNREACHABLE'); return { status:'PASS', expected:input.expected, observed:'Ready' }; },
+    close: async () => {},
+  }) });
+  const poisonedSession = await poisoned.begin(task(), 'parent', root); poisoned.bind(poisonedSession, 'poisoned');
+  await poisoned.execute('poisoned', poisonedSession.id, 'session', {operation:'preflight'});
+  assert.equal((await poisoned.execute('poisoned', poisonedSession.id, 'action', {operation:'navigate',url:'http://example.test/'})).status, 'BLOCKED');
+  assert.equal(JSON.parse((await poisoned.finish(poisonedSession)).output).result, 'BLOCKED', 'A failed backend operation cannot PASS using an old DOM');
   const controller = new AbortController();
   const cancelled = await manager.begin(task(), 'parent', root, controller.signal);
   manager.bind(cancelled, 'cancelled'); controller.abort();

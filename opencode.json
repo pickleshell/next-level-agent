@@ -40,7 +40,7 @@
     "explorer": {
       "description": "Fast, read-only repository exploration",
       "mode": "subagent",
-      "model": "ollama/ollama/qwen3.8:latest",
+      "model": "opencode-go/gpt-5.6-luna",
       "prompt": "You are the Next-Level Agent Explorer. Perform read-only repository discovery. Return only relevant files, facts, risks, and a short recommended next step. Do not edit files or dump large logs."
     },
     "architect": {
@@ -52,13 +52,13 @@
     "implementer": {
       "description": "Focused implementation with verification",
       "mode": "subagent",
-      "model": "opencode-go/gpt-5.6-luna",
+      "model": "opencode/big-pickle",
       "prompt": "You are the Next-Level Agent Implementer. Make only scoped changes from the bounded task packet. Verify the result with targeted tests and report changed files, evidence, failures, and next step."
     },
     "reviewer": {
       "description": "Independent code review",
       "mode": "subagent",
-      "model": "command-code/gpt-5.6-luna",
+      "model": "opencode/nemotron-3-ultra-free",
       "prompt": "You are the Next-Level Agent Reviewer. Independently inspect the requested scope and evidence. Report Blocker, Major, Minor, and PASS findings with file references. Do not modify files."
     },
     "browser": {
@@ -77,7 +77,7 @@
     "compactor": {
       "description": "Faithful bounded context summarization",
       "mode": "subagent",
-      "model": "ollama/ollama/qwen3.8:latest",
+      "model": "opencode-go/gpt-5.6-luna",
       "prompt": "You are the Next-Level Agent Compactor. Convert the supplied bounded session state into a concise checkpoint. Preserve goal, acceptance criteria, decisions, evidence, changed files, failures, budgets, and exact next step. Exclude transcript dumps, secrets, and irrelevant tool output."
     },
     "nla": {

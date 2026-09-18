@@ -43,9 +43,10 @@ type Request struct {
 	Policy    *Policy `json:"policy,omitempty"`
 }
 type Response struct {
-	OK      bool         `json:"ok"`
-	Error   string       `json:"error,omitempty"`
-	Session *SessionInfo `json:"session,omitempty"`
+	OK       bool         `json:"ok"`
+	Error    string       `json:"error,omitempty"`
+	Session  *SessionInfo `json:"session,omitempty"`
+	Endpoint string       `json:"endpoint,omitempty"`
 }
 type SessionInfo struct {
 	ID           string    `json:"session_id"`
@@ -61,11 +62,18 @@ type session struct {
 	policy    Policy
 	hostAddr  string
 	ownerUID  uint32
+	ownerGID  uint32
 	pinned    map[string]map[string]struct{}
 	redirects int
 	server    *http.Server
 	listener  net.Listener
+	mcp       *managedMCP
 	mu        sync.Mutex
+}
+type managedMCP struct {
+	cmd      *exec.Cmd
+	listener net.Listener
+	path     string
 }
 
 var sessionsMu sync.Mutex
@@ -152,7 +160,7 @@ func handle(c net.Conn) {
 	if json.NewDecoder(bufio.NewReader(io.LimitReader(c, 1<<20))).Decode(&q) != nil {
 		return
 	}
-	uid, ok := peerUID(c)
+	uid, gid, ok := peerCred(c)
 	if !ok {
 		_ = json.NewEncoder(c).Encode(Response{Error: "peer credentials unavailable"})
 		return
@@ -160,17 +168,19 @@ func handle(c net.Conn) {
 	var r Response
 	switch q.Op {
 	case "create":
-		r = create(q.Policy, uid)
+		r = create(q.Policy, uid, gid)
 	case "status":
 		r = status(q.SessionID, q.Token, uid)
 	case "destroy":
 		r = destroy(q.SessionID, q.Token, uid)
+	case "launch":
+		r = launch(q.SessionID, q.Token, uid)
 	default:
 		r.Error = "unsupported operation"
 	}
 	_ = json.NewEncoder(c).Encode(r)
 }
-func create(p *Policy, uid uint32) Response {
+func create(p *Policy, uid, gid uint32) Response {
 	if p == nil {
 		return Response{Error: "policy required"}
 	}
@@ -190,7 +200,7 @@ func create(p *Policy, uid uint32) Response {
 	if e := startNamespace(name, id, hostAddr); e != nil {
 		return Response{Error: "network boundary unavailable: " + e.Error()}
 	}
-	s := &session{policy: *p, hostAddr: hostAddr, ownerUID: uid, pinned: pinned, info: SessionInfo{ID: id, Token: random("tok-"), Namespace: name, PolicyDigest: digest(*p), State: "READY", CreatedAt: time.Now().UTC()}}
+	s := &session{policy: *p, hostAddr: hostAddr, ownerUID: uid, ownerGID: gid, pinned: pinned, info: SessionInfo{ID: id, Token: random("tok-"), Namespace: name, PolicyDigest: digest(*p), State: "READY", CreatedAt: time.Now().UTC()}}
 	s.server = &http.Server{Handler: proxyHandler(s)}
 	l, e := net.Listen("tcp", hostAddr+":0")
 	if e != nil {
@@ -234,12 +244,128 @@ func destroy(id, t string, uid uint32) Response {
 	s.mu.Unlock()
 	_ = s.server.Shutdown(context.Background())
 	_ = s.listener.Close()
+	stopMCP(s)
 	denyHostPort(s.info.ID)
 	cleanup(s.info.Namespace)
 	sessionsMu.Lock()
 	delete(sessions, id)
 	sessionsMu.Unlock()
 	return Response{OK: true}
+}
+func launch(id, t string, uid uint32) Response {
+	s, ok := owned(id, t, uid)
+	if !ok {
+		return Response{Error: "session not found or not owned"}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.info.State != "READY" {
+		return Response{Error: "session is not ready"}
+	}
+	if s.mcp != nil {
+		return Response{OK: true, Endpoint: s.mcp.path}
+	}
+	command, err := approvedMCPCommand()
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+	foundProxyPlaceholder := false
+	for i, arg := range command {
+		if strings.Contains(arg, "__NLA_SESSION_PROXY__") {
+			foundProxyPlaceholder = true
+			command[i] = strings.ReplaceAll(arg, "__NLA_SESSION_PROXY__", "http://"+s.info.Proxy)
+		}
+	}
+	if !foundProxyPlaceholder {
+		return Response{Error: "browser MCP command lacks session proxy placeholder"}
+	}
+	// Keep the broker-to-owner endpoint in the fixed shared temp directory;
+	// never inherit a privileged broker's TMPDIR from an operator environment.
+	path := filepath.Join("/tmp", "nla-mcp-"+s.info.ID+".sock")
+	_ = os.Remove(path)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return Response{Error: "MCP endpoint unavailable"}
+	}
+	_ = os.Chmod(path, 0660)
+	_ = os.Chown(path, int(s.ownerUID), -1)
+	// Entering a named netns requires privilege.  Drop it before the approved
+	// browser command, never in the caller and never after the browser starts.
+	setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--"}
+	cmd := exec.Command("ip", append(setpriv, command...)...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/next", "TMPDIR=/tmp", "LANG=C", "USER=next", "LOGNAME=next"}
+	cmd.Stderr = io.Discard
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return Response{Error: "MCP stdin unavailable"}
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return Response{Error: "MCP stdout unavailable"}
+	}
+	if err := cmd.Start(); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		return Response{Error: "MCP process unavailable"}
+	}
+	m := &managedMCP{cmd: cmd, listener: ln, path: path}
+	s.mcp = m
+	go bridgeMCP(m, stdin, stdout)
+	return Response{OK: true, Endpoint: path}
+}
+func approvedMCPCommand() ([]string, error) {
+	raw := os.Getenv("NLA_BROWSER_MCP_COMMAND_JSON")
+	if raw == "" {
+		return nil, errors.New("browser MCP command is not configured")
+	}
+	var command []string
+	if json.Unmarshal([]byte(raw), &command) != nil || len(command) == 0 || command[0] == "" || command[0][0] != '/' {
+		return nil, errors.New("browser MCP command is invalid")
+	}
+	for _, arg := range command {
+		if arg == "sh" || arg == "bash" || arg == "sudo" || arg == "nft" || arg == "unshare" {
+			return nil, errors.New("browser MCP command is not approved")
+		}
+	}
+	return command, nil
+}
+func bridgeMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) {
+	c, err := m.listener.Accept()
+	if err != nil {
+		stopManagedMCP(m, stdin, stdout)
+		return
+	}
+	go func() { _, _ = io.Copy(stdin, c); _ = stdin.Close() }()
+	_, _ = io.Copy(c, stdout)
+	_ = c.Close()
+	stopManagedMCP(m, stdin, stdout)
+}
+func stopMCP(s *session) {
+	s.mu.Lock()
+	m := s.mcp
+	s.mcp = nil
+	s.mu.Unlock()
+	if m != nil {
+		stopManagedMCP(m, nil, nil)
+	}
+}
+func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) {
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if stdout != nil {
+		_ = stdout.Close()
+	}
+	_ = m.listener.Close()
+	if m.cmd.Process != nil {
+		_ = m.cmd.Process.Kill()
+	}
+	_ = m.cmd.Wait()
+	_ = os.Remove(m.path)
 }
 func owned(id, t string, uid uint32) (*session, bool) {
 	sessionsMu.Lock()
@@ -248,24 +374,24 @@ func owned(id, t string, uid uint32) (*session, bool) {
 	return s, ok && t != "" && t == s.info.Token && uid == s.ownerUID
 }
 
-func peerUID(c net.Conn) (uint32, bool) {
+func peerCred(c net.Conn) (uint32, uint32, bool) {
 	u, ok := c.(*net.UnixConn)
 	if !ok {
-		return 0, false
+		return 0, 0, false
 	}
 	var cred *syscall.Ucred
 	var err error
 	raw, err := u.SyscallConn()
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	_ = raw.Control(func(fd uintptr) {
 		cred, err = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
 	})
 	if err != nil || cred == nil {
-		return 0, false
+		return 0, 0, false
 	}
-	return cred.Uid, true
+	return cred.Uid, cred.Gid, true
 }
 func validate(p *Policy) error {
 	if len(p.Allowed) == 0 || len(p.Allowed) > 128 {
@@ -411,7 +537,9 @@ func proxyHandler(s *session) http.Handler {
 	})
 }
 func connect(w http.ResponseWriter, r *http.Request, s *session) {
-	if !s.policy.AllowWebSocket || !allowed(s.policy, "https://"+r.Host, true) {
+	allowedHTTPS := allowed(s.policy, "https://"+r.Host, true)
+	allowedWebSocket := s.policy.AllowWebSocket && allowed(s.policy, "http://"+r.Host, false)
+	if !allowedHTTPS && !allowedWebSocket {
 		http.Error(w, "POLICY_DENIED", 403)
 		return
 	}

@@ -1,5 +1,9 @@
 # Optional universal Browser capability
 
+User-testing readiness does not imply production readiness. See the separate
+[four-layer production gate](BROWSER_PRODUCTION_GATE.md) for mandatory coverage,
+fault injection, repeated-use measurements and remaining blocked checks.
+
 Browser is an optional NLA role for research, information extraction, web
 application interaction, forms, and browser verification. It receives a goal,
 task permissions, success criteria, and an optional session to resume through
@@ -25,11 +29,10 @@ Browser is disabled in the repository default model pool. Absent or invalid
 configuration returns Browser `BLOCKED`, while ordinary NLA work continues.
 NLA performs no automatic MCP or browser installation.
 
-SSE, WebSocket, reconnect, full traces and specialized XSS checks are **not
-implemented in this slice**. The adapter blocks WebSockets and uses buffered
-HTTP interception; streaming pages are not supported. Report
-`UNSUPPORTED_CAPABILITY`/BLOCKED for these requirements. DOM rendering of
-hostile text can be inspected, but this is not a full XSS guarantee.
+SSE and WebSocket transports are passed through the isolated browser context;
+SSE/WebSocket message and reconnect checks are still subject to the production
+gate. Full traces and specialized XSS checks remain unsupported. DOM rendering
+of hostile text can be inspected, but this is not a full XSS guarantee.
 
 ## Install the optional Playwright MCP backend
 
@@ -237,10 +240,13 @@ characters and runs to 100 operations. Artifact byte limits are post-capture,
 not a disk/memory sandbox. Session leases are bounded; evidence retention is
 operator-managed in this slice.
 
-Non-navigation resource redirects are blocked. Service workers are blocked.
-Streaming transports and network isolation need further backend work; this facade is not a
-substitute for OS/container network policy. Page content remains untrusted
-data throughout the role's work.
+The intended v1 policy covers top-level navigation, HTTP(S) subresources,
+EventSource, WebSocket, forms, iframes and popups only when the backend can
+prevent a forbidden request before transmission. The current native
+continuation path does not yet prove that invariant for HTTP redirect targets;
+the production gate therefore remains NOT READY. Service workers are blocked.
+This facade is not a substitute for OS/container network policy. Page content
+remains untrusted data throughout the role's work.
 
 ## Verification
 
