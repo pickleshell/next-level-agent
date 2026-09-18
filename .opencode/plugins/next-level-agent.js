@@ -599,7 +599,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       role: tool.schema.string().describe('Configured NLA subagent role, for example explorer, architect, implementer, or reviewer'),
       description: tool.schema.string().max(120).describe('Short task title'),
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
-      browser: tool.schema.string().optional().describe('Browser role only: JSON with goal, permissions, origins, success_criteria, optional session_id and keep_session'),
+      browser: tool.schema.string().optional().describe('Required for role browser. JSON object: {"goal":"read fact","permissions":{"navigation":true,"interaction":false,"authentication":false,"uploads":false,"downloads":false,"external_mutation":false},"origins":["http://approved-host:port"],"success_criteria":[{"id":"fact","check":"text_contains","locator":{"test_id":"fact"},"expected":"required prefix","wait_ms":1000,"mandatory":true}],"keep_session":false}. Only these permission names are valid; omitted rights are false. Each criterion requires id and check, with locator (exactly one of role plus optional name, label, test_id, text) for element/text checks. Supported checks: text_equals, text_contains, element_visible, element_enabled, url_equals, no_console_errors, no_dialogs. Optional session_id explicitly resumes an owned session; optional upload_files must fit operator grants.'),
     },
     execute: runRoleTask,
   });

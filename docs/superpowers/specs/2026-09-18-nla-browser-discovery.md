@@ -83,8 +83,10 @@ typed inputs are redacted. Screenshots/downloads may contain sensitive data.
 ## Verified boundary and remaining work
 
 Real MCP → browser → local target is verified. Child dispatch and four-tool
-permissions are verified with OpenCode client fixtures, not a live paid model
-session. No production targets or credentials were used.
+permissions are covered by OpenCode client fixtures and an opt-in live Luna
+Orchestrator → nla_task Browser → Playwright MCP → evidence → Orchestrator run.
+The Browser extracted an unseen marker from a local DOM; the Orchestrator
+returned that marker and the tool-generated PASS evidence.
 
 This is the initial working vertical slice, not every original v1 feature.
 SSE/WebSocket observation, reconnect probes, comprehensive hostile-content
@@ -103,7 +105,18 @@ browser process is not a security sandbox.
 - Opt-in real Playwright MCP smokes: research, form, resume/fresh isolation and
   forbidden redirect prevention PASS against local fixture servers.
 - Node syntax checks and `git diff --check`: PASS.
-- Python focused tests could not run: the local interpreter lacks pytest.
-  No dependencies were installed to change that environment.
+- Python focused tests in the next test virtual environment: 6 PASS.
+- Live model-driven Browser gate through the actual operator launcher: PASS.
 
-Changes remain uncommitted and unpublished pending review.
+## Correctness follow-up
+
+Required criteria are bound to their check type, locator and expected value.
+Changing an assertion under its ID is denied; closing the Browser before final
+checks cannot manufacture PASS. A focused regression covers this scenario.
+The backend has its own finite deadline even without wait_ms; tests exercise
+eventual PASS, persistent FAIL and omitted-wait FAIL without transport timeout.
+
+The operator's private Browser pool, backend config and actual launcher were
+verified together. The nla_task argument describes the exact JSON contract so
+the Orchestrator does not need shell/file inspection to delegate correctly.
+No further Browser features were added for this readiness gate.

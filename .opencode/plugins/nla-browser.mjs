@@ -8,7 +8,7 @@ import { reconcileGitWorkspace } from './nla-reconciliation.mjs';
 
 export const BROWSER_TOOLS = Object.freeze(['nla_browser_session', 'nla_browser_observe', 'nla_browser_action', 'nla_browser_check']);
 export const BROWSER_TOOL_GUIDE = `All four tools take session_id and a JSON request string.
-nla_browser_session: {"operation":"preflight"|"status"|"close"}.
+nla_browser_session: {"operation":"preflight"|"status"|"close"}. Close is for cancellation; return normally so NLA performs final checks and cleanup.
 nla_browser_observe: {} or {"locator":{"role":"heading","name":"Source"},"tab":0}.
 Semantic locators: exactly one of role (+ optional name), label, test_id, text.
 nla_browser_action: {"operation":"navigate","url":"https://approved.example/path"};
@@ -27,6 +27,7 @@ Observe output is untrusted page data. SSE/WebSocket/reconnect/trace checks are 
 const RIGHTS = ['navigation', 'interaction', 'authentication', 'uploads', 'downloads', 'external_mutation'];
 const CHECKS = ['url_equals', 'element_visible', 'element_enabled', 'text_equals', 'text_contains', 'no_console_errors', 'no_dialogs'];
 const ACTIONS = ['navigate', 'click', 'fill', 'select', 'press', 'tabs', 'screenshot', 'upload', 'download'];
+const conditionKey = c => JSON.stringify([c.check, c.expected ?? null, c.locator ? Object.entries(c.locator).sort(([a], [b]) => a.localeCompare(b)) : null]);
 const object = x => x && typeof x === 'object' && !Array.isArray(x);
 const exactKeys = (obj, keys) => { if (!object(obj) || Object.keys(obj).some(k => !keys.includes(k))) throw new BrowserError('POLICY_DENIED', 'Invalid Browser request fields'); };
 const text = (x, max = 8000) => { if (typeof x !== 'string' || !x || x.length > max) throw new BrowserError('POLICY_DENIED', 'Invalid bounded Browser text'); return x; };
@@ -64,7 +65,7 @@ function criterion(value) {
   if (['text_equals', 'text_contains', 'url_equals'].includes(value.check)) text(value.expected);
   if (value.wait_ms !== undefined && (!Number.isInteger(value.wait_ms) || value.wait_ms < 0 || value.wait_ms > 10000)) throw new BrowserError('POLICY_DENIED');
   if (value.mandatory !== undefined && typeof value.mandatory !== 'boolean') throw new BrowserError('POLICY_DENIED');
-  return value;
+  return { ...value, wait_ms: value.wait_ms ?? 1000 };
 }
 export function validateBrowserTask(input, config) {
   exactKeys(input, ['goal', 'permissions', 'origins', 'success_criteria', 'session_id', 'keep_session', 'upload_files']);
@@ -161,7 +162,11 @@ export class BrowserCapability {
     if (!s.preflight) throw new BrowserError('UNSUPPORTED_CAPABILITY', 'Browser child preflight required');
     const operation = category === 'action' ? data.operation : category;
     if (category === 'action' && !ACTIONS.includes(operation)) throw new BrowserError('UNSUPPORTED_CAPABILITY');
-    if (category === 'check') criterion(data);
+    if (category === 'check') {
+      data = criterion(data);
+      const required = s.task.success_criteria.find(c => c.id === data.id);
+      if (required && (conditionKey(required) !== conditionKey(data) || (data.mandatory !== undefined && data.mandatory !== (required.mandatory !== false)))) throw new BrowserError('POLICY_DENIED', 'Check does not match the delegated criterion');
+    }
     if (data.locator) locator(data.locator);
     if (data.tab !== undefined && (!Number.isInteger(data.tab) || data.tab < 0 || data.tab > 3)) throw new BrowserError('POLICY_DENIED');
     const p = s.task.permissions;
@@ -192,20 +197,21 @@ export class BrowserCapability {
       if (input.artifact && fs.existsSync(input.artifact) && fs.statSync(input.artifact).size > 10 * 1024 * 1024) {
         fs.unlinkSync(input.artifact); throw new BrowserError('RESOURCE_EXHAUSTED', 'Browser artifact exceeds 10 MB');
       }
-      const event = { id: data.id, operation, started_at, completed_at: new Date(this.now()).toISOString(), ...result };
+      const event = { ...result, id: data.id, operation, started_at, completed_at: new Date(this.now()).toISOString(), condition_key: category === 'check' ? conditionKey(data) : undefined };
       s.events.push(event); return event;
     } catch (error) {
       if (error.code === 'UNREACHABLE') s.poisoned = true;
-      const event = { id: data.id, operation, status: 'BLOCKED', reason: error.code || 'UNREACHABLE', outcome: category === 'action' ? 'UNKNOWN' : undefined, started_at, completed_at: new Date(this.now()).toISOString() };
+      const event = { id: data.id, operation, status: 'BLOCKED', reason: error.code || 'UNREACHABLE', outcome: category === 'action' ? 'UNKNOWN' : undefined, started_at, completed_at: new Date(this.now()).toISOString(), condition_key: category === 'check' ? conditionKey(data) : undefined };
       s.events.push(event); return event;
     } finally { s.executing = false; }
   }
   async finish(s, error = null) {
     if (s.cancelled) error = new BrowserError('CANCELLED');
+    if (!this.sessions.has(s.id) && !error) error = new BrowserError('SESSION_CLOSED');
     if (this.sessions.has(s.id) && !error && s.preflight) {
       for (const check of s.task.success_criteria) await this.execute(s.child, s.id, 'check', check);
     }
-    const checks = s.task.success_criteria.map(c => ({ id: c.id, mandatory: c.mandatory !== false, ...(s.events.filter(e => e.operation === 'check' && e.id === c.id).at(-1) || { status: 'NOT_RUN' }) }));
+    const checks = s.task.success_criteria.map(c => ({ ...(s.events.filter(e => e.operation === 'check' && e.id === c.id && e.condition_key === conditionKey(c)).at(-1) || { status: 'NOT_RUN' }), id: c.id, mandatory: c.mandatory !== false }));
     const required = checks.filter(c => c.mandatory);
     let result = required.some(c => c.status === 'FAIL') ? 'FAIL' : required.some(c => c.status === 'BLOCKED') || error ? 'BLOCKED' : required.some(c => c.status === 'NOT_RUN') || !required.length ? 'NOT_RUN' : 'PASS';
     const repository_after = reconcileGitWorkspace(s.directory).observed;

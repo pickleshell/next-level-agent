@@ -5,7 +5,7 @@ import path from 'node:path';
 
 // Reviewed backend program. The public API accepts data, never JavaScript.
 // This function is serialized into MCP's code tool; only NLA chooses the code.
-async function operation(page, input) {
+export async function operation(page, input) {
   const context = page.context();
   const origin = url => /^https?:\/\/[^/?#]+/.exec(url)?.[0] || null;
   const allowed = url => input.origins.includes(origin(url));
@@ -101,7 +101,8 @@ async function operation(page, input) {
     return { status: 'PASS', artifact: input.artifact, url: safeURL(page.url()) };
   }
   if (input.kind === 'check') {
-    const started = Date.now(); let observed; let passed = false;
+    const deadline = Date.now() + (Number.isFinite(input.wait_ms) ? Math.min(10000, Math.max(0, input.wait_ms)) : 1000);
+    let observed; let passed = false;
     do {
       if (input.check === 'url_equals') { observed = safeURL(page.url()); passed = observed === input.expected; }
       else if (input.check === 'no_console_errors') { observed = state.console.filter(x => ['error', 'exception'].includes(x.type)).length; passed = observed === 0; }
@@ -112,7 +113,7 @@ async function operation(page, input) {
         else if (input.check === 'element_enabled') { observed = await l.isEnabled({ timeout: 200 }); passed = observed === true; }
         else { observed = (await l.innerText({ timeout: 200 })).slice(0, input.limit); passed = input.check === 'text_equals' ? observed === input.expected : observed.includes(input.expected); }
       } catch { observed = null; passed = false; }
-      if (passed || Date.now() - started >= input.wait_ms) break;
+      if (passed || Date.now() >= deadline) break;
       // Bounded condition polling, never an arbitrary task-level sleep.
       await page.waitForTimeout(50);
     } while (true);
