@@ -18,6 +18,7 @@ one stale namespace before reconciliation.
 | N1 network boundary | `5400fd22d3d159328ab28e2743d62ea9ef0e62ba` | N1 PASS / ACCEPTED |
 | N2/N3 implementation and tests | `6f4207fcd40cf539912475fb8c3dc45afea08b33` | checkpoint |
 | production broker service/socket | `83edbf17c6fa6aebc001555d7a70c8234b1d0a10` | P2 contract validated |
+| R1 bounded cleanup remediation | `3101603b282aa641a6b540f8af7ba2922ac580f6` | implemented; final gate still open |
 
 No revision was pushed.
 
