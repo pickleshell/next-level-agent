@@ -77,6 +77,7 @@ let _nlaBannerShown = false;
 const DEFAULT_MODEL_POOLS_PATH = path.resolve(__dirname, '../../config/model-pools.json');
 
 export function modelPoolsPath(homeDir = os.homedir()) {
+  if (typeof homeDir !== 'string') homeDir = os.homedir();
   return normalizePath(process.env.NLA_MODEL_POOLS_PATH, homeDir) || DEFAULT_MODEL_POOLS_PATH;
 }
 
@@ -97,6 +98,9 @@ function splitModel(model) {
 export function retryableProviderError(error) { return classifyProviderError(error).category === 'transient'; }
 
 export function availablePoolModels(models, maxAttempts, health = new Map(), now = Date.now()) {
+  // OpenCode may probe named exports as plugin factories. That probe passes the
+  // runtime context object, not a model list; it must be harmless and side-effect free.
+  if (!Array.isArray(models)) return [];
   const candidates = models.filter((model) => {
     const entry = health.get(model);
     return !entry || entry.until <= now;
