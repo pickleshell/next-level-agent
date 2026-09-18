@@ -11,6 +11,8 @@ canonical machine-readable NLA version record.
 
 > Any task can be solved in a single prompt.
 
+> If you want to go fast, go alone. If you want to go far, go together.
+
 > Skills can change how a general-purpose model works. NLA adds coordination, role separation, model failover, memory, and context management around those skills.
 
 The priorities are correctness, evidence, minimal necessary process, bounded context, recovery, and observable execution.
