@@ -31,11 +31,16 @@ Individual deterministic entry points include:
 - `node tests/opencode/test-nla-capability-cache.mjs`
 - `node tests/opencode/test-nla-model-pools.mjs`
 - `npm run test:browser`
+- `npm run test:browser:gate-result`
 
 Real-browser checks are separately opt-in, use local fixture services and reuse
 an operator-supplied MCP package/browser without installing either. See
 [Browser verification](BROWSER.md#verification). A real browser smoke does not
 claim that a live provider-driven OpenCode child session was exercised.
+
+The separate [Browser production gate](BROWSER_PRODUCTION_GATE.md) measures all
+four mandatory layers and rejects FAIL/BLOCKED/NOT_RUN. It is opt-in and
+network/browser dependent; its result aggregator is tested in offline CI.
 
 ## Broader inherited tests
 

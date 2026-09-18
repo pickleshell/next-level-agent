@@ -7,48 +7,59 @@ import path from 'node:path';
 // This function is serialized into MCP's code tool; only NLA chooses the code.
 export async function operation(page, input) {
   const context = page.context();
-  const origin = url => /^https?:\/\/[^/?#]+/.exec(url)?.[0] || null;
+  const origin = value => {
+    const match = /^(https?|wss?):\/\/([^/?#]+)/i.exec(value);
+    if (!match) return null;
+    const protocol = match[1].toLowerCase() === 'wss' ? 'https' : match[1].toLowerCase() === 'ws' ? 'http' : match[1].toLowerCase();
+    return protocol + '://' + match[2];
+  };
   const allowed = url => input.origins.includes(origin(url));
   const safeURL = url => url.split(/[?#]/)[0];
   const state = context.__nlaBrowser;
   if (input.kind === 'preflight') {
     if (state) throw new Error('Context already initialized');
     if (context.pages().length !== 1 || page.url() !== 'about:blank' || (await context.cookies()).length) throw new Error('Context is not fresh');
-    const s = { console: [], network: [], redirects: {}, dialogs: 0, blocks: 0 };
+    const s = { console: [], network: [], redirects: {}, dialogs: 0, blocks: 0, crashed: new Set() };
     context.__nlaBrowser = s;
-    await context.route('**/*', async route => {
+    // Match only HTTP(S) requests. WebSocket Upgrade is a separate browser
+    // transport and must never enter the HTTP route/fetch pipeline.
+    const routeHTTP = async route => {
       const request = route.request();
       if (!allowed(request.url()) || (!['GET', 'HEAD', 'OPTIONS'].includes(request.method()) && !input.permissions.external_mutation)) {
         s.blocks++; await route.abort(); return;
       }
       try {
-        // Do not let a redirect escape the policy before checking it.
-        // Streaming transports are deliberately unsupported by this adapter.
-        const response = await route.fetch({ maxRedirects: 0, timeout: input.timeout });
-        if (response.status() >= 300 && response.status() < 400) {
-          const location = response.headers().location;
-          if (location) s.redirects[request.url()] = location;
-          await route.abort(); return;
-        }
-        s.network.push({ method: request.method(), url: safeURL(request.url()), status: response.status() });
-        s.network = s.network.slice(-50);
-        await route.fulfill({ response });
+        // Continue approved requests through the browser network stack. This
+        // preserves SSE and WebSocket semantics and avoids Chromium treating
+        // route.fetch/fulfill loopback responses as private-network hops.
+        await route.continue();
       } catch { s.blocks++; await route.abort().catch(() => {}); }
-    });
-    if (typeof context.routeWebSocket !== 'function') throw new Error('WebSocket policy unavailable');
-    await context.routeWebSocket('**/*', socket => { s.blocks++; socket.close(); });
+    };
+    await context.route('http://**/*', routeHTTP);
+    await context.route('https://**/*', routeHTTP);
     const attach = p => {
       p.on('console', m => { s.console.push({ type: m.type() }); s.console = s.console.slice(-50); });
       p.on('pageerror', () => { s.console.push({ type: 'exception' }); s.console = s.console.slice(-50); });
+      p.on('crash', () => s.crashed.add(p));
       p.on('dialog', d => { s.dialogs++; void d.dismiss(); });
       p.on('download', d => { if (!input.permissions.downloads) void d.cancel(); });
+      p.on('response', response => {
+        const type = response.headers()['content-type'] || '';
+        if (type.includes('text/event-stream')) s.sse_responses = (s.sse_responses || 0) + 1;
+        if (response.status() >= 300 && response.status() < 400) {
+          const location = response.headers()['location'];
+          if (location) s.redirects[response.url()] = location;
+        }
+        s.network.push({ method: response.request().method(), url: safeURL(response.url()), status: response.status() });
+        s.network = s.network.slice(-50);
+      });
     };
     attach(page); context.on('page', attach);
     context.setDefaultTimeout(input.timeout);
     context.setDefaultNavigationTimeout(input.timeout);
     await context.clearPermissions();
     await page.setViewportSize({ width: 1280, height: 720 });
-    return { backend: 'playwright-mcp', engine: context.browser()?.browserType().name(), version: context.browser()?.version(), isolated: true, operations: ['navigate', 'observe', 'click', 'fill', 'select', 'press', 'tabs', 'screenshot', 'upload', 'download', 'check'], streaming: false };
+    return { backend: 'playwright-mcp', engine: context.browser()?.browserType().name(), version: context.browser()?.version(), isolated: true, operations: ['navigate', 'observe', 'click', 'fill', 'select', 'press', 'tabs', 'screenshot', 'upload', 'download', 'check'], streaming: true };
   }
   if (!state) throw new Error('Preflight required');
   if (input.kind === 'status') return { status: 'PASS', reachable: true, url: safeURL(page.url()) };
@@ -56,6 +67,7 @@ export async function operation(page, input) {
     page = context.pages()[input.tab];
     if (!page) throw new Error('Invalid tab');
   }
+  if (page.isClosed?.() || state.crashed?.has(page)) throw new Error('Browser page is unavailable');
   const locator = spec => {
     if (!spec || typeof spec !== 'object') throw new Error('Locator required');
     if (spec.role) return page.getByRole(spec.role, { name: spec.name, exact: true });
@@ -93,12 +105,22 @@ export async function operation(page, input) {
       if (result.count === 1) { result.text = (await l.innerText()).slice(0, input.limit); result.enabled = await l.isEnabled(); }
     } else result.text = (await page.locator('body').innerText()).slice(0, input.limit);
     result.console = state.console; result.network = state.network;
+    result.streaming = { sse_responses: state.sse_responses || 0, websocket_connections: state.websocket || 0, websocket_messages: state.websocket_messages || 0, websocket_closed: state.websocket_closed || 0 };
     result.dialogs = state.dialogs; result.policy_blocks = state.blocks;
     return result;
   }
   if (input.kind === 'screenshot') {
-    await page.screenshot({ path: input.artifact, fullPage: false, type: 'png' });
-    return { status: 'PASS', artifact: input.artifact, url: safeURL(page.url()) };
+    const secretSelectors = [
+      'input[type="password"]',
+      '[data-secret]', '[data-sensitive]', '[data-private]',
+      '[name*="token" i]', '[name*="api-key" i]', '[name*="apikey" i]',
+      '[name*="secret" i]', '[name*="auth" i]',
+      '[id*="token" i]', '[id*="api-key" i]', '[id*="apikey" i]',
+      '[id*="secret" i]', '[id*="auth" i]'
+    ];
+    const masks = secretSelectors.map(selector => page.locator(selector));
+    await page.screenshot({ path: input.artifact, fullPage: false, type: 'png', mask: masks, maskColor: '#000000' });
+    return { status: 'PASS', artifact: input.artifact, url: safeURL(page.url()), secret_regions_masked: secretSelectors };
   }
   if (input.kind === 'check') {
     const deadline = Date.now() + (Number.isFinite(input.wait_ms) ? Math.min(10000, Math.max(0, input.wait_ms)) : 1000);
@@ -130,14 +152,15 @@ export async function operation(page, input) {
     const promise = page.waitForEvent('download');
     await l.click(); const download = await promise; await download.saveAs(input.artifact);
   } else throw new Error('Unsupported operation');
-  return { status: 'PASS', operation: input.kind, url: safeURL(page.url()) };
+  return { status: 'PASS', operation: input.kind, url: safeURL(page.url()), artifact: input.kind === 'download' ? input.artifact : undefined };
 }
 
 export class PlaywrightMcpBackend {
   constructor(config) {
     this.config = config;
     this.outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-backend-'));
-    this.client = new BrowserMcpClient({ ...config, cwd: this.outputDir, command: [...config.command, '--block-service-workers', '--snapshot-mode', 'none', '--output-dir', this.outputDir] });
+    const command = config.socket ? undefined : [...config.command, '--block-service-workers', '--snapshot-mode', 'none', '--output-dir', this.outputDir];
+    this.client = new BrowserMcpClient({ ...config, cwd: this.outputDir, command });
   }
   async start(policy) {
     await this.client.start();

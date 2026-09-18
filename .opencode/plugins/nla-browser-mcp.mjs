@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 
 export class BrowserError extends Error {
   constructor(code, message = code) { super(message); this.code = code; }
@@ -6,16 +7,28 @@ export class BrowserError extends Error {
 
 // MCP stdio uses newline-delimited JSON-RPC. No shell or inherited secrets.
 export class BrowserMcpClient {
-  constructor({ command, environment = {}, timeout_ms = 30000, cwd, max_bytes = 2 * 1024 * 1024 }) {
-    if (!Array.isArray(command) || !command.length || command.some(x => typeof x !== 'string' || !x)) throw new BrowserError('NOT_CONFIGURED');
+  constructor({ command, socket, environment = {}, timeout_ms = 30000, cwd, max_bytes = 2 * 1024 * 1024 }) {
+    if ((!Array.isArray(command) || !command.length || command.some(x => typeof x !== 'string' || !x)) && typeof socket !== 'string') throw new BrowserError('NOT_CONFIGURED');
     this.command = command; this.environment = environment; this.timeout = timeout_ms;
-    this.cwd = cwd; this.maxBytes = max_bytes; this.pending = new Map(); this.nextID = 0;
+    this.socket = socket; this.cwd = cwd; this.maxBytes = max_bytes; this.pending = new Map(); this.nextID = 0;
     this.buffer = ''; this.closed = false;
   }
   async start() {
     if (this.process || this.closed) throw new BrowserError('UNREACHABLE');
     const inherited = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'DISPLAY', 'XDG_RUNTIME_DIR', 'SYSTEMROOT'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
-    this.process = spawn(this.command[0], this.command.slice(1), { cwd: this.cwd, shell: false, env: { ...inherited, ...this.environment }, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (this.socket) {
+      const socket = await new Promise((resolve, reject) => {
+        const client = net.createConnection(this.socket);
+        client.once('connect', () => resolve(client));
+        client.once('error', reject);
+      });
+      this.process = {
+        stdin: socket, stdout: socket, socket, exitCode: null, signalCode: null,
+        stderr: { on: () => {} },
+        once: (event, handler) => socket.once(event === 'exit' ? 'close' : event, handler),
+        kill: () => socket.destroy(),
+      };
+    } else this.process = spawn(this.command[0], this.command.slice(1), { cwd: this.cwd, shell: false, env: { ...inherited, ...this.environment }, stdio: ['pipe', 'pipe', 'pipe'] });
     this.process.stdout.setEncoding('utf8');
     this.process.stdout.on('data', chunk => this.receive(chunk));
     // Drain stderr without recording possible credentials or page content.
@@ -67,7 +80,7 @@ export class BrowserMcpClient {
   async call(name, args) {
     if (!this.tools?.includes(name)) throw new BrowserError('UNSUPPORTED_CAPABILITY');
     const result = await this.request('tools/call', { name, arguments: args });
-    if (result?.isError) throw new BrowserError('UNREACHABLE', 'Browser backend operation failed');
+    if (result?.isError) throw new BrowserError('UNREACHABLE', String(result.content?.[0]?.text || 'Browser backend operation failed').slice(0, 1000));
     return result;
   }
   fail(code = 'UNREACHABLE') {
@@ -79,6 +92,7 @@ export class BrowserMcpClient {
     this.fail();
     const child = this.process;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    if (child.socket) { child.socket.end(); child.socket.destroy(); return; }
     child.stdin.end(); child.kill('SIGTERM');
     await new Promise(resolve => {
       const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 2000);

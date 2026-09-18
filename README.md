@@ -467,6 +467,7 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 - [Installation](INSTALL.md): supported Alpha setup for OpenCode.
 - [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md): status, limitations, telemetry, storage, evidence, and roadmap.
 - [Optional Browser role](docs/BROWSER.md): Playwright MCP installation, isolated configuration, target policy, and Browser-role boundaries.
+- [Browser production gate](docs/BROWSER_PRODUCTION_GATE.md): functional acceptance, isolation/security, failure/recovery and repeated-use evidence; every mandatory layer must pass.
 - [Installation and Testing](docs/NLA_INSTALL_AND_TEST.md): detailed runtime behavior and verification.
 - [Original Draft 0.4](TECHNICAL_SPECIFICATION.md): the original product and architecture specification.
 - [Draft 0.4 Implementation Status](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md): what is implemented, partial, absent, or intentionally deferred.

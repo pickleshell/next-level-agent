@@ -23,7 +23,11 @@ same host. On every startup it reaps only resources carrying the broker's
 nla- / nlah- ownership prefixes, then creates the Unix socket. Startup
 failure is fail-closed: no Browser process is launched.
 
-The NLA client may send only typed JSON create/status/destroy requests. The
-broker authenticates the Unix peer with SO_PEERCRED and additionally requires
-the opaque session token for status/destroy. Browser policy is immutable for
-the lifetime of a session.
+The NLA client may send only typed JSON create/status/destroy/launch requests.
+Launch accepts only the owned session ID and opaque token; the fixed browser
+command and its minimal environment are service configuration, never client
+input. The broker authenticates the Unix peer with SO_PEERCRED and additionally
+requires the opaque session token for status/destroy/launch. Browser policy is
+immutable for the lifetime of a session. The configured command must contain
+`__NLA_SESSION_PROXY__`; the broker substitutes the current session proxy and
+fails closed if the placeholder is absent.
