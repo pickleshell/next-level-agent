@@ -117,13 +117,17 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Scout** | An inexpensive model with reliable research tools; a local model when its tool support is sufficient | This role researches external documentation, not only local files. Prioritize source attribution and version accuracy; use a large-context model for lengthy documents and Luna as fallback. **For example:** `opencode-go/gpt-5.6-luna`, or `ollama/qwen3.8:latest` with working documentation/search tools. |
 | **Architect** | A strong reasoning model such as GPT-5.6 Sol | Spend capability on interfaces, safety boundaries, failure modes, and design tradeoffs. Luna is the recommended fallback when Sol is unavailable or the choice is uncertain. **For example:** `opencode/gpt-5.6-sol` or `command-code/gpt-5.6-sol` → `opencode-go/gpt-5.6-luna`. |
 | **Implementer** | Any model demonstrated to code well in the target runtime, including local, free, or inexpensive models | Match capability to the bounded task. Verify editing tools, tests, and instruction following; escalate difficult changes to a stronger coding model and retain Luna as the final fallback. **For example:** `opencode/big-pickle` or `ollama/qwen3.8:latest` → `opencode-go/gpt-5.6-luna`. |
-| **Reviewer** | A strong model that can independently analyze code and verification evidence; Luna is a practical default | Prefer an independent session and, where practical, a different model from the implementer. For high-risk changes, use a model capable of reasoning about failure paths and missing tests. **For example:** `command-code/gpt-5.6-luna` or `opencode-go/gpt-5.6-luna`; evaluate Sol for particularly difficult reviews. |
+| **Reviewer** | A strong model that can independently analyze code and verification evidence; Luna is a practical default | Prefer an independent session and, where practical, a different model from the implementer. For high-risk changes, use a model capable of reasoning about failure paths and missing tests. **For example:** GPT-5.6 Sol (`opencode/gpt-5.6-sol`) for demanding reviews, or evaluate Claude Opus 5 (`opencode/claude-opus-5`) for a different model family; retain Luna as fallback. |
 | **Supervisor** | Luna, or another strong model validated for workflow auditing | Prioritize detecting missing approvals, loops, stale evidence, and unsupported completion claims. This role needs sound judgment more than maximum coding throughput. **For example:** `opencode-go/gpt-5.6-luna`. |
 | **Compactor** | **Luna or a capable local Qwen model** | Validate faithful compression, structured output, and preservation of constraints and evidence. Local execution can reduce cloud cost for large inputs; ensure sufficient context and use Luna as fallback. **For example:** `ollama/qwen3.8:latest` → `opencode-go/gpt-5.6-luna`, or Luna first when predictable compression is the priority. |
 
 The examples illustrate model choices and fallback order, not a ready-to-copy
 configuration. Verify provider access and configure the appropriate runtime/backend,
 especially when combining local and cloud utility models.
+The [ledger patch benchmark](https://pickleshell.github.io/model-comparison.html)
+used Sol as its canonical reviewer; Claude Opus 5 successfully produced a patch
+in that benchmark, which supports evaluating it as a candidate but does not
+establish its quality as a reviewer. Validate review behavior separately.
 
 For roles that process large amounts of repository content or local files,
 prefer a capable local model or an inexpensive cloud model with a large usable
