@@ -74,6 +74,14 @@
       "idle_timeout_ms": 180000,
       "max_failovers": 2
     },
+    "browser": {
+      "enabled": false,
+      "models": [
+        "opencode-go/gpt-5.6-luna"
+      ],
+      "idle_timeout_ms": 180000,
+      "max_failovers": 0
+    },
     "compactor": {
       "enabled": true,
       "prompt_optimization": {

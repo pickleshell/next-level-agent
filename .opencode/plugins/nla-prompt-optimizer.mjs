@@ -7,6 +7,7 @@ export const ROLE_TOOL_CEILINGS = Object.freeze({
   explorer: Object.freeze(['read', 'grep', 'glob']),
   implementer: Object.freeze(['read', 'grep', 'edit', 'write', 'bash']),
   reviewer: Object.freeze(['read', 'grep', 'glob', 'bash']),
+  browser: Object.freeze(['nla_browser_session', 'nla_browser_observe', 'nla_browser_action', 'nla_browser_check']),
 });
 
 const TOOL_SIGNALS = Object.freeze({
@@ -24,6 +25,7 @@ const REQUIRED_BY_ROLE = Object.freeze({
   explorer: ['read', 'grep'],
   implementer: ['read', 'edit'],
   reviewer: ['read', 'grep'],
+  browser: ['nla_browser_session', 'nla_browser_observe', 'nla_browser_action', 'nla_browser_check'],
 });
 
 export function roleIsToolFree(role) {

@@ -7,7 +7,8 @@
   "type": "module",
   "main": ".opencode/plugins/next-level-agent.js",
   "scripts": {
-    "test:nla": "bash tests/opencode/test-nla-memory.sh && node tests/opencode/test-nla-model-pools.mjs && node tests/opencode/test-nla-reconciliation.mjs && node tests/opencode/test-nla-version.mjs"
+    "test:nla": "bash tests/opencode/test-nla-memory.sh && node tests/opencode/test-nla-model-pools.mjs && node tests/opencode/test-nla-reconciliation.mjs && node tests/opencode/test-nla-version.mjs && node tests/opencode/test-nla-browser.mjs",
+    "test:browser": "node tests/opencode/test-nla-browser.mjs"
   },
   "keywords": [
     "pi-package",
