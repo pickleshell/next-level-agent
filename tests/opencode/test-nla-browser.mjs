@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { BrowserCapability, BROWSER_TOOLS, browserOrigin, loadBrowserConfig, validateBrowserTask } from '../../.opencode/plugins/nla-browser.mjs';
 import { BrowserMcpClient, BrowserError } from '../../.opencode/plugins/nla-browser-mcp.mjs';
-import { PlaywrightMcpBackend } from '../../.opencode/plugins/nla-browser-playwright.mjs';
+import { operation } from '../../.opencode/plugins/nla-browser-playwright.mjs';
 import { deterministicToolShortlist } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 
@@ -65,6 +65,30 @@ try {
   const failed = await manager.begin(task({ success_criteria: [{ id: 'missing', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Different' }] }), 'parent', root);
   manager.bind(failed, 'failed'); await manager.execute('failed', failed.id, 'session', { operation: 'preflight' });
   assert.equal(JSON.parse((await manager.finish(failed)).output).result, 'FAIL');
+  const tampered = await manager.begin(task({ success_criteria: [{ id: 'truth', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Correct' }] }), 'parent', root);
+  manager.bind(tampered, 'tampered');
+  await manager.execute('tampered', tampered.id, 'session', { operation: 'preflight' });
+  await assert.rejects(manager.execute('tampered', tampered.id, 'check', { id: 'truth', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Ready' }), e => e.code === 'POLICY_DENIED');
+  await manager.execute('tampered', tampered.id, 'session', { operation: 'close' });
+  const tamperedResult = JSON.parse((await manager.finish(tampered)).output);
+  assert.equal(tamperedResult.result, 'BLOCKED'); assert.equal(tamperedResult.reason, 'SESSION_CLOSED');
+  assert.equal(tamperedResult.checks[0].status, 'NOT_RUN');
+
+  // Exercise the actual reviewed backend check code without a transport timeout.
+  let reads = 0; let becomesTrue = true;
+  const checkedPage = {
+    context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
+    getByTestId: () => ({ innerText: async () => (++reads >= 2 && becomesTrue ? 'Correct' : 'Wrong') }),
+    waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  };
+  const checkInput = { kind: 'check', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Correct', limit: 100, wait_ms: 200 };
+  assert.equal((await operation(checkedPage, checkInput)).status, 'PASS');
+  becomesTrue = false;
+  assert.equal((await operation(checkedPage, { ...checkInput, wait_ms: 20 })).status, 'FAIL');
+  const { wait_ms, ...noWaitInput } = checkInput;
+  const beforeNoWait = Date.now();
+  assert.equal((await operation(checkedPage, noWaitInput)).status, 'FAIL');
+  assert.ok(Date.now() - beforeNoWait < 3000, 'omitted wait_ms must terminate inside the backend');
   const notRun = await manager.begin(task(), 'parent', root); manager.bind(notRun, 'no-preflight');
   assert.equal(JSON.parse((await manager.finish(notRun)).output).result, 'NOT_RUN');
 

@@ -244,6 +244,15 @@ data throughout the role's work.
 
 ## Verification
 
+Mandatory checks are bound to their original check type, locator and expected
+value, not only their ID. A child cannot substitute another condition under
+the same ID. Closing the session before final verification produces BLOCKED;
+return normally and let NLA perform final checks and cleanup.
+
+Checks have an internal deadline even when `wait_ms` is omitted (default
+1,000 ms, maximum 10,000 ms). An unsatisfied condition ends as FAIL inside
+the backend, without waiting for the MCP transport timeout.
+
 ```bash
 npm run test:browser
 npm run test:nla
@@ -260,6 +269,20 @@ node tests/opencode/smoke-nla-browser.mjs
 The smoke uses its own local fixture services and verifies research/extraction,
 interaction/forms, explicit resume, fresh state, and forbidden redirects.
 It neither visits production applications nor installs browser software.
+
+For the final model-driven integration gate, configure the actual launcher
+with an enabled private Browser pool and backend policy permitting the local
+fixture origin `http://127.0.0.1:18765`. Then explicitly opt into model usage:
+
+```bash
+NLA_SMOKE_MODEL_E2E=1 NLA_SMOKE_LAUNCHER=/absolute/path/to/nla \
+  node tests/opencode/smoke-nla-browser-model.mjs
+```
+
+This test asks the Orchestrator a normal browser task, verifies actual
+`nla_task(role=browser)` delegation, an unseen value extracted through the
+Browser child, tool-produced checks/evidence and the Orchestrator's final
+answer. It is optional and never part of mandatory offline CI.
 
 Official references:
 
