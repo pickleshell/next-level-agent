@@ -69,15 +69,20 @@ parallel sessions, not an indefinite service lifetime. Browser contexts are
 measured through real owned backend lifecycles and processes, not only an
 in-memory registry count.
 
-## Current open production gates
+## Current final-gate status
 
-The adapter now preserves approved SSE responses and proxies approved
-WebSockets through the isolated context. The production fixture still needs
-to exercise message delivery, disconnect/reconnect and backend failure while
-those connections are active before this layer can be marked PASS.
-Fresh/retained context tests do not substitute for actual persistent OpenCode
-Orchestrator restart, child restart or compaction/recovery experiments.
-These unexecuted experiments remain NOT_RUN.
+N1, N2 and N3 are accepted. N1 evidence is frozen at `5400fd2`; N2/N3
+implementation and tests were checkpointed at `6f4207f`, and the production
+broker contract at `83edbf1`. Real Luna Browser delegation, structured
+evidence, broker restart and browser backend interruption have passed in the
+final gate.
+
+The mandatory final gate is still open: real Browser-child interruption,
+persistent Orchestrator restart/restore, and real OpenCode compaction during an
+active Browser workflow have not all produced fresh evidence. A 30-sequential
+plus 2-parallel production-broker run also recorded one stale namespace before
+broker reconciliation; a repeat bounded run passed and restart cleanup passed,
+but the incident remains a release-review item until reproduced and explained.
 
 Manifests redact typed values, omit raw console messages, credentials,
 headers and bodies, and normalize network URL metadata. Screenshots mask

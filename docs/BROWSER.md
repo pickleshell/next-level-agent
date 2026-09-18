@@ -1,6 +1,7 @@
 # Optional universal Browser capability
 
-User-testing readiness does not imply production readiness. See the separate
+N1, N2 and N3 have been accepted, but user-testing readiness does not imply
+final production readiness. See the separate
 [four-layer production gate](BROWSER_PRODUCTION_GATE.md) for mandatory coverage,
 fault injection, repeated-use measurements and remaining blocked checks.
 
@@ -9,6 +10,19 @@ application interaction, forms, and browser verification. It receives a goal,
 task permissions, success criteria, and an optional session to resume through
 ordinary `nla_task`. Browser acceptance is one use case, not the subsystem's
 purpose.
+
+The accepted production boundary is:
+
+```text
+Luna Orchestrator → Browser child → Browser Capability → Playwright MCP
+→ Chromium inside an N1 per-session network namespace → typed evidence
+```
+
+The privileged broker is a narrow systemd service/socket component. NLA and
+Browser remain unprivileged; the broker alone owns namespace/veth/nft lifecycle.
+The service contract, required capabilities, fixed paths, socket ownership and
+restart reconciliation are documented in
+[`network-broker/SERVICE.md`](../network-broker/SERVICE.md).
 
 ```text
 Browser role → Browser Capability → Backend interface → Playwright MCP
@@ -30,9 +44,10 @@ configuration returns Browser `BLOCKED`, while ordinary NLA work continues.
 NLA performs no automatic MCP or browser installation.
 
 SSE and WebSocket transports are passed through the isolated browser context;
-SSE/WebSocket message and reconnect checks are still subject to the production
-gate. Full traces and specialized XSS checks remain unsupported. DOM rendering
-of hostile text can be inspected, but this is not a full XSS guarantee.
+N1/N2 evidence covers the real browser/network boundary and zero-request
+forbidden fixtures. Full traces and specialized XSS checks remain unsupported.
+DOM rendering of hostile text can be inspected, but this is not a full XSS
+guarantee.
 
 ## Install the optional Playwright MCP backend
 
@@ -85,7 +100,25 @@ Create a private operator configuration file, outside application repositories:
 }
 ```
 
+For the accepted production-style broker, use this operator override instead
+of an unrestricted host-launched command:
+
+```json
+{
+  "broker_socket": "/run/nla-browser/broker.sock",
+  "broker_allow_private_addresses": false,
+  "broker_allow_websocket": true,
+  "allowed_origins": ["https://approved.example"],
+  "timeout_ms": 30000,
+  "action_timeout_ms": 5000,
+  "max_sessions": 2,
+  "session_ttl_ms": 600000
+}
+```
+
 Set `NLA_BROWSER_CONFIG_PATH` to this file when launching NLA/OpenCode.
+The broker policy is immutable per session and is enforced below Playwright
+for navigation, redirects, subresources, fetch/XHR, SSE and WebSocket traffic.
 `command` is operator configuration; child agents cannot choose or modify it.
 The client spawns it without a shell. Only a small environment allowlist is
 inherited; explicit backend environment values can be supplied through the
@@ -241,12 +274,11 @@ not a disk/memory sandbox. Session leases are bounded; evidence retention is
 operator-managed in this slice.
 
 The intended v1 policy covers top-level navigation, HTTP(S) subresources,
-EventSource, WebSocket, forms, iframes and popups only when the backend can
-prevent a forbidden request before transmission. The current native
-continuation path does not yet prove that invariant for HTTP redirect targets;
-the production gate therefore remains NOT READY. Service workers are blocked.
-This facade is not a substitute for OS/container network policy. Page content
-remains untrusted data throughout the role's work.
+EventSource, WebSocket, forms, iframes and popups. The N1 network boundary is
+authoritative: forbidden fixture request counters must remain zero even when
+Playwright routing is bypassed. Service workers are blocked. This facade is
+not a substitute for the OS/network boundary; page content remains untrusted
+data throughout the role's work.
 
 ## Verification
 
