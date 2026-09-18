@@ -37,7 +37,8 @@ function processes() {
   return result;
 }
 function capture(session) {
-  const all = processes(); const pids = new Set([session.backend.client.process.pid]);
+  const all = processes(); const pids = new Set();
+  if (Number.isInteger(session.backend.client.process?.pid)) pids.add(session.backend.client.process.pid);
   let changed = true;
   while (changed) { changed = false; for (const p of all.values()) if (pids.has(p.parent) && !pids.has(p.pid)) { pids.add(p.pid); changed = true; } }
   let rss = 0;
@@ -153,7 +154,7 @@ try {
     });
     origin = 'http://127.0.0.1:' + server.address().port;
     const upload = path.join(root, 'approved.txt'); fs.writeFileSync(upload, 'fixture upload', { mode: 0o600 });
-    config = { command: [process.execPath, process.env.NLA_SMOKE_MCP_CLI, '--isolated', '--headless', '--executable-path', process.env.NLA_SMOKE_BROWSER_EXECUTABLE], allowed_origins: [origin], timeout_ms: 30000, action_timeout_ms: 1000, max_sessions: 2, session_ttl_ms: 1000, upload_files: [upload] };
+    config = { command: [process.execPath, process.env.NLA_SMOKE_MCP_CLI, '--isolated', '--headless', '--executable-path', process.env.NLA_SMOKE_BROWSER_EXECUTABLE], broker_socket: process.env.NLA_PRODUCTION_BROKER_SOCKET, broker_allow_private_addresses: true, allowed_origins: [origin], timeout_ms: 30000, action_timeout_ms: 1000, max_sessions: 2, session_ttl_ms: 1000, upload_files: [upload] };
     capability = make();
 
     await test('functional', 'navigation-dom-redirect-spa', () => withSession(task({ success_criteria: [readyCheck('Route')] }), async s => {
@@ -315,7 +316,8 @@ try {
         const [a,b]=await Promise.all([begin(capability),begin(capability)]);
         const ownedA=capture(a);const ownedB=capture(b);
         try{
-          assert.notEqual(a.backend.client.process.pid,b.backend.client.process.pid);
+          if (a.backend.client.process?.pid !== undefined && b.backend.client.process?.pid !== undefined) assert.notEqual(a.backend.client.process.pid,b.backend.client.process.pid);
+          else assert.notEqual(a.network?.session_id,b.network?.session_id);
           await assert.rejects(capability.begin(task(),'gate-parent',root),e=>e.code==='RESOURCE_EXHAUSTED');
           await Promise.all([navigate(a),navigate(b)]);
           await action(a,{operation:'click',locator:{role:'button',name:'Store'}});

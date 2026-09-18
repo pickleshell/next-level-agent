@@ -79,10 +79,13 @@ final gate.
 
 The mandatory final gate is still open: real Browser-child interruption,
 persistent Orchestrator restart/restore, and real OpenCode compaction during an
-active Browser workflow have not all produced fresh evidence. A 30-sequential
-plus 2-parallel production-broker run also recorded one stale namespace before
-broker reconciliation; a repeat bounded run passed and restart cleanup passed,
-but the incident remains a release-review item until reproduced and explained.
+active Browser workflow have not all produced fresh evidence. The stale
+namespace incident was reproduced: concurrent broker teardown could hang while
+waiting for the top-level browser launcher, leaving descendants alive. The
+remediation now uses process-group termination, bounded waits, serialized
+destroy and observable cleanup errors; the post-fix parallel resource scan was
+clean. The remaining recovery gates and aggregate harness failures still block
+release.
 
 Manifests redact typed values, omit raw console messages, credentials,
 headers and bodies, and normalize network URL metadata. Screenshots mask
