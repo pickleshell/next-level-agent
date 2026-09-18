@@ -64,10 +64,39 @@ documented in `network-broker/SERVICE.md`.
   Browser task PASS, evidence
   `53cfb88e-7bcc-4635-b0e1-7cb3fa6c6dfe`.
 * N1/N2/N3 regression suites and broker race/vet checks: PASS.
-* Production broker stress: 30 sequential + 2 parallel tasks returned PASS,
-  but one stale namespace/veth was observed after the run. Broker restart
-  reconciliation removed it. A repeat 10 sequential + 2 parallel run passed
-  with no remaining namespace, veth, MCP socket or browser process.
+
+## R1 remediation
+
+The stale-namespace failure was reproduced in the production-style parallel
+harness. Broker destroy could stop at Browser process teardown: the old code
+killed only the top-level `ip` process and waited without a deadline, leaving a
+descendant process tree alive and preventing namespace deletion. The browser
+client also waited for backend close without a bound, so broker destroy could
+be skipped or delayed indefinitely.
+
+The remediation adds:
+
+* a process group for each broker-launched MCP/Chromium tree;
+* bounded group termination and wait;
+* bounded proxy shutdown;
+* serialized broker destroy;
+* observable cleanup stages and structured cleanup errors;
+* Browser-side bounded backend close and mandatory `BLOCKED` propagation on
+  cleanup failure;
+* regression coverage proving cleanup failure cannot become `PASS`.
+
+After the fix, the production-style parallel run passed and the final resource
+scan showed no broker-owned namespace, veth, MCP socket or browser process.
+The run still had unrelated harness failures for the intentionally unavailable
+fixture and one flaky navigation/sequential assertion; these are retained as
+failures and do not count as production acceptance.
+
+* The pre-remediation 30 sequential + 2 parallel run left one stale
+  namespace/veth until broker reconciliation. After the R1 fix, a fresh
+  production-style run completed the parallel cleanup path with no remaining
+  namespace, veth, MCP socket or browser process; the aggregate harness still
+  reported unrelated functional/failure-fixture assertions, so this is not a
+  production acceptance result.
 
 ## Verification commands
 

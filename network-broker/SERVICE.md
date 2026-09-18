@@ -1,7 +1,9 @@
 # Broker service contract
 
-This file is an installation contract, not an installation action. The
-experimental worktree does not install or enable a system service.
+This file is the installation and operations contract. The production-style
+units described here are installed on the BOS test host for the gated NLA
+Browser service; repository changes still do not perform installation or
+enablement automatically.
 
 Create a dedicated nla-browser group and run the broker as UID 0 with only
 the capabilities required to create/delete the per-session namespace and

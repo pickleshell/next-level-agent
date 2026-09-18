@@ -151,7 +151,7 @@ export class BrowserCapability {
       this.sessions.set(session.id, session);
       if (signal) {
         session.signal = signal;
-        session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner); };
+        session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner).catch(error => { session.cleanupError = error; }); };
         signal.addEventListener('abort', session.abort, { once: true });
       }
       try { session.metadata = await backend.start(task); }
@@ -159,7 +159,7 @@ export class BrowserCapability {
     }
     if (signal && !session.abort) {
       session.signal = signal;
-      session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner); };
+      session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner).catch(error => { session.cleanupError = error; }); };
       signal.addEventListener('abort', session.abort, { once: true });
     }
     if (signal?.aborted || session.cancelled) { await this.closeOwned(session.id, owner); throw new BrowserError('CANCELLED'); }
@@ -269,6 +269,12 @@ export class BrowserCapability {
     let result = required.some(c => c.status === 'FAIL') ? 'FAIL' : required.some(c => c.status === 'BLOCKED') || error ? 'BLOCKED' : required.some(c => c.status === 'NOT_RUN') || !required.length ? 'NOT_RUN' : 'PASS';
     const repository_after = reconcileGitWorkspace(s.directory).observed;
     const manifest = this.redact(s, { version: 1, run_id: s.run_id, task_id: s.child || null, revision: s.revision, repository_after, browser: s.metadata, checks, operations: s.events, result, reason: error?.code, session_id: s.id });
+    let cleanupError = null;
+    if (!(s.task.keep_session && !error && !s.poisoned && this.sessions.has(s.id))) {
+      try { await this.closeOwned(s.id, s.owner); } catch (closeError) { cleanupError = closeError; }
+    }
+    if (cleanupError && !error) error = cleanupError;
+    if (cleanupError) result = 'BLOCKED';
     const file = path.join(s.artifacts, 'manifest.json');
     try { atomicWrite(file, JSON.stringify(manifest, null, 2) + '\n'); }
     catch { await this.closeOwned(s.id, s.owner); throw new BrowserError('RESOURCE_EXHAUSTED', 'Browser evidence storage unavailable'); }
@@ -276,17 +282,42 @@ export class BrowserCapability {
       this.children.delete(s.child); s.child = null; s.busy = false;
       s.signal?.removeEventListener('abort', s.abort); s.abort = null; s.signal = null;
       s.expires = this.now() + (this.config.session_ttl_ms || 600000);
-    } else await this.closeOwned(s.id, s.owner);
+    }
     return { title: `Browser ${result}`, output: JSON.stringify({ result, reason: error?.code, checks, data: s.events.filter(e => e.operation === 'observe').at(-1) || null, evidence: file, session_id: s.task.keep_session && !error && this.sessions.has(s.id) ? s.id : null }), metadata: { browser_result: result, evidence: file, revision: s.revision } };
   }
   async closeOwned(id, owner) {
     const s = this.sessions.get(id); if (!s) return;
     if (s.owner !== owner) throw new BrowserError('POLICY_DENIED');
-    this.sessions.delete(id); if (s.child) this.children.delete(s.child);
+    if (s.cleanupPromise) return s.cleanupPromise;
+    s.closing = true;
+    if (s.child) this.children.delete(s.child);
     s.signal?.removeEventListener('abort', s.abort);
-    try { await s.backend.close(); } finally {
-      if (s.network) await brokerRequest(s.network.socket, { op: 'destroy', session_id: s.network.session_id, token: s.network.token }).catch(() => {});
-    }
+    s.cleanupPromise = (async () => {
+      const cleanupErrors = [];
+      try {
+        await Promise.race([
+          Promise.resolve().then(() => s.backend.close()),
+          new Promise((_, reject) => setTimeout(() => reject(new BrowserError('UNREACHABLE', 'Browser backend cleanup timed out')), 5000)),
+        ]);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        if (s.network) {
+          try {
+            await brokerRequest(s.network.socket, { op: 'destroy', session_id: s.network.session_id, token: s.network.token });
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+      } finally {
+        this.sessions.delete(id);
+      }
+      if (cleanupErrors.length) {
+        throw new BrowserError('UNREACHABLE', `Browser resource cleanup failed: ${cleanupErrors.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
+      }
+    })();
+    return s.cleanupPromise;
   }
   async reap() {
     for (const s of this.sessions.values()) if (!s.busy && s.expires <= this.now()) await this.closeOwned(s.id, s.owner);

@@ -78,6 +78,36 @@ try {
   await brokerManager.dispose();
   await new Promise(resolve => broker.close(resolve));
 
+  // Cleanup failures must be observable and can never become a clean PASS.
+  const cleanupBrokerSocket = path.join(root, 'cleanup-failure-broker.sock');
+  const cleanupBroker = net.createServer(socket => {
+    let buffer = '';
+    socket.on('data', chunk => {
+      buffer += chunk;
+      if (!buffer.includes('\n')) return;
+      const request = JSON.parse(buffer); buffer = '';
+      const response = request.op === 'create'
+        ? { ok: true, session: { session_id: 'cleanup-session', session_token: 'cleanup-token' } }
+        : request.op === 'launch' ? { ok: true, endpoint: '/tmp/fake-mcp.sock' }
+          : request.op === 'destroy' ? { ok: false, error: 'namespace still exists after cleanup' }
+            : { ok: true };
+      socket.end(JSON.stringify(response) + '\n');
+    });
+  });
+  await new Promise((resolve, reject) => { cleanupBroker.once('error', reject); cleanupBroker.listen(cleanupBrokerSocket, resolve); });
+  const cleanupManager = new BrowserCapability({
+    config: { ...config, broker_socket: cleanupBrokerSocket, broker_allow_private_addresses: true },
+    root,
+    backendFactory: () => ({ start: async () => ({}), invoke: async () => ({ status: 'PASS' }), close: async () => {} }),
+  });
+  const cleanupSession = await cleanupManager.begin(task(), 'cleanup-parent', root);
+  cleanupManager.bind(cleanupSession, 'cleanup-child');
+  await cleanupManager.execute('cleanup-child', cleanupSession.id, 'session', { operation: 'preflight' });
+  const cleanupResult = JSON.parse((await cleanupManager.finish(cleanupSession)).output);
+  assert.equal(cleanupResult.result, 'BLOCKED', 'cleanup failure must not produce PASS');
+  await cleanupManager.dispose();
+  await new Promise(resolve => cleanupBroker.close(resolve));
+
   // Actual stdio client and adapter: init/list/call/structured results/close.
   const manager = make();
   const session = await manager.begin(task({ keep_session: true }), 'parent', root);

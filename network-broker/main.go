@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -69,6 +70,7 @@ type session struct {
 	listener  net.Listener
 	mcp       *managedMCP
 	mu        sync.Mutex
+	destroyMu sync.Mutex
 }
 type managedMCP struct {
 	cmd      *exec.Cmd
@@ -294,17 +296,56 @@ func destroy(id, t string, uid uint32) Response {
 	if !ok {
 		return Response{Error: "session not found or not owned"}
 	}
+	s.destroyMu.Lock()
+	defer s.destroyMu.Unlock()
 	s.mu.Lock()
+	if s.info.State == "DESTROYING" {
+		s.mu.Unlock()
+		return Response{Error: "session cleanup already in progress"}
+	}
 	s.info.State = "DESTROYING"
 	s.mu.Unlock()
-	_ = s.server.Shutdown(context.Background())
+	log.Printf("cleanup session=%s stage=destroy-start", id)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	shutdownErr := s.server.Shutdown(shutdownCtx)
+	cancel()
+	if shutdownErr != nil {
+		log.Printf("cleanup session=%s stage=proxy-shutdown result=timeout", id)
+		_ = s.server.Close()
+	} else {
+		log.Printf("cleanup session=%s stage=proxy-shutdown result=ok", id)
+	}
 	_ = s.listener.Close()
-	stopMCP(s)
-	denyHostPort(s.info.ID)
-	cleanup(s.info.Namespace)
+	var cleanupErrs []error
+	if err := stopMCP(s); err != nil {
+		log.Printf("cleanup session=%s stage=browser-process result=error", id)
+		cleanupErrs = append(cleanupErrs, err)
+	} else {
+		log.Printf("cleanup session=%s stage=browser-process result=stopped", id)
+	}
+	if shutdownErr != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("proxy shutdown: %w", shutdownErr))
+	}
+	if err := denyHostPort(s.info.ID); err != nil {
+		log.Printf("cleanup session=%s stage=nft result=error", id)
+		cleanupErrs = append(cleanupErrs, err)
+	} else {
+		log.Printf("cleanup session=%s stage=nft result=ok", id)
+	}
+	if err := cleanup(s.info.Namespace); err != nil {
+		log.Printf("cleanup session=%s stage=namespace result=error", id)
+		cleanupErrs = append(cleanupErrs, err)
+	} else {
+		log.Printf("cleanup session=%s stage=namespace result=ok", id)
+	}
 	sessionsMu.Lock()
 	delete(sessions, id)
 	sessionsMu.Unlock()
+	if len(cleanupErrs) > 0 {
+		log.Printf("cleanup session=%s stage=destroy-result result=error", id)
+		return Response{Error: errors.Join(cleanupErrs...).Error()}
+	}
+	log.Printf("cleanup session=%s stage=destroy-result result=ok", id)
 	return Response{OK: true}
 }
 func launch(id, t string, uid uint32) Response {
@@ -360,6 +401,7 @@ func launch(id, t string, uid uint32) Response {
 	// browser command, never in the caller and never after the browser starts.
 	setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--no-new-privs", "--"}
 	cmd := exec.Command("ip", append(setpriv, command...)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/next", "TMPDIR=/tmp", "LANG=C", "USER=next", "LOGNAME=next"}
 	cmd.Stderr = &boundedWriter{w: os.Stderr, max: 16 * 1024}
 	stdin, err := cmd.StdinPipe()
@@ -411,16 +453,17 @@ func bridgeMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) {
 	_ = c.Close()
 	stopManagedMCP(m, stdin, stdout)
 }
-func stopMCP(s *session) {
+func stopMCP(s *session) error {
 	s.mu.Lock()
 	m := s.mcp
 	s.mcp = nil
 	s.mu.Unlock()
 	if m != nil {
-		stopManagedMCP(m, nil, nil)
+		return stopManagedMCP(m, nil, nil)
 	}
+	return nil
 }
-func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) {
+func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) error {
 	if stdin != nil {
 		_ = stdin.Close()
 	}
@@ -429,10 +472,20 @@ func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) {
 	}
 	_ = m.listener.Close()
 	if m.cmd.Process != nil {
-		_ = m.cmd.Process.Kill()
+		_ = syscall.Kill(-m.cmd.Process.Pid, syscall.SIGKILL)
 	}
-	_ = m.cmd.Wait()
+	wait := make(chan error, 1)
+	go func() { wait <- m.cmd.Wait() }()
+	select {
+	case err := <-wait:
+		if err != nil {
+			return fmt.Errorf("browser process: %w", err)
+		}
+	case <-time.After(2 * time.Second):
+		return errors.New("browser process cleanup timed out")
+	}
 	_ = os.Remove(m.path)
+	return nil
 }
 func owned(id, t string, uid uint32) (*session, bool) {
 	sessionsMu.Lock()
@@ -685,12 +738,25 @@ func startNamespace(name, id, hostAddr string) error {
 	}
 	return nil
 }
-func cleanup(n string) {
-	_ = run("ip", "netns", "delete", n)
+func cleanup(n string) error {
+	var errs []error
+	if err := run("ip", "netns", "delete", n); err != nil && namespaceExists(n) {
+		errs = append(errs, fmt.Errorf("namespace %s: %w", n, err))
+	}
 	suffix := strings.TrimPrefix(n, "nla-")
 	if len(suffix) >= 8 {
-		_ = run("ip", "link", "del", "nlah-"+suffix[:8])
+		iface := "nlah-" + suffix[:8]
+		if err := run("ip", "link", "del", iface); err != nil && linkExists(iface) {
+			errs = append(errs, fmt.Errorf("veth %s: %w", iface, err))
+		}
+		if linkExists(iface) {
+			errs = append(errs, fmt.Errorf("veth %s still exists after cleanup", iface))
+		}
 	}
+	if namespaceExists(n) {
+		errs = append(errs, fmt.Errorf("namespace %s still exists after cleanup", n))
+	}
+	return errors.Join(errs...)
 }
 func hostTable(id string) string { return "nla_host_" + id[4:12] }
 func allowNamespaceProxy(name, id, hostAddr string, port int) error {
@@ -704,21 +770,43 @@ func allowHostPort(id string, port int) error {
 		"iifname", iface, "tcp", "dport", strconv.Itoa(port), "accept",
 		"comment", "nla-"+id[4:12])
 }
-func denyHostPort(id string) {
+func denyHostPort(id string) error {
 	marker := "nla-" + id[4:12]
 	out, err := exec.Command("nft", "-a", "list", "chain", "ip", "filter", "INPUT").Output()
 	if err != nil {
-		return
+		return fmt.Errorf("list host policy for %s: %w", id, err)
 	}
+	var errs []error
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.Contains(line, marker) {
 			continue
 		}
 		fields := strings.Fields(line)
 		if len(fields) > 0 && fields[len(fields)-2] == "handle" {
-			_ = run("nft", "delete", "rule", "ip", "filter", "INPUT", "handle", fields[len(fields)-1])
+			if err := run("nft", "delete", "rule", "ip", "filter", "INPUT", "handle", fields[len(fields)-1]); err != nil {
+				errs = append(errs, fmt.Errorf("delete host policy %s: %w", id, err))
+			}
 		}
 	}
+	return errors.Join(errs...)
+}
+
+func namespaceExists(name string) bool {
+	out, err := exec.Command("ip", "netns", "list").Output()
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func linkExists(name string) bool {
+	out, err := exec.Command("ip", "-br", "link", "show", "dev", name).Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 func run(bin string, a ...string) error {
 	c := exec.Command(bin, a...)
