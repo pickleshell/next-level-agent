@@ -99,6 +99,36 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
 | **Compactor** | Optimizes model input: compresses structured state, shapes prompts, and prunes tool schemas to a small relevant shortlist | Before controlled compaction and before model invocation when prompt optimization is enabled |
 
+### Recommended models by role
+
+For normal NLA operation, the project maintainer strongly recommends
+**GPT-5.6 Luna (`opencode-go/gpt-5.6-luna`) as the NLA coordinator**.
+It is also the recommended choice whenever a role's model is uncertain, and
+the final fallback for other role pools. This is an operational recommendation
+based on development use, rather than a guarantee of provider availability or
+correctness. Confirm the exact provider/model ID and tool support in your runtime.
+
+| Role | Recommended model or model class | Selection guidance |
+| --- | --- | --- |
+| **NLA** | **GPT-5.6 Luna** | Prefer predictable instruction following, reliable delegation and tool use, and preservation of approvals and task state. Keep Luna as the coordinator rather than optimizing this role solely for price or speed. |
+| **Router** | A fast, inexpensive model with reliable structured output; Luna when uncertain | Routing is usually a small bounded decision. Validate workflow classification and role selection before choosing a cheaper model. |
+| **Explorer** | A capable local model such as Qwen, or an inexpensive cloud model with a large context window | Local repository and file searches can consume substantial context. Prioritize tool use, accurate file/symbol references, and enough usable context; use Luna as fallback. |
+| **Scout** | An inexpensive model with reliable research tools; a local model when its tool support is sufficient | This role researches external documentation, not only local files. Prioritize source attribution and version accuracy; use a large-context model for lengthy documents and Luna as fallback. |
+| **Architect** | A strong reasoning model such as GPT-5.6 Sol | Spend capability on interfaces, safety boundaries, failure modes, and design tradeoffs. Luna is the recommended fallback when Sol is unavailable or the choice is uncertain. |
+| **Implementer** | Any model demonstrated to code well in the target runtime, including local, free, or inexpensive models | Match capability to the bounded task. Verify editing tools, tests, and instruction following; escalate difficult changes to a stronger coding model and retain Luna as the final fallback. |
+| **Reviewer** | A strong model that can independently analyze code and verification evidence; Luna is a practical default | Prefer an independent session and, where practical, a different model from the implementer. For high-risk changes, use a model capable of reasoning about failure paths and missing tests. |
+| **Supervisor** | Luna, or another strong model validated for workflow auditing | Prioritize detecting missing approvals, loops, stale evidence, and unsupported completion claims. This role needs sound judgment more than maximum coding throughput. |
+| **Compactor** | **Luna or a capable local Qwen model** | Validate faithful compression, structured output, and preservation of constraints and evidence. Local execution can reduce cloud cost for large inputs; ensure sufficient context and use Luna as fallback. |
+
+For roles that process large amounts of repository content or local files,
+prefer a capable local model or an inexpensive cloud model with a large usable
+context window. A large advertised window alone is insufficient: test the model
+with NLA's actual tools and bounded assignments. Local inference also needs
+adequate memory and request timeouts. Keep fallback pools short and ordered;
+cooldown and defective-model handling can skip an unavailable binding, but do
+not make an unsuitable model reliable. These recommendations do not change
+repository defaults or your operator override automatically.
+
 Supervisor does not become a second coordinator. Architect does not take over the user conversation. Subagents cannot use shared Notebook memory.
 
 Router and Compactor have separate boundaries. Router handles task and model
@@ -120,10 +150,8 @@ never silently replaced by another pool. `nla_task` and the primary-only
 `nla_models` tool use the same resolved object. `nla_models` reports each role's
 primary and ordered fallbacks, enabled state, source, and resolution reason,
 without credentials.
-For personal deployments, the operator recommendation is
-`opencode-go/gpt-5.6-luna` as the primary NLA coordinator. Its predictable behavior,
-reliable tool use, and low cost make it a practical default; operators must still verify
-live provider availability and choose role pools appropriate to their own environment.
+Apply the role recommendations above through your operator override, and verify
+the effective bindings with `nla_models` before starting a task.
 
 ### Compactor prompt optimization
 
