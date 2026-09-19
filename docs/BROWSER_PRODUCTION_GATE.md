@@ -77,15 +77,13 @@ broker contract at `83edbf1`. Real Luna Browser delegation, structured
 evidence, broker restart and browser backend interruption have passed in the
 final gate.
 
-The mandatory final gate is still open: real Browser-child interruption,
-persistent Orchestrator restart/restore, and real OpenCode compaction during an
-active Browser workflow have not all produced fresh evidence. The stale
-namespace incident was reproduced: concurrent broker teardown could hang while
-waiting for the top-level browser launcher, leaving descendants alive. The
-remediation now uses process-group termination, bounded waits, serialized
-destroy and observable cleanup errors; the post-fix parallel resource scan was
-clean. The remaining recovery gates and aggregate harness failures still block
-release.
+The implementation has been published for optional use. The mandatory formal
+production gate remains open because model-driven prompt injection and all
+persistent restart/compaction scenarios have not been rerun as one complete,
+revision-bound certification cycle. Broker cleanup is authoritative and
+fail-closed; the current implementation uses a delegated cgroup boundary,
+bounded teardown, serialized destroy, owned-process identity checks, and
+observable cleanup errors.
 
 Manifests redact typed values, omit raw console messages, credentials,
 headers and bodies, and normalize network URL metadata. Screenshots mask

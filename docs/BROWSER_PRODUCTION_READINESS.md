@@ -24,7 +24,9 @@ before an independent production review may change the verdict.
 | R6 managed-MCP/cleanup remediation | `fac1730b5b1203bc12d37c9ec88df3647cbbecbe` | double-teardown and cleanup diagnostics |
 | R6 process-group cleanup remediation | `5a725a4c6e4a011eb91e425f6e6afa2addc1a3be` | final clean R5 HEAD |
 
-No revision was pushed.
+The Browser implementation and documentation were published on `main` through
+`209a02bb1dfae147380f8b2cd91422718a27ccf1`. This report remains a historical
+verification record and does not by itself certify later revisions.
 
 ## Architecture and operations
 
