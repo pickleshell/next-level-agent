@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { BrowserError } from './nla-browser-mcp.mjs';
 import { PlaywrightMcpBackend } from './nla-browser-playwright.mjs';
 import { atomicWrite } from './nla-memory.mjs';
@@ -30,7 +30,7 @@ page check. Full traces remain unsupported and must report BLOCKED.`;
 const RIGHTS = ['navigation', 'interaction', 'authentication', 'uploads', 'downloads', 'external_mutation'];
 const CHECKS = ['url_equals', 'element_visible', 'element_enabled', 'text_equals', 'text_contains', 'no_console_errors', 'no_dialogs'];
 const ACTIONS = ['navigate', 'click', 'fill', 'select', 'press', 'tabs', 'screenshot', 'upload', 'download'];
-const conditionKey = c => JSON.stringify([c.check, c.expected ?? null, c.locator ? Object.entries(c.locator).sort(([a], [b]) => a.localeCompare(b)) : null]);
+const conditionKey = c => createHash('sha256').update(JSON.stringify([c.check, c.expected ?? null, c.locator ? Object.entries(c.locator).sort(([a], [b]) => a.localeCompare(b)) : null])).digest('hex');
 const object = x => x && typeof x === 'object' && !Array.isArray(x);
 const exactKeys = (obj, keys) => { if (!object(obj) || Object.keys(obj).some(k => !keys.includes(k))) throw new BrowserError('POLICY_DENIED', 'Invalid Browser request fields'); };
 const text = (x, max = 8000) => { if (typeof x !== 'string' || !x || x.length > max) throw new BrowserError('POLICY_DENIED', 'Invalid bounded Browser text'); return x; };
