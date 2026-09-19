@@ -18,6 +18,19 @@ func TestStopManagedMCPTreatsExitedProcessAsSuccessfulCleanup(t *testing.T) {
 	testManagedMCPStop(t, "sh", "-c", "exit 1")
 }
 
+func TestProcessGroupExistsChecksOwnedMembers(t *testing.T) {
+	pgid, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !processGroupExists(pgid) {
+		t.Fatalf("current process group %d was not found", pgid)
+	}
+	if processGroupExists(1 << 30) {
+		t.Fatal("nonexistent process group was reported as present")
+	}
+}
+
 func TestBridgeAndDestroyShareMCPTeardown(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "mcp.sock")
 	listener, err := net.Listen("unix", socketPath)

@@ -3,6 +3,7 @@ package main
 // nlabridged is a narrow privileged broker. IPC accepts a typed policy only.
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -322,7 +323,7 @@ func destroy(id, t string, uid uint32) Response {
 	_ = s.listener.Close()
 	var cleanupErrs []error
 	if err := stopMCP(s); err != nil {
-		log.Printf("cleanup session=%s stage=browser-process result=error", id)
+		log.Printf("cleanup session=%s stage=browser-process result=error detail=%q", id, err.Error())
 		cleanupErrs = append(cleanupErrs, err)
 	} else {
 		log.Printf("cleanup session=%s stage=browser-process result=stopped", id)
@@ -337,7 +338,7 @@ func destroy(id, t string, uid uint32) Response {
 		log.Printf("cleanup session=%s stage=nft result=ok", id)
 	}
 	if err := cleanup(s.info.Namespace); err != nil {
-		log.Printf("cleanup session=%s stage=namespace result=error", id)
+		log.Printf("cleanup session=%s stage=namespace result=error detail=%q", id, err.Error())
 		cleanupErrs = append(cleanupErrs, err)
 	} else {
 		log.Printf("cleanup session=%s stage=namespace result=ok", id)
@@ -492,9 +493,6 @@ func stopManagedMCPOnce(m *managedMCP, stdin io.WriteCloser, stdout io.ReadClose
 	go func() { wait <- m.cmd.Wait() }()
 	select {
 	case err := <-wait:
-		if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
-			return fmt.Errorf("browser process termination: %w", killErr)
-		}
 		if err != nil {
 			// The broker owns teardown of this process. Once Wait has
 			// completed, the process is gone; its exit status (including a
@@ -508,10 +506,48 @@ func stopManagedMCPOnce(m *managedMCP, stdin io.WriteCloser, stdout io.ReadClose
 	case <-time.After(2 * time.Second):
 		return errors.New("browser process cleanup timed out")
 	}
+	if killErr != nil && errors.Is(killErr, syscall.EPERM) && !processGroupExists(m.cmd.Process.Pid) {
+		// Chromium may place descendants in a user namespace.  The group kill
+		// can then report EPERM even though the backend has already terminated
+		// every member.  Treat that case as successful only after independently
+		// proving that no member of the owned process group remains.
+		killErr = nil
+	}
+	if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+		return fmt.Errorf("browser process termination: %w", killErr)
+	}
 	if err := os.Remove(m.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("browser MCP socket cleanup: %w", err)
 	}
 	return nil
+}
+
+func processGroupExists(pgid int) bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return true
+	}
+	for _, entry := range entries {
+		if len(entry.Name()) == 0 || entry.Name()[0] < '0' || entry.Name()[0] > '9' {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		end := bytes.LastIndexByte(data, ')')
+		if end < 0 {
+			continue
+		}
+		fields := strings.Fields(string(data[end+2:]))
+		if len(fields) > 2 {
+			group, err := strconv.Atoi(fields[2])
+			if err == nil && group == pgid {
+				return true
+			}
+		}
+	}
+	return false
 }
 func owned(id, t string, uid uint32) (*session, bool) {
 	sessionsMu.Lock()
