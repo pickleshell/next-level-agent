@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,11 +46,52 @@ type Request struct {
 	Policy    *Policy `json:"policy,omitempty"`
 }
 type Response struct {
-	OK       bool         `json:"ok"`
-	Error    string       `json:"error,omitempty"`
-	Session  *SessionInfo `json:"session,omitempty"`
-	Endpoint string       `json:"endpoint,omitempty"`
+	OK        bool              `json:"ok"`
+	Error     string            `json:"error,omitempty"`
+	Session   *SessionInfo      `json:"session,omitempty"`
+	Endpoint  string            `json:"endpoint,omitempty"`
+	Inventory *ProcessInventory `json:"inventory,omitempty"`
+	Cleanup   *CleanupReport    `json:"cleanup,omitempty"`
 }
+type ProcessIdentity struct {
+	PID       int    `json:"pid"`
+	ParentPID int    `json:"parent_pid"`
+	PGID      int    `json:"process_group_id"`
+	Start     string `json:"start_time"`
+	State     string `json:"state"`
+	RSSKB     uint64 `json:"rss_kb"`
+}
+type ProcessInventory struct {
+	Status         string            `json:"status"`
+	Source         string            `json:"source,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	SessionID      string            `json:"session_id"`
+	OwnerUID       uint32            `json:"owner_uid"`
+	ProcessGroupID int               `json:"process_group_id,omitempty"`
+	ProcessStart   string            `json:"process_start,omitempty"`
+	BoundaryState  string            `json:"process_boundary_state,omitempty"`
+	Identities     []ProcessIdentity `json:"identities"`
+}
+type CleanupReport struct {
+	Status           string            `json:"status"`
+	SessionID        string            `json:"session_id"`
+	Inventory        ProcessInventory  `json:"inventory"`
+	Remaining        []ProcessIdentity `json:"remaining_processes"`
+	MCPRemoved       string            `json:"mcp_socket_state"`
+	NamespaceRemoved string            `json:"namespace_state"`
+	ProxyRemoved     string            `json:"proxy_state"`
+	PolicyRemoved    string            `json:"policy_state"`
+	VethRemoved      string            `json:"veth_state"`
+	CgroupState      string            `json:"process_boundary_state"`
+}
+type resourceState string
+
+const (
+	resourceAbsent  resourceState = "ABSENT"
+	resourcePresent resourceState = "PRESENT"
+	resourceBlocked resourceState = "BLOCKED"
+)
+
 type SessionInfo struct {
 	ID           string    `json:"session_id"`
 	Token        string    `json:"session_token"`
@@ -60,18 +102,24 @@ type SessionInfo struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 type session struct {
-	info      SessionInfo
-	policy    Policy
-	hostAddr  string
-	ownerUID  uint32
-	ownerGID  uint32
-	pinned    map[string]map[string]struct{}
-	redirects int
-	server    *http.Server
-	listener  net.Listener
-	mcp       *managedMCP
-	mu        sync.Mutex
-	destroyMu sync.Mutex
+	info       SessionInfo
+	policy     Policy
+	hostAddr   string
+	ownerUID   uint32
+	ownerGID   uint32
+	pinned     map[string]map[string]struct{}
+	redirects  int
+	server     *http.Server
+	listener   net.Listener
+	mcp        *managedMCP
+	mcpPath    string
+	mcpPGID    int
+	mcpStart   string
+	mcpStopped bool
+	owned      []ProcessIdentity
+	cgroupPath string
+	mu         sync.Mutex
+	destroyMu  sync.Mutex
 }
 type managedMCP struct {
 	cmd          *exec.Cmd
@@ -287,14 +335,14 @@ func create(p *Policy, uid, gid uint32) Response {
 	sessionsMu.Lock()
 	sessions[id] = s
 	sessionsMu.Unlock()
-	return Response{OK: true, Session: &s.info}
+	return Response{OK: true, Session: &s.info, Inventory: s.inventory()}
 }
 func status(id, t string, uid uint32) Response {
 	s, ok := owned(id, t, uid)
 	if !ok {
 		return Response{Error: "session not found or not owned"}
 	}
-	return Response{OK: true, Session: &s.info}
+	return Response{OK: true, Session: &s.info, Inventory: s.inventory()}
 }
 func destroy(id, t string, uid uint32) Response {
 	s, ok := owned(id, t, uid)
@@ -310,6 +358,7 @@ func destroy(id, t string, uid uint32) Response {
 	}
 	s.info.State = "DESTROYING"
 	s.mu.Unlock()
+	mcpPath := s.mcpPathValue()
 	log.Printf("cleanup session=%s stage=destroy-start", id)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	shutdownErr := s.server.Shutdown(shutdownCtx)
@@ -322,6 +371,13 @@ func destroy(id, t string, uid uint32) Response {
 	}
 	_ = s.listener.Close()
 	var cleanupErrs []error
+	cgroupState := resourceBlocked
+	if s.cgroupPath != "" {
+		cgroupState = cleanupCgroup(s.cgroupPath)
+		if cgroupState != resourceAbsent {
+			cleanupErrs = append(cleanupErrs, errors.New("process boundary cleanup was not confirmed"))
+		}
+	}
 	if err := stopMCP(s); err != nil {
 		log.Printf("cleanup session=%s stage=browser-process result=error detail=%q", id, err.Error())
 		cleanupErrs = append(cleanupErrs, err)
@@ -331,11 +387,16 @@ func destroy(id, t string, uid uint32) Response {
 	if shutdownErr != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("proxy shutdown: %w", shutdownErr))
 	}
+	policyState := resourceBlocked
 	if err := denyHostPort(s.info.ID); err != nil {
 		log.Printf("cleanup session=%s stage=nft result=error", id)
 		cleanupErrs = append(cleanupErrs, err)
 	} else {
 		log.Printf("cleanup session=%s stage=nft result=ok", id)
+		policyState = hostPolicyState(s.info.ID)
+		if policyState != resourceAbsent {
+			cleanupErrs = append(cleanupErrs, errors.New("host policy absence was not confirmed"))
+		}
 	}
 	if err := cleanup(s.info.Namespace); err != nil {
 		log.Printf("cleanup session=%s stage=namespace result=error detail=%q", id, err.Error())
@@ -343,15 +404,25 @@ func destroy(id, t string, uid uint32) Response {
 	} else {
 		log.Printf("cleanup session=%s stage=namespace result=ok", id)
 	}
+	after := s.inventory()
+	cleanupReport := &CleanupReport{SessionID: id, Inventory: *after, Remaining: after.Identities,
+		MCPRemoved: string(socketState(mcpPath)), NamespaceRemoved: string(namespaceState(s.info.Namespace)),
+		ProxyRemoved: string(proxyState(s.info.Proxy)), PolicyRemoved: string(policyState), VethRemoved: string(linkState(vethName(s.info.Namespace))), CgroupState: string(cgroupState)}
+	if after.Status == "ABSENT" && len(cleanupReport.Remaining) == 0 && cleanupReport.MCPRemoved == string(resourceAbsent) && cleanupReport.NamespaceRemoved == string(resourceAbsent) && cleanupReport.ProxyRemoved == string(resourceAbsent) && cleanupReport.PolicyRemoved == string(resourceAbsent) && cleanupReport.VethRemoved == string(resourceAbsent) && cleanupReport.CgroupState == string(resourceAbsent) {
+		cleanupReport.Status = "OBSERVED_CLEAN"
+	} else {
+		cleanupReport.Status = "BLOCKED"
+		cleanupErrs = append(cleanupErrs, errors.New("broker cleanup inventory is not clean"))
+	}
 	sessionsMu.Lock()
 	delete(sessions, id)
 	sessionsMu.Unlock()
 	if len(cleanupErrs) > 0 {
 		log.Printf("cleanup session=%s stage=destroy-result result=error", id)
-		return Response{Error: errors.Join(cleanupErrs...).Error()}
+		return Response{Error: errors.Join(cleanupErrs...).Error(), Cleanup: cleanupReport}
 	}
 	log.Printf("cleanup session=%s stage=destroy-result result=ok", id)
-	return Response{OK: true}
+	return Response{OK: true, Cleanup: cleanupReport}
 }
 func launch(id, t string, uid uint32) Response {
 	s, ok := owned(id, t, uid)
@@ -359,77 +430,120 @@ func launch(id, t string, uid uint32) Response {
 		return Response{Error: "session not found or not owned"}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.info.State != "READY" {
-		return Response{Error: "session is not ready"}
-	}
-	if s.mcp != nil {
-		return Response{OK: true, Endpoint: s.mcp.path}
-	}
-	command, err := approvedMCPCommand()
-	if err != nil {
-		return Response{Error: err.Error()}
-	}
-	foundProxyPlaceholder := false
-	for i, arg := range command {
-		if strings.Contains(arg, "__NLA_SESSION_PROXY__") {
-			foundProxyPlaceholder = true
-			command[i] = strings.ReplaceAll(arg, "__NLA_SESSION_PROXY__", "http://"+s.info.Proxy)
+	response := func() Response {
+		if s.info.State != "READY" {
+			return Response{Error: "session is not ready"}
 		}
-	}
-	if !foundProxyPlaceholder {
-		return Response{Error: "browser MCP command lacks session proxy placeholder"}
-	}
-	// Keep the broker-to-owner endpoint in the fixed shared temp directory;
-	// never inherit a privileged broker's TMPDIR from an operator environment.
-	mcpDir := os.Getenv("NLA_BROKER_MCP_DIR")
-	if mcpDir == "" {
-		mcpDir = "/tmp"
-	}
-	path := filepath.Join(mcpDir, "nla-mcp-"+s.info.ID+".sock")
-	_ = os.Remove(path)
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return Response{Error: "MCP endpoint unavailable"}
-	}
-	if err := os.Chmod(path, 0660); err != nil {
-		_ = ln.Close()
+		if s.mcp != nil {
+			return Response{OK: true, Endpoint: s.mcp.path}
+		}
+		command, err := approvedMCPCommand()
+		if err != nil {
+			return Response{Error: err.Error()}
+		}
+		foundProxyPlaceholder := false
+		for i, arg := range command {
+			if strings.Contains(arg, "__NLA_SESSION_PROXY__") {
+				foundProxyPlaceholder = true
+				command[i] = strings.ReplaceAll(arg, "__NLA_SESSION_PROXY__", "http://"+s.info.Proxy)
+			}
+		}
+		if !foundProxyPlaceholder {
+			return Response{Error: "browser MCP command lacks session proxy placeholder"}
+		}
+		// Keep the broker-to-owner endpoint in the fixed shared temp directory;
+		// never inherit a privileged broker's TMPDIR from an operator environment.
+		mcpDir := os.Getenv("NLA_BROKER_MCP_DIR")
+		if mcpDir == "" {
+			mcpDir = "/tmp"
+		}
+		path := filepath.Join(mcpDir, "nla-mcp-"+s.info.ID+".sock")
 		_ = os.Remove(path)
-		return Response{Error: "MCP endpoint permissions unavailable"}
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			return Response{Error: "MCP endpoint unavailable"}
+		}
+		if err := os.Chmod(path, 0660); err != nil {
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP endpoint permissions unavailable"}
+		}
+		if err := os.Chown(path, int(s.ownerUID), -1); err != nil {
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP endpoint ownership unavailable"}
+		}
+		// Entering a named netns requires privilege.  Drop it before the approved
+		// browser command, never in the caller and never after the browser starts.
+		setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--no-new-privs", "--"}
+		cmd := exec.Command("ip", append(setpriv, command...)...)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/next", "TMPDIR=/tmp", "LANG=C", "USER=next", "LOGNAME=next"}
+		cmd.Stderr = &boundedWriter{w: os.Stderr, max: 16 * 1024}
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP stdin unavailable"}
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP stdout unavailable"}
+		}
+		cgroupPath, err := createCgroup(s.info.ID)
+		if err != nil {
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP process boundary unavailable"}
+		}
+		cgroupDir, err := os.Open(cgroupPath)
+		if err != nil {
+			_ = cleanupCgroup(cgroupPath)
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP process boundary handle unavailable"}
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, UseCgroupFD: true, CgroupFD: int(cgroupDir.Fd())}
+		if err := cmd.Start(); err != nil {
+			_ = cgroupDir.Close()
+			_ = cleanupCgroup(cgroupPath)
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP process unavailable"}
+		}
+		_ = cgroupDir.Close()
+		if cgroupBoundaryState(cgroupPath) != resourcePresent {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_, _ = cmd.Process.Wait()
+			_ = cleanupCgroup(cgroupPath)
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP process boundary verification unavailable"}
+		}
+		leader, ok := readProcessIdentity(cmd.Process.Pid)
+		if !ok {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_, _ = cmd.Process.Wait()
+			_ = cleanupCgroup(cgroupPath)
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return Response{Error: "MCP process inventory unavailable"}
+		}
+		m := &managedMCP{cmd: cmd, listener: ln, path: path}
+		s.mcp = m
+		s.mcpPath = path
+		s.cgroupPath = cgroupPath
+		s.mcpPGID = cmd.Process.Pid
+		s.mcpStart = leader.Start
+		go bridgeMCP(m, stdin, stdout)
+		return Response{OK: true, Endpoint: path}
+	}()
+	s.mu.Unlock()
+	if response.OK {
+		response.Inventory = s.inventory()
 	}
-	if err := os.Chown(path, int(s.ownerUID), -1); err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return Response{Error: "MCP endpoint ownership unavailable"}
-	}
-	// Entering a named netns requires privilege.  Drop it before the approved
-	// browser command, never in the caller and never after the browser starts.
-	setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--no-new-privs", "--"}
-	cmd := exec.Command("ip", append(setpriv, command...)...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/next", "TMPDIR=/tmp", "LANG=C", "USER=next", "LOGNAME=next"}
-	cmd.Stderr = &boundedWriter{w: os.Stderr, max: 16 * 1024}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return Response{Error: "MCP stdin unavailable"}
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return Response{Error: "MCP stdout unavailable"}
-	}
-	if err := cmd.Start(); err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return Response{Error: "MCP process unavailable"}
-	}
-	m := &managedMCP{cmd: cmd, listener: ln, path: path}
-	s.mcp = m
-	go bridgeMCP(m, stdin, stdout)
-	return Response{OK: true, Endpoint: path}
+	return response
 }
 func approvedMCPCommand() ([]string, error) {
 	raw := os.Getenv("NLA_BROWSER_MCP_COMMAND_JSON")
@@ -458,13 +572,436 @@ func bridgeMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) {
 	_ = c.Close()
 	stopManagedMCP(m, stdin, stdout)
 }
+
+func (s *session) mcpPathValue() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mcpPath
+}
+
+func (s *session) inventory() *ProcessInventory {
+	s.mu.Lock()
+	m := s.mcp
+	mcpPath := s.mcpPath
+	mcpPGID := s.mcpPGID
+	mcpStart := s.mcpStart
+	mcpStopped := s.mcpStopped
+	cgroupPath := s.cgroupPath
+	owned := append([]ProcessIdentity(nil), s.owned...)
+	s.mu.Unlock()
+	report := &ProcessInventory{Status: "OBSERVED", Source: "broker-owned-session", SessionID: s.info.ID, OwnerUID: s.ownerUID, Identities: []ProcessIdentity{}}
+	if cgroupPath != "" {
+		report.BoundaryState = string(cgroupBoundaryState(cgroupPath))
+	}
+	if m == nil {
+		if mcpPath == "" {
+			report.Status = "NOT_RUN"
+			report.Reason = "BROKER_PROCESS_NOT_LAUNCHED"
+			return report
+		}
+		groupIdentities, present, inspectable := processGroupInventoryState(mcpPGID)
+		remaining, ownedInspectable := stableOwnedState(owned)
+		report.Source = "broker-owned-process-group"
+		report.ProcessGroupID = mcpPGID
+		report.ProcessStart = mcpStart
+		report.Identities = mergeIdentities(groupIdentities, remaining)
+		if !inspectable || !ownedInspectable {
+			report.Status = "BLOCKED"
+			report.Reason = "BROKER_PROCESS_INVENTORY_UNAVAILABLE"
+			return report
+		}
+		if cgroupPath != "" && report.BoundaryState != string(resourceAbsent) {
+			report.Status = "BLOCKED"
+			report.Reason = "BROKER_PROCESS_BOUNDARY_NOT_EMPTY"
+			return report
+		}
+		if present || len(remaining) > 0 || !mcpStopped {
+			report.Status = "BLOCKED"
+			report.Reason = "BROKER_PROCESS_GROUP_REMAINS"
+			if !present && len(remaining) == 0 && !mcpStopped {
+				report.Reason = "BROKER_PROCESS_TEARDOWN_UNCONFIRMED"
+			}
+			return report
+		}
+		if len(owned) == 0 {
+			report.Status = "BLOCKED"
+			report.Reason = "BROKER_PROCESS_OWNERSHIP_UNAVAILABLE"
+			return report
+		}
+		report.Status = "ABSENT"
+		report.Reason = "PROCESS_GROUP_TERMINATED"
+		return report
+	}
+	if m.cmd == nil || m.cmd.Process == nil {
+		report.Status = "BLOCKED"
+		report.Reason = "BROKER_PROCESS_INVENTORY_UNAVAILABLE"
+		return report
+	}
+	if cgroupPath == "" || report.BoundaryState != string(resourcePresent) {
+		report.Status = "BLOCKED"
+		report.Reason = "BROKER_PROCESS_BOUNDARY_UNAVAILABLE"
+		return report
+	}
+	report.ProcessGroupID = m.cmd.Process.Pid
+	treeIdentities, treeInspectable := processTreeInventory(m.cmd.Process.Pid)
+	groupIdentities, groupPresent, groupInspectable := processGroupInventoryState(m.cmd.Process.Pid)
+	if !treeInspectable || !groupInspectable || !groupPresent {
+		report.Status = "BLOCKED"
+		report.Reason = "BROKER_PROCESS_INVENTORY_UNAVAILABLE"
+		return report
+	}
+	report.Source = "broker-owned-process-group"
+	identities := mergeIdentities(treeIdentities, groupIdentities)
+	if len(identities) == 0 {
+		report.Status = "BLOCKED"
+		report.Reason = "BROKER_PROCESS_INVENTORY_UNAVAILABLE"
+		return report
+	}
+	s.mu.Lock()
+	s.owned = mergeIdentities(s.owned, identities)
+	owned = append([]ProcessIdentity(nil), s.owned...)
+	s.mu.Unlock()
+	report.Identities = owned
+	for _, identity := range identities {
+		if identity.PID == report.ProcessGroupID {
+			report.ProcessStart = identity.Start
+			break
+		}
+	}
+	return report
+}
+
+func mergeIdentities(groups ...[]ProcessIdentity) []ProcessIdentity {
+	seen := make(map[string]bool)
+	result := make([]ProcessIdentity, 0)
+	for _, group := range groups {
+		for _, identity := range group {
+			key := fmt.Sprintf("%d:%s", identity.PID, identity.Start)
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, identity)
+			}
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].PID < result[j].PID })
+	return result
+}
+
+func processTreeInventory(rootPID int) ([]ProcessIdentity, bool) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, false
+	}
+	all := make(map[int]ProcessIdentity, len(entries))
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 1 {
+			continue
+		}
+		identity, ok := readProcessIdentity(pid)
+		if ok {
+			all[pid] = identity
+		}
+	}
+	if _, ok := all[rootPID]; !ok {
+		return nil, false
+	}
+	owned := map[int]bool{rootPID: true}
+	changed := true
+	for changed {
+		changed = false
+		for pid, identity := range all {
+			if !owned[pid] && owned[identity.ParentPID] {
+				owned[pid] = true
+				changed = true
+			}
+		}
+	}
+	result := make([]ProcessIdentity, 0, len(owned))
+	for pid := range owned {
+		result = append(result, all[pid])
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].PID < result[j].PID })
+	return result, true
+}
+
+func stableOwnedState(owned []ProcessIdentity) ([]ProcessIdentity, bool) {
+	return stableOwnedStateWith(owned, func(identity ProcessIdentity) (ProcessIdentity, error) {
+		return readProcessIdentityDetailed(identity.PID)
+	})
+}
+
+func stableOwnedStateWith(owned []ProcessIdentity, read func(ProcessIdentity) (ProcessIdentity, error)) ([]ProcessIdentity, bool) {
+	if len(owned) == 0 {
+		return nil, true
+	}
+	remaining := make([]ProcessIdentity, 0)
+	for _, expected := range owned {
+		current, err := read(expected)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || current.Start != expected.Start {
+			if err == nil && current.Start != expected.Start {
+				continue
+			}
+			return nil, false
+		}
+		remaining = append(remaining, current)
+	}
+	return remaining, true
+}
+
+const cgroupRoot = "/sys/fs/cgroup/nla-browser"
+
+func createCgroup(sessionID string) (string, error) {
+	if os.Geteuid() != 0 {
+		return "", errors.New("privileged process boundary required")
+	}
+	if sessionID == "" || strings.ContainsAny(sessionID, `/\\`) {
+		return "", errors.New("invalid process boundary session")
+	}
+	if err := os.MkdirAll(cgroupRoot, 0750); err != nil {
+		return "", err
+	}
+	path := filepath.Join(cgroupRoot, "session-"+sessionID)
+	if err := os.Mkdir(path, 0750); err != nil {
+		return "", err
+	}
+	for _, file := range []string{"cgroup.procs", "cgroup.kill", "cgroup.events"} {
+		if _, err := os.Stat(filepath.Join(path, file)); err != nil {
+			_ = os.Remove(path)
+			return "", err
+		}
+	}
+	controllers, err := os.ReadFile(filepath.Join(cgroupRoot, "cgroup.controllers"))
+	if err != nil || len(strings.TrimSpace(string(controllers))) == 0 {
+		_ = os.Remove(path)
+		return "", errors.New("cgroup v2 controller boundary unavailable")
+	}
+	return path, nil
+}
+
+func attachCgroup(path string, pid int) error {
+	if path == "" || pid <= 1 {
+		return errors.New("invalid process boundary")
+	}
+	return os.WriteFile(filepath.Join(path, "cgroup.procs"), []byte(strconv.Itoa(pid)+"\n"), 0600)
+}
+
+func cgroupBoundaryState(path string) resourceState {
+	if path == "" {
+		return resourceBlocked
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return resourceAbsent
+		}
+		return resourceBlocked
+	}
+	events, err := os.ReadFile(filepath.Join(path, "cgroup.events"))
+	if err != nil {
+		return resourceBlocked
+	}
+	procs, err := os.ReadFile(filepath.Join(path, "cgroup.procs"))
+	if err != nil {
+		return resourceBlocked
+	}
+	populated := ""
+	for _, line := range strings.Split(string(events), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "populated" {
+			populated = fields[1]
+		}
+	}
+	if populated != "0" && populated != "1" {
+		return resourceBlocked
+	}
+	if populated == "1" || len(strings.TrimSpace(string(procs))) > 0 {
+		return resourcePresent
+	}
+	return resourceAbsent
+}
+
+func stopForBoundary(pid int) error {
+	if pid <= 1 || syscall.Kill(pid, syscall.SIGSTOP) != nil {
+		return errors.New("process stop failed")
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		identity, ok := readProcessIdentity(pid)
+		if ok && (identity.State == "T" || identity.State == "t") {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return errors.New("process did not stop")
+}
+
+func cleanupCgroup(path string) resourceState {
+	if path == "" {
+		return resourceBlocked
+	}
+	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1\n"), 0600); err != nil {
+		return resourceBlocked
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		state := cgroupBoundaryState(path)
+		if state == resourceBlocked {
+			return resourceBlocked
+		}
+		if state == resourceAbsent {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return resourceBlocked
+			}
+			if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+				return resourceAbsent
+			}
+			return resourceBlocked
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return resourceBlocked
+}
+
+func processGroupInventory(pgid int) ([]ProcessIdentity, bool) {
+	identities, exists, inspectable := processGroupInventoryState(pgid)
+	return identities, exists && inspectable
+}
+
+func processGroupInventoryState(pgid int) ([]ProcessIdentity, bool, bool) {
+	if pgid <= 1 {
+		return nil, false, false
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, false, false
+	}
+	pids := make([]int, 0, len(entries))
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 1 {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	return processGroupInventoryStateFromPIDs(pgid, pids, readProcessIdentity, probeProcessGroup)
+}
+
+func processGroupInventoryStateFromPIDs(pgid int, pids []int, read func(int) (ProcessIdentity, bool), probe func(int) error) ([]ProcessIdentity, bool, bool) {
+	identities := make([]ProcessIdentity, 0, 4)
+	for _, pid := range pids {
+		identity, ok := read(pid)
+		if ok && identity.PGID == pgid {
+			identities = append(identities, identity)
+		}
+	}
+	switch err := probe(pgid); {
+	case err == nil || errors.Is(err, syscall.EPERM):
+		return identities, true, true
+	case errors.Is(err, syscall.ESRCH):
+		return identities, false, true
+	default:
+		return identities, false, false
+	}
+}
+
+func probeProcessGroup(pgid int) error {
+	return syscall.Kill(-pgid, 0)
+}
+
+func readProcessIdentity(pid int) (ProcessIdentity, bool) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return ProcessIdentity{}, false
+	}
+	return parseProcessIdentity(pid, data)
+}
+
+func readProcessIdentityDetailed(pid int) (ProcessIdentity, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return ProcessIdentity{}, err
+	}
+	identity, ok := parseProcessIdentity(pid, data)
+	if !ok {
+		return ProcessIdentity{}, errors.New("malformed process identity")
+	}
+	return identity, nil
+}
+
+func parseProcessIdentity(pid int, data []byte) (ProcessIdentity, bool) {
+	end := bytes.LastIndexByte(data, ')')
+	if end < 0 {
+		return ProcessIdentity{}, false
+	}
+	fields := strings.Fields(string(data[end+2:]))
+	if len(fields) < 22 {
+		return ProcessIdentity{}, false
+	}
+	ppid, err1 := strconv.Atoi(fields[1])
+	pgid, err2 := strconv.Atoi(fields[2])
+	rss, err3 := strconv.ParseUint(fields[21], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return ProcessIdentity{}, false
+	}
+	return ProcessIdentity{PID: pid, ParentPID: ppid, PGID: pgid, Start: fields[19], State: fields[0], RSSKB: rss * 4}, true
+}
+
+func socketState(path string) resourceState {
+	if path == "" {
+		return resourceBlocked
+	}
+	info, err := os.Stat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return resourcePresent
+		}
+		return resourcePresent
+	}
+	return classifySocketError(err)
+}
+
+func classifySocketError(err error) resourceState {
+	if errors.Is(err, os.ErrNotExist) {
+		return resourceAbsent
+	}
+	return resourceBlocked
+}
+
+func proxyState(address string) resourceState {
+	if address == "" {
+		return resourceBlocked
+	}
+	connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+	if err == nil {
+		_ = connection.Close()
+		return resourcePresent
+	}
+	return classifyProxyError(err)
+}
+
+func classifyProxyError(err error) resourceState {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return resourceAbsent
+	}
+	return resourceBlocked
+}
+
 func stopMCP(s *session) error {
 	s.mu.Lock()
 	m := s.mcp
 	s.mcp = nil
 	s.mu.Unlock()
 	if m != nil {
-		return stopManagedMCP(m, nil, nil)
+		err := stopManagedMCP(m, nil, nil)
+		if err == nil {
+			s.mu.Lock()
+			s.mcpStopped = true
+			s.mu.Unlock()
+		}
+		return err
 	}
 	return nil
 }
@@ -807,12 +1344,15 @@ func cleanup(n string) error {
 	}
 	suffix := strings.TrimPrefix(n, "nla-")
 	if len(suffix) >= 8 {
-		iface := "nlah-" + suffix[:8]
-		if err := run("ip", "link", "del", iface); err != nil && linkExists(iface) {
-			errs = append(errs, fmt.Errorf("veth %s: %w", iface, err))
+		iface := vethName(n)
+		if err := run("ip", "link", "del", iface); err != nil {
+			state := linkState(iface)
+			if state != resourceAbsent {
+				errs = append(errs, fmt.Errorf("veth %s cleanup not confirmed: %s", iface, state))
+			}
 		}
-		if linkExists(iface) {
-			errs = append(errs, fmt.Errorf("veth %s still exists after cleanup", iface))
+		if state := linkState(iface); state != resourceAbsent {
+			errs = append(errs, fmt.Errorf("veth %s cleanup not confirmed: %s", iface, state))
 		}
 	}
 	if namespaceExists(n) {
@@ -853,22 +1393,68 @@ func denyHostPort(id string) error {
 	return errors.Join(errs...)
 }
 
+func hostPolicyState(id string) resourceState {
+	out, err := exec.Command("nft", "-a", "list", "chain", "ip", "filter", "INPUT").Output()
+	if err != nil {
+		return resourceBlocked
+	}
+	marker := "nla-" + id[4:12]
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, marker) {
+			return resourcePresent
+		}
+	}
+	return resourceAbsent
+}
+
 func namespaceExists(name string) bool {
+	return namespaceState(name) == resourcePresent
+}
+
+func namespaceState(name string) resourceState {
+	if name == "" {
+		return resourceBlocked
+	}
 	out, err := exec.Command("ip", "netns", "list").Output()
 	if err != nil {
-		return true
+		return resourceBlocked
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == name {
-			return true
+			return resourcePresent
 		}
 	}
-	return false
+	return resourceAbsent
 }
 
-func linkExists(name string) bool {
-	out, err := exec.Command("ip", "-br", "link", "show", "dev", name).Output()
-	return err == nil && strings.TrimSpace(string(out)) != ""
+func vethName(name string) string {
+	suffix := strings.TrimPrefix(name, "nla-")
+	if len(suffix) < 8 {
+		return ""
+	}
+	return "nlah-" + suffix[:8]
+}
+
+func linkState(name string) resourceState {
+	if name == "" {
+		return resourceBlocked
+	}
+	out, err := exec.Command("ip", "-br", "link", "show", "dev", name).CombinedOutput()
+	return classifyLinkProbe(err, string(out))
+}
+
+func classifyLinkProbe(err error, output string) resourceState {
+	if err == nil {
+		if strings.TrimSpace(output) == "" {
+			return resourceAbsent
+		}
+		return resourcePresent
+	}
+	message := strings.ToLower(output)
+	if strings.Contains(message, "does not exist") || strings.Contains(message, "cannot find device") {
+		return resourceAbsent
+	}
+	return resourceBlocked
 }
 func run(bin string, a ...string) error {
 	c := exec.Command(bin, a...)

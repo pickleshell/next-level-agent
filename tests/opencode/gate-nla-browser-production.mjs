@@ -30,7 +30,7 @@ const test = async (layer, id, fn) => {
 };
 const processes = () => processSnapshot();
 function capture(session) {
-  const inventory = ownedProcessInventory({ clientProcess: session.backend.client.process, brokerSession: session.network, processes: processes() });
+  const inventory = ownedProcessInventory({ clientProcess: session.backend.client.process, brokerSession: session.network, brokerInventory: session.network?.inventory, processes: processes() });
   metrics.process_inventory.push({ session_id: session.id, status: inventory.status, source: inventory.source, reason: inventory.reason, observed_processes: inventory.identities.length });
   if (inventory.status === 'OBSERVED') {
     let rss = 0;
@@ -46,6 +46,19 @@ async function waitUntil(fn, deadline = 3000) {
   return true;
 }
 async function cleanupResources(session, inventory) {
+  if (session.network) {
+    const cleanup = session.network.cleanup;
+    assert.equal(cleanup?.status, 'OBSERVED_CLEAN', 'Broker-owned cleanup report must be authoritative and clean');
+    assert.equal(cleanup.session_id, session.network.session_id, 'Broker cleanup report must retain exact session ownership');
+    assert.deepEqual(cleanup.remaining_processes, [], 'Broker cleanup report must prove no owned process remains');
+    assert.equal(cleanup.mcp_socket_state, 'ABSENT');
+    assert.equal(cleanup.namespace_state, 'ABSENT');
+    assert.equal(cleanup.proxy_state, 'ABSENT');
+    assert.equal(cleanup.policy_state, 'ABSENT');
+    assert.equal(cleanup.veth_state, 'ABSENT');
+    assert.equal(cleanup.process_boundary_state, 'ABSENT');
+    return;
+  }
   if (inventory.status === 'OBSERVED') {
     const clean = await waitUntil(() => !alive(inventory.identities).length);
     if (!clean) {
