@@ -371,18 +371,18 @@ func destroy(id, t string, uid uint32) Response {
 	}
 	_ = s.listener.Close()
 	var cleanupErrs []error
+	if err := stopMCP(s); err != nil {
+		log.Printf("cleanup session=%s stage=browser-process result=error detail=%q", id, err.Error())
+		cleanupErrs = append(cleanupErrs, err)
+	} else {
+		log.Printf("cleanup session=%s stage=browser-process result=stopped", id)
+	}
 	cgroupState := resourceBlocked
 	if s.cgroupPath != "" {
 		cgroupState = cleanupCgroup(s.cgroupPath)
 		if cgroupState != resourceAbsent {
 			cleanupErrs = append(cleanupErrs, errors.New("process boundary cleanup was not confirmed"))
 		}
-	}
-	if err := stopMCP(s); err != nil {
-		log.Printf("cleanup session=%s stage=browser-process result=error detail=%q", id, err.Error())
-		cleanupErrs = append(cleanupErrs, err)
-	} else {
-		log.Printf("cleanup session=%s stage=browser-process result=stopped", id)
 	}
 	if shutdownErr != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("proxy shutdown: %w", shutdownErr))
