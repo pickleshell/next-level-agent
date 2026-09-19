@@ -359,6 +359,9 @@ func destroy(id, t string, uid uint32) Response {
 	s.info.State = "DESTROYING"
 	s.mu.Unlock()
 	mcpPath := s.mcpPathValue()
+	// Capture the complete owned process set immediately before teardown;
+	// MCP may have spawned descendants since the last inventory response.
+	_ = s.inventory()
 	log.Printf("cleanup session=%s stage=destroy-start", id)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	shutdownErr := s.server.Shutdown(shutdownCtx)
@@ -381,6 +384,10 @@ func destroy(id, t string, uid uint32) Response {
 		cleanupErrs = append(cleanupErrs, err)
 	} else {
 		log.Printf("cleanup session=%s stage=browser-process result=stopped", id)
+	}
+	if err := terminateOwnedProcesses(s); err != nil {
+		log.Printf("cleanup session=%s stage=owned-processes result=error detail=%q", id, err.Error())
+		cleanupErrs = append(cleanupErrs, err)
 	}
 	cgroupState := resourceBlocked
 	if s.cgroupPath != "" {
@@ -1024,6 +1031,37 @@ func stopMCP(s *session) error {
 	}
 	return nil
 }
+
+func terminateOwnedProcesses(s *session) error {
+	s.mu.Lock()
+	owned := append([]ProcessIdentity(nil), s.owned...)
+	s.mu.Unlock()
+	for _, expected := range owned {
+		current, err := readProcessIdentityDetailed(expected.PID)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || current.Start != expected.Start {
+			continue
+		}
+		if err := syscall.Kill(expected.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("owned process %d termination: %w", expected.PID, err)
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		owned = append([]ProcessIdentity(nil), s.owned...)
+		s.mu.Unlock()
+		remaining, inspectable := stableOwnedState(owned)
+		if inspectable && len(remaining) == 0 {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return errors.New("owned process termination was not confirmed")
+}
+
 func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) error {
 	m.stopInitOnce.Do(func() { m.stopDone = make(chan struct{}) })
 	m.stopOnce.Do(func() {
