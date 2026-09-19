@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+export NLA_HOME="${NLA_HOME:-/home/next/next-level-agent}"
+export OPENCODE_CONFIG="${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+export NLA_MODEL_POOLS_PATH="${NLA_MODEL_POOLS_PATH:-$HOME/.config/nla/model-pools.json}"
+export NLA_BROWSER_CONFIG_PATH="${NLA_BROWSER_CONFIG_PATH:-$HOME/.config/nla/browser.json}"
+
+# Only `run` has a launcher-owned default model. Other OpenCode subcommands
+# retain their own CLI contract; in particular, `serve` does not accept -m.
+if [ "${1-}" = "run" ]; then
+  exec opencode -m opencode-go/gpt-5.6-luna "$@"
+fi
+exec opencode "$@"
