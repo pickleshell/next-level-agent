@@ -247,6 +247,16 @@ Sessions are process-local. After an NLA restart, old IDs are unavailable and
 a new task starts fresh. This slice does not restore live browser processes
 after an OS crash or provide a system-level process sandbox.
 
+When mandatory Browser criteria remain pending, NLA also writes a private,
+authenticated runtime recovery record. It binds the owning primary session,
+normalized target policy, effective grants and prohibitions, completed and
+pending criteria, evidence references/provenance, and the next criterion.
+Restart and compaction restoration validate it before execution; malformed,
+missing, weakened, or unverifiable state blocks durably. The record prevents
+model-authored ledger omission or mutation and accidental corruption. It does
+not defend against a hostile process running with the same Unix UID, which can
+read and alter NLA private state.
+
 ## Results and evidence
 
 The runtime executes declared success criteria at task completion and computes

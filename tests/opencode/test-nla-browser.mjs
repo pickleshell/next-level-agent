@@ -317,8 +317,8 @@ try {
   mutationFailure = true;
   const interrupted = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Do not replay submit', prompt: 'Submit once', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(interrupted.output).result, 'BLOCKED');
-  assert.equal(JSON.parse(interrupted.output).reason, 'BROWSER_OUTCOME_UNVERIFIED');
-  assert.equal(prompts, 2, 'provider failure after mutation must not replay on fallback');
+  assert.equal(JSON.parse(interrupted.output).reason, 'NLA_BROWSER_RECOVERY_BLOCKED');
+  assert.equal(prompts, 1, 'a mismatched continuation cannot start a Browser child');
   await plugin.dispose(); plugin = null;
   fs.rmSync(path.join(root, 'sessions', 'parent_123.json'), { force: true });
   delete process.env.NLA_BROWSER_CONFIG_PATH;
