@@ -168,6 +168,11 @@ func TestCleanupResourceProbesFailClosed(t *testing.T) {
 	if classifyProxyError(syscall.ECONNREFUSED) != resourceAbsent {
 		t.Fatal("proxy ECONNREFUSED must be confirmed absent")
 	}
+	for _, err := range []error{syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.EADDRNOTAVAIL} {
+		if classifyProxyError(err) != resourceBlocked {
+			t.Fatalf("proxy error %v must remain blocked", err)
+		}
+	}
 	if socketState("") != resourceBlocked || proxyState("") != resourceBlocked {
 		t.Fatal("malformed resource addresses must remain blocked")
 	}

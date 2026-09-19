@@ -371,6 +371,11 @@ func destroy(id, t string, uid uint32) Response {
 	}
 	_ = s.listener.Close()
 	var cleanupErrs []error
+	if s.cgroupPath != "" {
+		if err := killCgroup(s.cgroupPath); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("process boundary kill: %w", err))
+		}
+	}
 	if err := stopMCP(s); err != nil {
 		log.Printf("cleanup session=%s stage=browser-process result=error detail=%q", id, err.Error())
 		cleanupErrs = append(cleanupErrs, err)
@@ -405,9 +410,15 @@ func destroy(id, t string, uid uint32) Response {
 		log.Printf("cleanup session=%s stage=namespace result=ok", id)
 	}
 	after := s.inventory()
+	proxyResourceState := resourceBlocked
+	if shutdownErr == nil {
+		proxyResourceState = resourceAbsent
+	} else {
+		proxyResourceState = proxyState(s.info.Proxy)
+	}
 	cleanupReport := &CleanupReport{SessionID: id, Inventory: *after, Remaining: after.Identities,
 		MCPRemoved: string(socketState(mcpPath)), NamespaceRemoved: string(namespaceState(s.info.Namespace)),
-		ProxyRemoved: string(proxyState(s.info.Proxy)), PolicyRemoved: string(policyState), VethRemoved: string(linkState(vethName(s.info.Namespace))), CgroupState: string(cgroupState)}
+		ProxyRemoved: string(proxyResourceState), PolicyRemoved: string(policyState), VethRemoved: string(linkState(vethName(s.info.Namespace))), CgroupState: string(cgroupState)}
 	if after.Status == "ABSENT" && len(cleanupReport.Remaining) == 0 && cleanupReport.MCPRemoved == string(resourceAbsent) && cleanupReport.NamespaceRemoved == string(resourceAbsent) && cleanupReport.ProxyRemoved == string(resourceAbsent) && cleanupReport.PolicyRemoved == string(resourceAbsent) && cleanupReport.VethRemoved == string(resourceAbsent) && cleanupReport.CgroupState == string(resourceAbsent) {
 		cleanupReport.Status = "OBSERVED_CLEAN"
 	} else {
@@ -776,8 +787,7 @@ func createCgroup(sessionID string) (string, error) {
 			return "", err
 		}
 	}
-	controllers, err := os.ReadFile(filepath.Join(cgroupRoot, "cgroup.controllers"))
-	if err != nil || len(strings.TrimSpace(string(controllers))) == 0 {
+	if _, err := os.Stat(filepath.Join(cgroupRoot, "cgroup.controllers")); err != nil {
 		_ = os.Remove(path)
 		return "", errors.New("cgroup v2 controller boundary unavailable")
 	}
@@ -844,7 +854,7 @@ func cleanupCgroup(path string) resourceState {
 	if path == "" {
 		return resourceBlocked
 	}
-	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1\n"), 0600); err != nil {
+	if err := killCgroup(path); err != nil {
 		return resourceBlocked
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -865,6 +875,13 @@ func cleanupCgroup(path string) resourceState {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return resourceBlocked
+}
+
+func killCgroup(path string) error {
+	if path == "" {
+		return errors.New("invalid process boundary")
+	}
+	return os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1\n"), 0600)
 }
 
 func processGroupInventory(pgid int) ([]ProcessIdentity, bool) {
