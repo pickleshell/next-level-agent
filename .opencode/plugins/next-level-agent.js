@@ -1016,7 +1016,14 @@ ${toolMapping}
           tokens_before: current.tokensBeforeCompaction,
           compaction_number: current.compactionCount || 1,
         });
-        const checkpoint = current.checkpoint || loadLedger(stateRoot, props.sessionID);
+        let checkpoint = null;
+        try {
+          checkpoint = current.checkpoint || loadLedger(stateRoot, props.sessionID);
+        } catch (error) {
+          current.blocked = true;
+          current.restoreError = String(error && error.message || error).slice(0, 300);
+          appendRunLog({ event: 'context_restore_failed', session_id: props.sessionID, reason: current.restoreError });
+        }
         let restoredOk = false;
         if (checkpoint) {
           const primary = primarySessions.get(props.sessionID) || { agent: 'nla', directory: checkpoint.directory || directory, model: defaultModel };
@@ -1036,7 +1043,7 @@ ${toolMapping}
             current.restoreError = String(error && error.message || error).slice(0, 300);
             appendRunLog({ event: 'context_restore_failed', session_id: props.sessionID, reason: current.restoreError });
           }
-        } else {
+        } else if (!current.restoreError) {
           current.blocked = true;
           current.restoreError = 'No durable checkpoint is available after compaction';
           appendRunLog({ event: 'context_restore_failed', session_id: props.sessionID, reason: current.restoreError });
