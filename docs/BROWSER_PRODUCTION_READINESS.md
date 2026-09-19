@@ -1,15 +1,16 @@
 # NLA Browser final production readiness report
 
-Date: 2026-09-18
+Date: 2026-09-19
 
 ## Verdict
 
 `NLA BROWSER PRODUCTION NOT READY`
 
-N1, N2 and N3 remain accepted and frozen. The final production gate is not
-closed because persistent Orchestrator/child recovery and real compaction
-evidence are incomplete, and the first production-broker stress run recorded
-one stale namespace before reconciliation.
+N1, N2 and N3 remain accepted and frozen. R1--R5 remediation and
+re-certification evidence is now recorded on the exact clean HEAD below. The
+overall verdict remains open pending the fresh independent production review
+and the persistent OpenCode scenarios that the harness deliberately reports as
+`NOT_RUN`.
 
 ## Accepted implementation checkpoints
 
@@ -19,6 +20,8 @@ one stale namespace before reconciliation.
 | N2/N3 implementation and tests | `6f4207fcd40cf539912475fb8c3dc45afea08b33` | checkpoint |
 | production broker service/socket | `83edbf17c6fa6aebc001555d7a70c8234b1d0a10` | P2 contract validated |
 | R1 bounded cleanup remediation | `3101603b282aa641a6b540f8af7ba2922ac580f6` | implemented; final gate still open |
+| R6 managed-MCP/cleanup remediation | `fac1730b5b1203bc12d37c9ec88df3647cbbecbe` | double-teardown and cleanup diagnostics |
+| R6 process-group cleanup remediation | `5a725a4c6e4a011eb91e425f6e6afa2addc1a3be` | final clean R5 HEAD |
 
 No revision was pushed.
 
@@ -66,7 +69,7 @@ documented in `network-broker/SERVICE.md`.
   `53cfb88e-7bcc-4635-b0e1-7cb3fa6c6dfe`.
 * N1/N2/N3 regression suites and broker race/vet checks: PASS.
 
-## R1 remediation
+## R1/R6 remediation
 
 The stale-namespace failure was reproduced in the production-style parallel
 harness. Broker destroy could stop at Browser process teardown: the old code
@@ -86,18 +89,38 @@ The remediation adds:
   cleanup failure;
 * regression coverage proving cleanup failure cannot become `PASS`.
 
-After the fix, the production-style parallel run passed and the final resource
-scan showed no broker-owned namespace, veth, MCP socket or browser process.
-The run still had unrelated harness failures for the intentionally unavailable
-fixture and one flaky navigation/sequential assertion; these are retained as
-failures and do not count as production acceptance.
+R6 additionally fixed two production correctness defects found by independent
+review:
 
-* The pre-remediation 30 sequential + 2 parallel run left one stale
-  namespace/veth until broker reconciliation. After the R1 fix, a fresh
-  production-style run completed the parallel cleanup path with no remaining
-  namespace, veth, MCP socket or browser process; the aggregate harness still
-  reported unrelated functional/failure-fixture assertions, so this is not a
-  production acceptance result.
+* managed MCP teardown now has one completion/result path, so concurrent bridge
+  and destroy callers share the same bounded result;
+* reaper and dispose cleanup failures are observable and cannot become an
+  unhandled rejection or a silent success;
+* Chromium can report `EPERM` for a process-group signal after its user-
+  namespace descendants have already exited. The broker now accepts that case
+  only after independently proving that no member of the owned process group
+  remains. A surviving member remains a hard cleanup error.
+* Screenshot masking is regression-tested through the production path by
+  changing the password canary and comparing the resulting PNG bytes; the
+  secret value does not alter the stored screenshot output.
+
+The final clean R5 run on `5a725a4c6e4a011eb91e425f6e6afa2addc1a3be` recorded:
+
+* 40 sequential browser tasks;
+* 6 parallel batches;
+* functional, SSE/WebSocket, security, recovery and lifecycle checks passing;
+* cleanup failures: `0`;
+* clean revision binding: exact HEAD above, worktree `clean`;
+* file-descriptor baseline restored (`28` before and after the stress run);
+* no broker-owned stale namespace/veth/MCP/browser process after cleanup.
+
+Certification report:
+`/tmp/user/1010/nla-browser-production-vm37V1/production-gate.json`
+
+The report intentionally retains three `NOT_RUN` entries requiring persistent
+OpenCode experiments: live model prompt-injection delegation, persistent
+Orchestrator/child restart, and persistent compaction/recovery. They are not
+represented as PASS.
 
 ## Verification commands
 
@@ -117,19 +140,12 @@ coverage was therefore not reported as a passing suite.
 
 ## Remaining blockers
 
-1. A real Browser child-session interruption through persistent NLA must be
-   exercised and prove no fabricated or duplicate evidence.
-2. A persistent Orchestrator restart/restore must preserve partial evidence,
-   pending checks, permissions and run identity.
-3. Actual OpenCode context compaction must occur during a multi-step Browser
-   workflow and the post-compaction result must use real pre/post-compaction
-   tool evidence. The attempted persistent server runs were NOT_RUN: one
-   lacked provider auth, and the SDK-configured attempt did not dispatch a
-   provider response.
-4. Explain or reproduce the single stale namespace from the first 30+2 stress
-   run, then rerun the full stress gate with zero cleanup incidents.
-5. Run the independent final Reviewer after the above evidence is fresh and
-   obtain exactly `PRODUCTION ACCEPT`. The current independent final review
-   returned `PRODUCTION REJECT` because these blockers remain open.
+1. Run the three persistent OpenCode scenarios still marked `NOT_RUN` in the
+   clean R5 report: live model prompt-injection delegation, persistent
+   Orchestrator/child restart, and actual context compaction during a Browser
+   workflow.
+2. Run a fresh independent production Reviewer against the final HEAD and all
+   R1--R6 evidence. The verdict must be exactly `PRODUCTION ACCEPT` before the
+   readiness verdict can change.
 
 No production-ready claim should be made until every item is closed.
