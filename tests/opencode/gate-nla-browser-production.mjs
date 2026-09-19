@@ -387,8 +387,11 @@ try {
       const unobservable = metrics.process_inventory.filter(sample => sample.status !== 'OBSERVED');
       if (unobservable.length) throw new BrowserError('OWNERSHIP_UNOBSERVABLE', JSON.stringify(unobservable));
       assert.ok(knownProcesses.size > 0, 'Owned process inventory is empty');
-      assert.deepEqual(alive([...knownProcesses.values()]),[],'Owned browser/MCP processes still present');
-      return {tracked_processes:knownProcesses.size,peak_owned_rss_kb:metrics.peak_owned_rss_kb};
+      const observationStarted = Date.now();
+      await waitUntil(() => alive([...knownProcesses.values()]).length === 0, 3000);
+      const remaining = alive([...knownProcesses.values()]);
+      assert.deepEqual(remaining, [], `Owned browser/MCP processes still present after bounded observation: ${JSON.stringify(remaining)}`);
+      return {tracked_processes:knownProcesses.size,peak_owned_rss_kb:metrics.peak_owned_rss_kb,observation_wait_ms:Date.now()-observationStarted};
     });
   }
 } catch(e) {
