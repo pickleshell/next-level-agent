@@ -7,6 +7,7 @@ import http from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { inflateSync } from 'node:zlib';
 import { BrowserCapability, BROWSER_TOOLS } from '../../.opencode/plugins/nla-browser.mjs';
 import { BrowserError } from '../../.opencode/plugins/nla-browser-mcp.mjs';
 import { reconcileGitWorkspace } from '../../.opencode/plugins/nla-reconciliation.mjs';
@@ -65,10 +66,48 @@ async function cleanupResources(session, identities) {
   assert.ok(!fs.existsSync(session.backend.outputDir), 'Owned MCP output directory must be removed');
 }
 const sample = () => ({ fd_count: fs.readdirSync('/proc/self/fd').length, rss_bytes: process.memoryUsage().rss, heap_bytes: process.memoryUsage().heapUsed });
+// Playwright emits RGB/RGBA PNGs for this fixed viewport. Decode only that bounded
+// format so the production gate verifies pixels from the saved artifact rather
+// than trusting mask metadata or comparing whole-image hashes (which can vary
+// by a blinking caret while the secret region is correctly masked).
+function rgbaPng(file) {
+  const png = fs.readFileSync(file);
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  let offset = 8; let width; let height; let depth; let type; const data = [];
+  while (offset < png.length) {
+    const size = png.readUInt32BE(offset); const kind = png.toString('ascii', offset + 4, offset + 8);
+    const chunk = png.subarray(offset + 8, offset + 8 + size); offset += size + 12;
+    if (kind === 'IHDR') { width = chunk.readUInt32BE(0); height = chunk.readUInt32BE(4); depth = chunk[8]; type = chunk[9]; }
+    else if (kind === 'IDAT') data.push(chunk);
+    else if (kind === 'IEND') break;
+  }
+  assert.equal(depth, 8); assert.ok(type === 2 || type === 6, 'production screenshot must be RGB or RGBA PNG');
+  const channels = type === 6 ? 4 : 3;
+  const bytesPerRow = width * channels; const raw = inflateSync(Buffer.concat(data)); const pixels = Buffer.alloc(bytesPerRow * height);
+  let input = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = raw[input++]; const row = pixels.subarray(y * bytesPerRow, (y + 1) * bytesPerRow);
+    for (let x = 0; x < bytesPerRow; x++) {
+      const value = raw[input++]; const left = x >= channels ? row[x - channels] : 0; const up = y ? pixels[(y - 1) * bytesPerRow + x] : 0; const upLeft = y && x >= channels ? pixels[(y - 1) * bytesPerRow + x - channels] : 0;
+      row[x] = filter === 0 ? value : filter === 1 ? (value + left) & 255 : filter === 2 ? (value + up) & 255 : filter === 3 ? (value + Math.floor((left + up) / 2)) & 255 : filter === 4 ? (value + paeth(left, up, upLeft)) & 255 : (() => { throw new Error('Unsupported PNG filter'); })();
+    }
+  }
+  return { width, height, channels, pixels };
+}
+function paeth(a, b, c) { const p = a + b - c; const pa = Math.abs(p - a); const pb = Math.abs(p - b); const pc = Math.abs(p - c); return pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+function assertMaskedBlack(file, x, y, width, height) {
+  const image = rgbaPng(file);
+  for (let row = y + 2; row < y + height - 2; row++) for (let column = x + 2; column < x + width - 2; column++) {
+    const at = (row * image.width + column) * image.channels;
+    assert.deepEqual([...image.pixels.subarray(at, at + 3)], [0, 0, 0], 'secret canary pixels must be masked in the saved screenshot');
+    if (image.channels === 4) assert.equal(image.pixels[at + 3], 255, 'masked secret pixel alpha must be opaque');
+  }
+}
 const html = `<!doctype html><title>Production gate fixture</title>
 <a href='/article'>Source</a><a href='/download'>Download</a>
 <label>Name<input id='name'></label><label for='color'>Color</label><select id='color'><option>Red</option><option>Blue</option></select>
 <label>Upload<input type='file' id='upload'></label><label>Password<input type='password' id='password'></label>
+<div data-secret style='position:fixed;left:32px;top:96px;width:320px;height:36px;background:#e31149;color:#fff;font:16px sans-serif'>${canary}</div>
 <button id='save'>Save</button><button id='live'>Live</button><button id='spa'>SPA</button><button id='store'>Store</button>
 <p data-testid='result'>Ready</p><p data-testid='selected'>Red</p><p data-testid='keyboard'>None</p>
 <p data-testid='stored'></p><p data-testid='cookie'></p><p data-testid='files'>0</p>
@@ -264,10 +303,11 @@ try {
       const first = await action(s, { operation: 'screenshot' });
       await action(s, { operation: 'fill', locator: { label: 'Password' }, text: canary + '_different', sensitive: true });
       const second = await action(s, { operation: 'screenshot' });
-      assert.ok(Array.isArray(first.secret_regions_masked) && first.secret_regions_masked.includes('input[type="password"]'));
+      assert.ok(Array.isArray(first.secret_regions_masked) && first.secret_regions_masked.includes('input[type="password"]') && first.secret_regions_masked.includes('[data-secret]'));
       assert.ok(fs.statSync(first.artifact).size > 0 && fs.statSync(second.artifact).size > 0);
-      assert.equal(createHash('sha256').update(fs.readFileSync(first.artifact)).digest('hex'), createHash('sha256').update(fs.readFileSync(second.artifact)).digest('hex'), 'masked screenshot must not change when only the secret value changes');
-      return { artifact: 'private screenshot', masked: first.secret_regions_masked.length, pixel_regression: 'same-image-for-different-secrets' };
+      assertMaskedBlack(first.artifact, 32, 96, 320, 36);
+      assertMaskedBlack(second.artifact, 32, 96, 320, 36);
+      return { artifact: 'private screenshot', masked: first.secret_regions_masked.length, pixel_regression: 'secret-bearing DOM region is opaque black in both saved screenshots' };
     }));
 
     for (const fault of ['backend-crash','mcp-disconnect','browser-crash','page-crash']) await test('failure_recovery', fault, async () => {

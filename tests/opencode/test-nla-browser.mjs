@@ -184,7 +184,32 @@ try {
   };
   const download = await operation(downloadPage, { kind:'download', locator:{role:'link',name:'Download'}, artifact:path.join(root,'download.bin'), permissions:{downloads:true,authentication:false} });
   assert.equal(download.status,'PASS'); assert.equal(download.artifact,savedDownload,'A saved download must have an evidence reference');
+  // Screenshot evidence must describe real mask regions, not a static list of
+  // possible selectors. This keeps the artifact claim tied to the backend call.
+  let screenshotOptions;
+  const screenshotPage = {
+    context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
+    url: () => 'http://example.test/secret',
+    locator: selector => ({ count: async () => selector === 'input[type="password"]' ? 1 : 0 }),
+    screenshot: async options => { screenshotOptions = options; },
+  };
+  const screenshot = await operation(screenshotPage, { kind: 'screenshot', artifact: path.join(root, 'screenshot.png') });
+  assert.deepEqual(screenshot.secret_regions_masked, ['input[type="password"]']);
+  assert.equal(screenshotOptions.mask.length, 1);
   const notRun = await manager.begin(task(), 'parent', root); manager.bind(notRun, 'no-preflight');
+  // Body observation must use the backend secret-region scrubber rather than
+  // copying sensitive DOM text into evidence.
+  let observedSelector;
+  const observePage = {
+    context: () => ({ __nlaBrowser: { console: [], network: [], dialogs: 0, blocks: 0 } }),
+    url: () => 'http://example.test/secret', title: async () => 'Secret fixture',
+    locator: selector => ({ evaluate: async (_fn, secretSelector) => { observedSelector = [selector, secretSelector]; return 'Visible [REDACTED]'; } }),
+  };
+  const observedSecret = await operation(observePage, { kind: 'observe', limit: 100 });
+  assert.equal(observedSecret.text, 'Visible [REDACTED]');
+  assert.equal(observedSelector[0], 'body');
+  assert.match(observedSelector[1], /data-secret/);
+
   assert.equal(JSON.parse((await manager.finish(notRun)).output).result, 'NOT_RUN');
 
   let clock = 0;

@@ -14,6 +14,14 @@ export async function operation(page, input) {
     return protocol + '://' + match[2];
   };
   const allowed = url => input.origins.includes(origin(url));
+  const secretSelectors = ['input[type="password"]', '[data-secret]', '[data-sensitive]', '[data-private]', '[name*="token" i]', '[name*="api-key" i]', '[name*="apikey" i]', '[name*="secret" i]', '[name*="auth" i]', '[id*="token" i]', '[id*="api-key" i]', '[id*="apikey" i]', '[id*="secret" i]', '[id*="auth" i]'];
+  const secretSelector = secretSelectors.join(',');
+  const secretText = async l => (await l.evaluate((element, selector) => element.matches(selector) || Boolean(element.closest(selector)), secretSelector))
+    ? '[REDACTED]'
+    : (await l.innerText()).slice(0, input.limit);
+  const bodyText = async () => (await page.locator('body').evaluate((body, selector) => {
+    const clone = body.cloneNode(true); clone.querySelectorAll(selector).forEach(node => node.replaceWith(document.createTextNode('[REDACTED]'))); return clone.innerText;
+  }, secretSelector)).slice(0, input.limit);
   const safeURL = url => url.split(/[?#]/)[0];
   const state = context.__nlaBrowser;
   if (input.kind === 'preflight') {
@@ -106,25 +114,28 @@ export async function operation(page, input) {
     if (input.locator) {
       const l = locator(input.locator);
       result.count = await l.count(); result.visible = await l.isVisible();
-      if (result.count === 1) { result.text = (await l.innerText()).slice(0, input.limit); result.enabled = await l.isEnabled(); }
-    } else result.text = (await page.locator('body').innerText()).slice(0, input.limit);
+      if (result.count === 1) { result.text = await secretText(l); result.enabled = await l.isEnabled(); }
+    } else result.text = await bodyText();
     result.console = state.console; result.network = state.network;
     result.streaming = { sse_responses: state.sse_responses || 0, websocket_connections: state.websocket || 0, websocket_messages: state.websocket_messages || 0, websocket_closed: state.websocket_closed || 0 };
     result.dialogs = state.dialogs; result.policy_blocks = state.blocks;
     return result;
   }
   if (input.kind === 'screenshot') {
-    const secretSelectors = [
-      'input[type="password"]',
-      '[data-secret]', '[data-sensitive]', '[data-private]',
-      '[name*="token" i]', '[name*="api-key" i]', '[name*="apikey" i]',
-      '[name*="secret" i]', '[name*="auth" i]',
-      '[id*="token" i]', '[id*="api-key" i]', '[id*="apikey" i]',
-      '[id*="secret" i]', '[id*="auth" i]'
-    ];
-    const masks = secretSelectors.map(selector => page.locator(selector));
+    // Report only regions that actually existed in the captured page. Returning
+    // the static selector list would make evidence claim that absent regions
+    // were masked, which is not a useful security fact.
+    const masks = [];
+    const secretRegionsMasked = [];
+    for (const selector of secretSelectors) {
+      const candidate = page.locator(selector);
+      if (await candidate.count()) {
+        masks.push(candidate);
+        secretRegionsMasked.push(selector);
+      }
+    }
     await page.screenshot({ path: input.artifact, fullPage: false, type: 'png', mask: masks, maskColor: '#000000' });
-    return { status: 'PASS', artifact: input.artifact, url: safeURL(page.url()), secret_regions_masked: secretSelectors };
+    return { status: 'PASS', artifact: input.artifact, url: safeURL(page.url()), secret_regions_masked: secretRegionsMasked };
   }
   if (input.kind === 'check') {
     const deadline = Date.now() + (Number.isFinite(input.wait_ms) ? Math.min(10000, Math.max(0, input.wait_ms)) : 1000);
