@@ -300,7 +300,7 @@ export class BrowserCapability {
       const event = { ...result, id: data.id, operation, started_at, completed_at: new Date(this.now()).toISOString(), condition_key: category === 'check' ? conditionKey(data) : undefined };
       s.events.push(event); return event;
     } catch (error) {
-      if (error.code === 'UNREACHABLE') s.poisoned = true;
+      if (error.code === 'UNREACHABLE' || (error.code === 'AMBIGUOUS_LOCATOR' && category === 'action')) s.poisoned = true;
       const event = { id: data.id, operation, status: 'BLOCKED', reason: error.code || 'UNREACHABLE', detail: JSON.stringify({ message: String(error.message || '').slice(0, 200), url: data.url, origins: s.task?.origins, permissions: s.task?.permissions, session_alive: this.sessions.has(id), child_match: this.children.get(child) === id }), outcome: category === 'action' ? 'UNKNOWN' : undefined, started_at, completed_at: new Date(this.now()).toISOString(), condition_key: category === 'check' ? conditionKey(data) : undefined };
       s.events.push(event); return event;
     } finally { s.executing = false; }
@@ -332,7 +332,8 @@ export class BrowserCapability {
       s.signal?.removeEventListener('abort', s.abort); s.abort = null; s.signal = null;
       s.expires = this.now() + (this.config.session_ttl_ms || 600000);
     }
-    return { title: `Browser ${result}`, output: JSON.stringify({ result, reason: error?.code, checks, data: s.events.filter(e => e.operation === 'observe').at(-1) || null, evidence: file, session_id: s.task.keep_session && !error && this.sessions.has(s.id) ? s.id : null }), metadata: { browser_result: result, evidence: file, revision: s.revision } };
+    const artifacts = manifest.operations.filter(e => e.status === 'PASS' && typeof e.artifact === 'string').map(e => ({ operation: e.operation, path: e.artifact }));
+    return { title: `Browser ${result}`, output: JSON.stringify({ result, reason: error?.code, checks, data: s.events.filter(e => e.operation === 'observe').at(-1) || null, artifacts, evidence: file, session_id: s.task.keep_session && !error && this.sessions.has(s.id) ? s.id : null }), metadata: { browser_result: result, evidence: file, revision: s.revision } };
   }
   async closeOwned(id, owner) {
     const s = this.sessions.get(id); if (!s) return;

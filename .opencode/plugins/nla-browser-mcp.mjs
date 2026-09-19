@@ -80,7 +80,14 @@ export class BrowserMcpClient {
   async call(name, args) {
     if (!this.tools?.includes(name)) throw new BrowserError('UNSUPPORTED_CAPABILITY');
     const result = await this.request('tools/call', { name, arguments: args });
-    if (result?.isError) throw new BrowserError('UNREACHABLE', String(result.content?.[0]?.text || 'Browser backend operation failed').slice(0, 1000));
+    if (result?.isError) {
+      const message = String(result.content?.[0]?.text || 'Browser backend operation failed').slice(0, 1000);
+      // A strict locator error is an operation error, not transport loss.
+      // Keep unknown backend failures fail-closed.
+      const code = /Error: (?:locator\.[A-Za-z]+: (?:Error: )?)?strict mode violation:/.test(message)
+        ? 'AMBIGUOUS_LOCATOR' : 'UNREACHABLE';
+      throw new BrowserError(code, message);
+    }
     return result;
   }
   fail(code = 'UNREACHABLE') {
