@@ -19,6 +19,9 @@ try {
   assert.equal(loadLedger(root, state.session_id).next_step, 'run tests');
   assert.equal(normalizeLedger({ active_task: [] }, 'ses_test_87654321', '/tmp/project').active_task, null);
   assert.match(restorePacket(state), /NLA_RESTORE_PACKET/);
+  const manyEvidence = [...Array.from({ length: 100 }, (_, i) => ({ evidence: `check-${i}` })), { type: 'Browser', evidence: 'authenticated-reference' }];
+  assert.deepEqual(normalizeLedger({ verification_evidence: manyEvidence }, state.session_id, root).verification_evidence, manyEvidence);
+  assert.throws(() => normalizeLedger({ verification_evidence: [{ type: 'browser', evidence: 'x'.repeat(128001) }] }, state.session_id, root), /128 KB/);
 
   const notebook = path.join(root, 'assistant-notebook');
   initializeNotebook(notebook);

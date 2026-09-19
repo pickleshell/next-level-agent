@@ -9,12 +9,13 @@ import { operation } from '../../.opencode/plugins/nla-browser-playwright.mjs';
 import { deterministicToolShortlist } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { normalizeLedger, saveLedger } from '../../.opencode/plugins/nla-memory.mjs';
-import { createBrowserRecovery } from '../../.opencode/plugins/nla-browser-recovery.mjs';
+import { createBrowserRecovery, recoveryEvidence } from '../../.opencode/plugins/nla-browser-recovery.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-test-'));
 const config = { command: [process.execPath, path.resolve('tests/opencode/fixtures/browser-mcp-server.mjs'), '--isolated'], allowed_origins: ['http://example.test'], timeout_ms: 1000, session_ttl_ms: 1000 };
 const task = (overrides = {}) => ({ goal: 'Find the relevant page and extract its state', permissions: { navigation: true, interaction: true, external_mutation: true }, origins: ['http://example.test'], success_criteria: [{ id: 'ready', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Ready' }], ...overrides });
 const managers = []; const make = opts => { const m = new BrowserCapability({ config, root, ...opts }); managers.push(m); return m; };
+const expectedDisposeFailures = new Set();
 let plugin;
 const old = Object.fromEntries(['NLA_BROWSER_CONFIG_PATH', 'NLA_MODEL_POOLS_PATH', 'NLA_MEMORY_DIR'].map(k => [k, process.env[k]]));
 try {
@@ -236,6 +237,7 @@ try {
   const activeFailure = await disposeFailure.begin(task(), 'parent', root);
   disposeFailure.bind(activeFailure, 'dispose-failure');
   await assert.rejects(disposeFailure.dispose(), /dispose cleanup failed/);
+  expectedDisposeFailures.add(disposeFailure);
 
   let closed = 0;
   const unavailable = make({ backendFactory: () => ({ start: async () => { throw new BrowserError('AUTH_REQUIRED'); }, close: async () => { closed++; } }) });
@@ -320,25 +322,29 @@ try {
   assert.equal(JSON.parse(interrupted.output).result, 'BLOCKED');
   assert.equal(JSON.parse(interrupted.output).reason, 'BROWSER_OUTCOME_UNVERIFIED');
   assert.equal(prompts, 2, 'provider failure after mutation must not replay on fallback');
-  const mismatch = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Mismatched continuation', prompt: 'Read', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
+  const mismatch = await plugin.tool.nla_task.execute({ role: 'browser', browser_task_id: routed.metadata.browser_task_id, description: 'Mismatched continuation', prompt: 'Read', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(mismatch.output).reason, 'NLA_BROWSER_RECOVERY_BLOCKED');
   assert.equal(prompts, 2, 'a mismatched continuation cannot start a Browser child');
   await plugin.dispose(); plugin = null;
   fs.rmSync(path.join(root, 'sessions', 'parent_123.json'), { force: true });
   fs.rmSync(path.join(root, 'browser-recovery'), { recursive: true, force: true });
-  const historicalEvidence = path.join(root, 'historical-evidence.json'); fs.writeFileSync(historicalEvidence, '{"trusted":true}\n');
+  fs.rmSync(path.join(root, '.browser-recovery.required'), { force: true });
+  const historicalEvidence = path.join(root, 'historical-evidence.json'); fs.writeFileSync(historicalEvidence, JSON.stringify({ run_id: 'historical-run', session_id: 'historical-browser', task_id: 'historical-child', revision: { head: null }, result: 'PASS', checks: [{ id: 'A', status: 'PASS' }] }));
   const historicalTask = task({ success_criteria: [{ id: 'A', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Ready', mandatory: true }] });
   createBrowserRecovery(root, 'parent_123', historicalTask, { run_id: 'historical-run', id: 'historical-browser', child: 'historical-child', revision: { head: null } }, { metadata: { evidence: historicalEvidence, browser_result: 'PASS' } }, [{ id: 'A', status: 'PASS' }]);
   delete process.env.NLA_BROWSER_CONFIG_PATH;
   plugin = await NextLevelAgentPlugin({ directory: root, client: { session: { prompt: async () => ({ data: true }) } } });
   await plugin['chat.message']({ sessionID: 'parent_123', agent: 'nla', directory: root });
-  await plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ goal: 'retain recovered evidence', workflow_stage: 'verification', verification_evidence: [{ head: null, type: 'browser', evidence: historicalEvidence, result: 'PASS', provenance: { source: 'browser-capability', trusted: true, run_id: 'historical-run', session_id: 'historical-browser', child_id: 'historical-child', owner_session_id: 'parent_123' } }] }) }, { sessionID: 'parent_123', directory: root });
+  await plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ goal: 'retain recovered evidence', workflow_stage: 'verification', verification_evidence: recoveryEvidence(root, 'parent_123') }) }, { sessionID: 'parent_123', directory: root });
   const blocked = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Absent browser', prompt: 'Read', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(blocked.output).reason, 'NOT_CONFIGURED');
   assert.ok(plugin.tool.nla_models);
 } finally {
   await plugin?.dispose();
-  for (const m of managers) await m.dispose();
+  for (const m of managers) {
+    if (expectedDisposeFailures.has(m)) await assert.rejects(m.dispose(), /dispose cleanup failed/);
+    else await m.dispose();
+  }
   for (const [key, value] of Object.entries(old)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   fs.rmSync(root, { recursive: true, force: true });
 }

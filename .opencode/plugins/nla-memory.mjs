@@ -63,7 +63,13 @@ export function normalizeLedger(input, sessionID, directory) {
   }
   state.active_task = state.active_task && typeof state.active_task === 'object' && !Array.isArray(state.active_task) ? state.active_task : null;
   state.repository_state = state.repository_state && typeof state.repository_state === 'object' && !Array.isArray(state.repository_state) ? state.repository_state : null;
-  state.verification_evidence = Array.isArray(state.verification_evidence) ? state.verification_evidence.slice(0, 100) : [];
+  // Browser entries are authenticated history and cannot be silently removed
+  // by a model snapshot round-trip. The overall serialized size cap still
+  // bounds storage; ordinary evidence retains its existing 100-entry limit.
+  let ordinaryEvidence = 0;
+  state.verification_evidence = Array.isArray(state.verification_evidence)
+    ? state.verification_evidence.filter(entry => (typeof entry?.type === 'string' && entry.type.toLowerCase() === 'browser') || ++ordinaryEvidence <= 100)
+    : [];
   const serialized = JSON.stringify(state);
   if (serialized.length > 128000) throw new Error('NLA ledger exceeds 128 KB');
   if (SECRET_PATTERN.test(serialized)) throw new Error('NLA ledger appears to contain a secret');
