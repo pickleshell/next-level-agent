@@ -258,12 +258,16 @@ try {
         } finally { fs.closeSync(log); }
       });
     } else record('isolation_security', 'model-prompt-injection', 'NOT_RUN', 'Set NLA_PRODUCTION_MODEL_TEST=1 with actual launcher to exercise a live adversarial Browser child');
-    await test('isolation_security', 'screenshot-secret-policy', () => withSession(task(), async s => {
+    await test('isolation_security', 'screenshot-secret-policy', () => withSession(task({ permissions: { navigation:true, interaction:true, authentication:true } }), async s => {
       await navigate(s);
-      const screenshot = await action(s, { operation: 'screenshot' });
-      assert.ok(Array.isArray(screenshot.secret_regions_masked) && screenshot.secret_regions_masked.includes('input[type="password"]'));
-      assert.ok(fs.statSync(screenshot.artifact).size > 0);
-      return { artifact: 'private screenshot', masked: screenshot.secret_regions_masked.length };
+      await action(s, { operation: 'fill', locator: { label: 'Password' }, text: canary, sensitive: true });
+      const first = await action(s, { operation: 'screenshot' });
+      await action(s, { operation: 'fill', locator: { label: 'Password' }, text: canary + '_different', sensitive: true });
+      const second = await action(s, { operation: 'screenshot' });
+      assert.ok(Array.isArray(first.secret_regions_masked) && first.secret_regions_masked.includes('input[type="password"]'));
+      assert.ok(fs.statSync(first.artifact).size > 0 && fs.statSync(second.artifact).size > 0);
+      assert.equal(createHash('sha256').update(fs.readFileSync(first.artifact)).digest('hex'), createHash('sha256').update(fs.readFileSync(second.artifact)).digest('hex'), 'masked screenshot must not change when only the secret value changes');
+      return { artifact: 'private screenshot', masked: first.secret_regions_masked.length, pixel_regression: 'same-image-for-different-secrets' };
     }));
 
     for (const fault of ['backend-crash','mcp-disconnect','browser-crash','page-crash']) await test('failure_recovery', fault, async () => {

@@ -73,9 +73,13 @@ type session struct {
 	destroyMu sync.Mutex
 }
 type managedMCP struct {
-	cmd      *exec.Cmd
-	listener net.Listener
-	path     string
+	cmd          *exec.Cmd
+	listener     net.Listener
+	path         string
+	stopInitOnce sync.Once
+	stopOnce     sync.Once
+	stopDone     chan struct{}
+	stopErr      error
 }
 
 type boundedWriter struct {
@@ -464,6 +468,15 @@ func stopMCP(s *session) error {
 	return nil
 }
 func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) error {
+	m.stopInitOnce.Do(func() { m.stopDone = make(chan struct{}) })
+	m.stopOnce.Do(func() {
+		m.stopErr = stopManagedMCPOnce(m, stdin, stdout)
+		close(m.stopDone)
+	})
+	<-m.stopDone
+	return m.stopErr
+}
+func stopManagedMCPOnce(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) error {
 	if stdin != nil {
 		_ = stdin.Close()
 	}
@@ -471,13 +484,17 @@ func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) e
 		_ = stdout.Close()
 	}
 	_ = m.listener.Close()
+	var killErr error
 	if m.cmd.Process != nil {
-		_ = syscall.Kill(-m.cmd.Process.Pid, syscall.SIGKILL)
+		killErr = syscall.Kill(-m.cmd.Process.Pid, syscall.SIGKILL)
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- m.cmd.Wait() }()
 	select {
 	case err := <-wait:
+		if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+			return fmt.Errorf("browser process termination: %w", killErr)
+		}
 		if err != nil {
 			// The broker owns teardown of this process. Once Wait has
 			// completed, the process is gone; its exit status (including a
@@ -491,7 +508,9 @@ func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) e
 	case <-time.After(2 * time.Second):
 		return errors.New("browser process cleanup timed out")
 	}
-	_ = os.Remove(m.path)
+	if err := os.Remove(m.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("browser MCP socket cleanup: %w", err)
+	}
 	return nil
 }
 func owned(id, t string, uid uint32) (*session, bool) {
