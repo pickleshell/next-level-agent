@@ -30,9 +30,9 @@ reads a fixed operator/service configuration from
 `__NLA_SESSION_PROXY__` placeholder, substitutes only the current session's
 proxy endpoint, enters the session namespace, and then drops to the peer UID
 and GID with `/usr/bin/setpriv` before starting MCP/Chromium. The command is
-given a minimal fixed environment (`HOME=/home/next`, `TMPDIR=/tmp` and a
-fixed PATH); the broker never passes its privileged operator environment to
-the browser.
+given a minimal environment (`TMPDIR=/tmp` and a fixed PATH). HOME, USER and
+LOGNAME come from the OS account matching the authenticated peer UID. An
+unknown account fails closed; the privileged operator environment is not inherited.
 
 The browser-side command must therefore include, as a fixed service argument,
 an equivalent of:
@@ -53,6 +53,10 @@ Build without adding a repository-wide Go module:
 GO111MODULE=off go build -o /tmp/nlabridged ./network-broker
 sudo /tmp/nlabridged serve /run/nla-browser/broker.sock
 ~~~
+
+This command starts the protocol listener only. Browser launch additionally
+requires the fixed MCP command and delegated cgroup hierarchy from
+[SERVICE.md](SERVICE.md). Do not run a second instance alongside the service.
 
 The production unit must create a root-owned socket whose group is the
 dedicated unprivileged NLA service group. Do not grant NLA CAP_NET_ADMIN,

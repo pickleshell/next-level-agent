@@ -1,14 +1,24 @@
 #!/bin/sh
 set -eu
 
-export NLA_HOME="${NLA_HOME:-/home/next/next-level-agent}"
-export OPENCODE_CONFIG="${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
-export NLA_MODEL_POOLS_PATH="${NLA_MODEL_POOLS_PATH:-$HOME/.config/nla/model-pools.json}"
-export NLA_BROWSER_CONFIG_PATH="${NLA_BROWSER_CONFIG_PATH:-$HOME/.config/nla/browser.json}"
+export NLA_HOME="${NLA_HOME:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)}"
+export OPENCODE_CONFIG="${OPENCODE_CONFIG:-$NLA_HOME/opencode.json}"
+# A fresh installation needs no private overrides. Explicit overrides are
+# preserved, including missing paths, so the resolver can report the error.
+nla_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/nla"
+if [ "${NLA_MODEL_POOLS_PATH+x}" != x ] && [ -f "$nla_config_dir/model-pools.json" ]; then
+  export NLA_MODEL_POOLS_PATH="$nla_config_dir/model-pools.json"
+fi
+if [ "${NLA_BROWSER_CONFIG_PATH+x}" != x ] && [ -f "$nla_config_dir/browser.json" ]; then
+  export NLA_BROWSER_CONFIG_PATH="$nla_config_dir/browser.json"
+fi
 
 # Only `run` has a launcher-owned default model. Other OpenCode subcommands
 # retain their own CLI contract; in particular, `serve` does not accept -m.
 if [ "${1-}" = "run" ]; then
+  for arg in "$@"; do
+    case "$arg" in -m|--model|--model=*|-m?*) exec opencode "$@" ;; esac
+  done
   exec opencode -m opencode-go/gpt-5.6-luna "$@"
 fi
 exec opencode "$@"

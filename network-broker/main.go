@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -469,6 +470,10 @@ func launch(id, t string, uid uint32) Response {
 		if !foundProxyPlaceholder {
 			return Response{Error: "browser MCP command lacks session proxy placeholder"}
 		}
+		childEnv, err := browserEnvironment(s.ownerUID)
+		if err != nil {
+			return Response{Error: "browser account environment unavailable"}
+		}
 		// Keep the broker-to-owner endpoint in the fixed shared temp directory;
 		// never inherit a privileged broker's TMPDIR from an operator environment.
 		mcpDir := os.Getenv("NLA_BROKER_MCP_DIR")
@@ -495,7 +500,7 @@ func launch(id, t string, uid uint32) Response {
 		// browser command, never in the caller and never after the browser starts.
 		setpriv := []string{"netns", "exec", s.info.Namespace, "/usr/bin/setpriv", "--reuid", strconv.FormatUint(uint64(s.ownerUID), 10), "--regid", strconv.FormatUint(uint64(s.ownerGID), 10), "--clear-groups", "--no-new-privs", "--"}
 		cmd := exec.Command("ip", append(setpriv, command...)...)
-		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/next", "TMPDIR=/tmp", "LANG=C", "USER=next", "LOGNAME=next"}
+		cmd.Env = childEnv
 		cmd.Stderr = &boundedWriter{w: os.Stderr, max: 16 * 1024}
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
@@ -563,6 +568,17 @@ func launch(id, t string, uid uint32) Response {
 	}
 	return response
 }
+func browserEnvironment(uid uint32) ([]string, error) {
+	account, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(account.HomeDir) || account.Username == "" {
+		return nil, errors.New("invalid browser account")
+	}
+	return []string{"PATH=/usr/bin:/bin", "HOME=" + account.HomeDir, "TMPDIR=/tmp", "LANG=C", "USER=" + account.Username, "LOGNAME=" + account.Username}, nil
+}
+
 func approvedMCPCommand() ([]string, error) {
 	raw := os.Getenv("NLA_BROWSER_MCP_COMMAND_JSON")
 	if raw == "" {

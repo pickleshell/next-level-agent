@@ -13,7 +13,7 @@ import { BrowserError } from '../../.opencode/plugins/nla-browser-mcp.mjs';
 import { reconcileGitWorkspace } from '../../.opencode/plugins/nla-reconciliation.mjs';
 import { deterministicToolShortlist } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 import { browserGateReport } from './browser-production-gate-result.mjs';
-import { ownedProcessInventory, processSnapshot } from './browser-production-process-inventory.mjs';
+import { ownedProcessInventory, processSnapshot, aliveOwnedProcesses } from './browser-production-process-inventory.mjs';
 import { persistentRecoveryNotReadyChecks } from './browser-production-recovery-classification.mjs';
 
 const started_at = new Date().toISOString();
@@ -39,7 +39,7 @@ function capture(session) {
   }
   return inventory;
 }
-const alive = identities => { const all = processes(); return identities.filter(p => all.get(p.pid)?.start === p.start); };
+const alive = identities => aliveOwnedProcesses(identities, processes());
 async function waitUntil(fn, deadline = 3000) {
   const end = Date.now() + deadline;
   while (!fn()) { if (Date.now() >= end) return false; await delay(25); }
@@ -390,6 +390,7 @@ try {
       const observationStarted = Date.now();
       await waitUntil(() => alive([...knownProcesses.values()]).length === 0, 3000);
       const remaining = alive([...knownProcesses.values()]);
+      assert.deepEqual(remaining, [], 'Owned browser/MCP processes remain after cleanup');
       return {tracked_processes:knownProcesses.size,peak_owned_rss_kb:metrics.peak_owned_rss_kb,observation_wait_ms:Date.now()-observationStarted,external_snapshot_after_authoritative_cleanup:remaining};
     });
   }

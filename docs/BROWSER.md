@@ -48,6 +48,36 @@ forbidden fixtures. Full traces and specialized XSS checks remain unsupported.
 DOM rendering of hostile text can be inspected, but this is not a full XSS
 guarantee.
 
+## Quick start
+
+Run from your NLA clone with Node.js 20+ and a configured OpenCode provider:
+
+```bash
+npm install --prefix "$HOME/.local/share/nla-browser" @playwright/mcp@0.0.78
+node "$HOME/.local/share/nla-browser/node_modules/playwright/cli.js" install chromium
+node scripts/configure-browser.mjs --model opencode-go/gpt-5.6-luna --origin https://example.com
+./scripts/nla /absolute/path/to/project
+```
+
+Choose a model your account can access and replace the example origin with the
+site you need. Repeat `--origin` for additional sites. The setup helper discovers
+the installed Node/MCP/Chromium paths and creates private `browser.json` and
+`model-pools.json` under `~/.config/nla/` (or `$XDG_CONFIG_HOME/nla/`). It enables
+the Browser pool and preserves the other repository role defaults, which must
+also be reviewed for provider access. Existing configuration is never overwritten;
+use the manual configuration sections below to update an existing installation.
+
+This direct backend uses isolated browser contexts. **It cannot guarantee that
+forbidden destinations receive zero requests**, particularly during native
+redirects. For preventive network containment, install the Linux broker below.
+Browser stays optional; ordinary NLA work requires none of these dependencies.
+
+For a first check, ask NLA: “Use Browser to open https://example.com and verify
+that the page heading is Example Domain.” A successful result includes Browser
+delegation and a tool-generated check. If Chromium reports missing system
+libraries, run the matching package's `playwright/cli.js install-deps chromium`
+as an explicit administrator action, then retry. This is separate from NLA.
+
 ## Install the optional Playwright MCP backend
 
 Use Node.js 20 or newer and an existing browser executable. Install the
@@ -253,9 +283,10 @@ Old child bindings are revoked. Expired retained sessions are reaped;
 close/dispose/cancellation/failure close only owned MCP/browser resources.
 A shared browser backend is never terminated.
 
-Sessions are process-local. After an NLA restart, old IDs are unavailable and
-a new task starts fresh. This slice does not restore live browser processes
-after an OS crash or provide a system-level process sandbox.
+Live sessions are process-local. After an NLA restart, old live IDs are
+unavailable and a new attempt starts fresh. Live browser processes are not
+restored after a crash. The broker adds network namespaces and process cgroups;
+it is not a general filesystem sandbox for the NLA account.
 
 Logical recovery is separate from a retained live browser session. Each new
 `nla_task(role=browser)` creates a runtime-generated logical task identity,
@@ -356,7 +387,11 @@ node tests/opencode/smoke-nla-browser.mjs
 ```
 
 The smoke uses its own local fixture services and verifies research/extraction,
-interaction/forms, explicit resume, fresh state, and forbidden redirects.
+interaction/forms, explicit resume, fresh state, and policy-denial reporting.
+Direct mode reports observed forbidden requests and does not certify preventive
+containment. To require zero requests, also set
+`NLA_SMOKE_BROKER_SOCKET=/run/nla-browser/broker.sock`; that mode uses the installed
+broker's fixed MCP command and asserts the forbidden fixture counter is zero.
 It neither visits production applications nor installs browser software.
 
 For the final model-driven integration gate, configure the actual launcher

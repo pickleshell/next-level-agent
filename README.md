@@ -432,6 +432,19 @@ This repository is based on Superpowers and retains some upstream integrations a
 
 Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
 
+## Optional Browser
+
+Browser handles website research, extraction, forms and UI verification through
+Playwright MCP. It is opt-in: normal NLA needs no browser or root service.
+The [Browser quick start](docs/BROWSER.md#quick-start) installs the backend and
+generates private configuration without replacing existing settings. Launch
+with `scripts/nla` to load that configuration automatically.
+
+Direct mode uses isolated contexts; Linux broker mode additionally enforces
+network destinations before connections leave the browser boundary.
+See [broker installation](network-broker/SERVICE.md#installation) when that
+network containment is required.
+
 ## Optional durable memory with Mem0
 
 NLA includes a Mem0 OpenCode plugin that lets the agent add, semantically

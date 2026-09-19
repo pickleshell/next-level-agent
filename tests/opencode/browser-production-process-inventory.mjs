@@ -1,5 +1,16 @@
 import fs from 'node:fs';
 
+export function aliveOwnedProcesses(identities, processes = processSnapshot()) {
+  return identities.filter(identity => {
+    const start = identity.start ?? identity.start_time;
+    if (!Number.isInteger(identity.pid) || typeof start !== 'string' || !start) {
+      throw new Error('Owned process identity lacks PID/start time');
+    }
+    const current = processes.get(identity.pid);
+    return current !== undefined && current.start === start;
+  });
+}
+
 // Process cleanup evidence is valid only when the launcher PID is observable.
 // Broker session identifiers prove allocation, not ownership of a process tree.
 export function processSnapshot(procRoot = '/proc') {
