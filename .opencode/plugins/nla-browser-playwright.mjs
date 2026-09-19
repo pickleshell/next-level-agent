@@ -20,7 +20,9 @@ export async function operation(page, input) {
     ? '[REDACTED]'
     : (await l.innerText()).slice(0, input.limit);
   const bodyText = async () => (await page.locator('body').evaluate((body, selector) => {
-    const clone = body.cloneNode(true); clone.querySelectorAll(selector).forEach(node => node.replaceWith(document.createTextNode('[REDACTED]'))); return clone.innerText;
+    const clone = body.cloneNode(true);
+    clone.querySelectorAll(selector).forEach(node => node.replaceWith(document.createTextNode('[REDACTED]')));
+    clone.querySelectorAll('script,style,template,noscript').forEach(node => node.remove()); return clone.innerText;
   }, secretSelector)).slice(0, input.limit);
   const safeURL = url => url.split(/[?#]/)[0];
   const state = context.__nlaBrowser;
