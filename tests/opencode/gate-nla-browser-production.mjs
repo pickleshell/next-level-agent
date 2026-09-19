@@ -316,13 +316,13 @@ try {
         const [a,b]=await Promise.all([begin(capability),begin(capability)]);
         const ownedA=capture(a);const ownedB=capture(b);
         try{
-          if (a.backend.client.process?.pid !== undefined && b.backend.client.process?.pid !== undefined) assert.notEqual(a.backend.client.process.pid,b.backend.client.process.pid);
-          else assert.notEqual(a.network?.session_id,b.network?.session_id);
-          await assert.rejects(capability.begin(task(),'gate-parent',root),e=>e.code==='RESOURCE_EXHAUSTED');
+          if (a.backend.client.process?.pid !== undefined && b.backend.client.process?.pid !== undefined) assert.notEqual(a.backend.client.process.pid,b.backend.client.process.pid,'parallel Browser sessions must have distinct MCP processes');
+          else assert.notEqual(a.network?.session_id,b.network?.session_id,'parallel Browser sessions must have distinct network sessions');
+          await assert.rejects(capability.begin(task(),'gate-parent',root),e=>e.code==='RESOURCE_EXHAUSTED','session capacity must reject a third Browser session');
           await Promise.all([navigate(a),navigate(b)]);
           await action(a,{operation:'click',locator:{role:'button',name:'Store'}});
           await navigate(b);assert.equal((await invoke(b,'observe',{locator:{test_id:'stored'}})).text,'empty');
-          const finals=await Promise.all([capability.finish(a),capability.finish(b)]);assert.ok(finals.every(f=>JSON.parse(f.output).result==='PASS'));
+          const finals=await Promise.all([capability.finish(a),capability.finish(b)]);assert.ok(finals.every(f=>JSON.parse(f.output).result==='PASS'),'parallel Browser sessions must finish PASS');
           metrics.parallel_batches++;
         }finally{
           await Promise.all([capability.closeOwned(a.id,a.owner),capability.closeOwned(b.id,b.owner)]);

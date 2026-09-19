@@ -105,6 +105,7 @@ try {
   await cleanupManager.execute('cleanup-child', cleanupSession.id, 'session', { operation: 'preflight' });
   const cleanupResult = JSON.parse((await cleanupManager.finish(cleanupSession)).output);
   assert.equal(cleanupResult.result, 'BLOCKED', 'cleanup failure must not produce PASS');
+  assert.equal(JSON.parse(fs.readFileSync(cleanupResult.evidence, 'utf8')).result, 'BLOCKED', 'cleanup failure evidence must match the returned result');
   await cleanupManager.dispose();
   await new Promise(resolve => cleanupBroker.close(resolve));
 
