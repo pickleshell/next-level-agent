@@ -1,9 +1,8 @@
 # Optional universal Browser capability
 
-N1, N2 and N3 have been accepted, but user-testing readiness does not imply
-final production readiness. See the separate
-[four-layer production gate](BROWSER_PRODUCTION_GATE.md) for mandatory coverage,
-fault injection, repeated-use measurements and remaining blocked checks.
+Browser is available as an optional capability. The production-gate documents
+record verification evidence and remaining hardening work; they are not a
+prerequisite for using the optional role in a development environment.
 
 Browser is an optional NLA role for research, information extraction, web
 application interaction, forms, and browser verification. It receives a goal,
@@ -81,6 +80,11 @@ node -e 'console.log(require(process.env.HOME + "/.local/share/nla-browser/node_
 
 Create a private operator configuration file, outside application repositories:
 
+The direct configuration below is the portable quick start. It launches an
+isolated Playwright context but does not provide the broker's OS-level egress
+boundary. Use explicit `allowed_origins` and grant only the permissions needed
+by the task.
+
 ```json
 {
   "command": [
@@ -100,8 +104,9 @@ Create a private operator configuration file, outside application repositories:
 }
 ```
 
-For the accepted production-style broker, use this operator override instead
-of an unrestricted host-launched command:
+For the Linux production-style broker, first follow
+[`network-broker/SERVICE.md`](../network-broker/SERVICE.md), then use this
+operator override instead of a host-launched command:
 
 ```json
 {
@@ -123,6 +128,11 @@ for navigation, redirects, subresources, fetch/XHR, SSE and WebSocket traffic.
 The client spawns it without a shell. Only a small environment allowlist is
 inherited; explicit backend environment values can be supplied through the
 optional `environment` object. These values are never introspection output.
+
+The broker service has its own fixed MCP command in
+`/etc/nla-browser/network-broker.env`; start from
+`network-broker/broker.env.example` and replace every absolute path. Do not
+commit the resulting host configuration.
 
 Each Browser session gets a dedicated stdio MCP process with `--isolated`.
 Personal profiles, extension mode, shared contexts, initial storage-state

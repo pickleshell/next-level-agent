@@ -51,7 +51,7 @@ Build without adding a repository-wide Go module:
 
 ~~~bash
 GO111MODULE=off go build -o /tmp/nlabridged ./network-broker
-sudo /tmp/nlabridged serve /run/nla/browser-network.sock
+sudo /tmp/nlabridged serve /run/nla-browser/broker.sock
 ~~~
 
 The production unit must create a root-owned socket whose group is the
@@ -75,3 +75,4 @@ veths, nft rules, and broker helpers).
 This primitive is used by the optional NLA Browser capability. The complete
 role-facing setup, Playwright MCP configuration, permissions, sessions,
 evidence, and operational limits are documented in `docs/BROWSER.md`.
+Production-style installation is documented in `network-broker/SERVICE.md`.
