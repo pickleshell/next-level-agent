@@ -33,6 +33,10 @@ try {
   // the client observed an empty response before launch was sent.
   const brokerSocket = path.join(root, 'broker.sock');
   let requestNumber = 0; let endedBeforeResponse = false;
+  const brokerInventory = { status: 'OBSERVED', source: 'broker-owned-process-group', session_id: 'broker-session',
+    identities: [{ pid: 101, parent_pid: 1, process_group_id: 101, start_time: 'one', state: 'S', rss_kb: 10 }] };
+  const brokerCleanup = { status: 'OBSERVED_CLEAN', session_id: 'broker-session', inventory: brokerInventory,
+    remaining_processes: [], mcp_socket_state: 'ABSENT', namespace_state: 'ABSENT', proxy_state: 'ABSENT', policy_state: 'ABSENT', veth_state: 'ABSENT', process_boundary_state: 'ABSENT' };
   const broker = net.createServer(socket => {
     let buffer = '';
     let responded = false;
@@ -43,8 +47,9 @@ try {
       const request = JSON.parse(buffer); buffer = '';
       const op = request.op; const n = ++requestNumber;
       const response = op === 'create'
-        ? { ok: true, session: { session_id: 'broker-session', session_token: 'broker-token' } }
-        : op === 'launch' ? { ok: true, endpoint: '/tmp/fake-mcp.sock' } : { ok: true };
+        ? { ok: true, session: { session_id: 'broker-session', session_token: 'broker-token' }, inventory: brokerInventory }
+        : op === 'launch' ? { ok: true, endpoint: '/tmp/fake-mcp.sock', inventory: brokerInventory }
+          : op === 'destroy' ? { ok: true, cleanup: brokerCleanup } : { ok: true };
       setTimeout(() => { responded = true; socket.end(JSON.stringify({ ...response, request: n }) + '\n'); }, 30);
     });
   });
@@ -58,6 +63,7 @@ try {
   brokerManager.bind(brokerSession, 'broker-child');
   await brokerManager.execute('broker-child', brokerSession.id, 'session', { operation: 'preflight' });
   assert.equal(JSON.parse((await brokerManager.finish(brokerSession)).output).result, 'PASS');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(brokerSession.artifacts, 'manifest.json'))).browser.broker.cleanup.status, 'OBSERVED_CLEAN');
   assert.equal(endedBeforeResponse, false, 'broker client must remain open until delayed response arrives');
   assert.equal(requestNumber, 3);
   const cancelledBroker = new BrowserCapability({
@@ -92,7 +98,7 @@ try {
       const response = request.op === 'create'
         ? { ok: true, session: { session_id: 'cleanup-session', session_token: 'cleanup-token' } }
         : request.op === 'launch' ? { ok: true, endpoint: '/tmp/fake-mcp.sock' }
-          : request.op === 'destroy' ? { ok: false, error: 'namespace still exists after cleanup' }
+          : request.op === 'destroy' ? { ok: false, error: 'namespace still exists after cleanup', cleanup: { status: 'BLOCKED', session_id: 'cleanup-session', remaining_processes: [] } }
             : { ok: true };
       socket.end(JSON.stringify(response) + '\n');
     });
@@ -109,6 +115,7 @@ try {
   const cleanupResult = JSON.parse((await cleanupManager.finish(cleanupSession)).output);
   assert.equal(cleanupResult.result, 'BLOCKED', 'cleanup failure must not produce PASS');
   assert.equal(JSON.parse(fs.readFileSync(cleanupResult.evidence, 'utf8')).result, 'BLOCKED', 'cleanup failure evidence must match the returned result');
+  assert.equal(JSON.parse(fs.readFileSync(cleanupResult.evidence, 'utf8')).browser.broker.cleanup.status, 'BLOCKED');
   await cleanupManager.dispose();
   await new Promise(resolve => cleanupBroker.close(resolve));
 

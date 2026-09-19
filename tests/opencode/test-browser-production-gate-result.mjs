@@ -16,6 +16,12 @@ assert.equal(aggregateChecks([{ status: 'PASS' }, { status: 'BLOCKED', mandatory
 assert.throws(() => browserGateReport({ checks: [{ layer: 'functional', status: 'MAYBE' }] }));
 assert.equal(ownedProcessInventory({ clientProcess: {}, processes: new Map() }).reason, 'MCP_PROCESS_INVENTORY_UNAVAILABLE');
 assert.equal(ownedProcessInventory({ clientProcess: {}, brokerSession: { session_id: 'broker-session' }, processes: new Map() }).reason, 'BROKER_PROCESS_INVENTORY_UNAVAILABLE');
+const brokerSession = { session_id: 'broker-session' };
+const brokerInventory = { status: 'OBSERVED', source: 'broker-owned-process-group', session_id: 'broker-session',
+  identities: [{ pid: 201, parent_pid: 1, process_group_id: 201, start_time: 'one', state: 'S', rss_kb: 10 }] };
+assert.equal(ownedProcessInventory({ brokerSession, brokerInventory, processes: new Map() }).status, 'OBSERVED');
+assert.equal(ownedProcessInventory({ brokerSession: { session_id: 'other' }, brokerInventory, processes: new Map() }).reason, 'BROKER_SESSION_OWNERSHIP_MISMATCH');
+assert.equal(ownedProcessInventory({ brokerSession, brokerInventory: { ...brokerInventory, status: 'BLOCKED' }, processes: new Map() }).reason, 'BROKER_PROCESS_INVENTORY_UNAVAILABLE');
 const synthetic = new Map([[101, { pid: 101, parent: 1, start: 'one', rss_kb: 10 }], [102, { pid: 102, parent: 101, start: 'two', rss_kb: 20 }]]);
 assert.deepEqual(ownedProcessInventory({ clientProcess: { pid: 101 }, processes: synthetic }).identities.map(process => process.pid), [101, 102]);
 const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });

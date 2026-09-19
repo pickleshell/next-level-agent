@@ -14,7 +14,20 @@ export function processSnapshot(procRoot = '/proc') {
   return result;
 }
 
-export function ownedProcessInventory({ clientProcess, brokerSession, processes }) {
+export function ownedProcessInventory({ clientProcess, brokerSession, brokerInventory, processes }) {
+  if (brokerSession && brokerInventory) {
+    if (brokerInventory.session_id !== brokerSession.session_id) {
+      return { status: 'BLOCKED', reason: 'BROKER_SESSION_OWNERSHIP_MISMATCH', identities: [] };
+    }
+    if (brokerInventory.status !== 'OBSERVED' || !Array.isArray(brokerInventory.identities) || !brokerInventory.identities.length) {
+      return { status: 'BLOCKED', reason: brokerInventory.reason || 'BROKER_PROCESS_INVENTORY_UNAVAILABLE', identities: [] };
+    }
+    return {
+      status: 'OBSERVED',
+      source: brokerInventory.source || 'broker-owned-process-group',
+      identities: brokerInventory.identities,
+    };
+  }
   const pid = clientProcess?.pid;
   if (!Number.isInteger(pid)) {
     return { status: 'BLOCKED', reason: brokerSession ? 'BROKER_PROCESS_INVENTORY_UNAVAILABLE' : 'MCP_PROCESS_INVENTORY_UNAVAILABLE', identities: [] };

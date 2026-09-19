@@ -62,7 +62,17 @@ function brokerRequest(socketPath, request) {
     socket.on('connect', () => socket.write(JSON.stringify(request) + '\n'));
     socket.on('data', chunk => { buffer += chunk; });
     socket.on('error', error => { clearTimeout(timer); reject(new BrowserError('UNREACHABLE', String(error.message).slice(0, 300))); });
-    socket.on('end', () => { clearTimeout(timer); try { const response = JSON.parse(buffer); if (!response.ok) reject(new BrowserError(response.error?.includes('POLICY') ? 'POLICY_DENIED' : 'UNREACHABLE', response.error || 'Broker request failed')); else resolve(response); } catch { reject(new BrowserError('UNREACHABLE', 'Invalid broker response')); } });
+    socket.on('end', () => {
+      clearTimeout(timer);
+      try {
+        const response = JSON.parse(buffer);
+        if (!response.ok) {
+          const error = new BrowserError(response.error?.includes('POLICY') ? 'POLICY_DENIED' : 'UNREACHABLE', response.error || 'Broker request failed');
+          error.response = response;
+          reject(error);
+        } else resolve(response);
+      } catch { reject(new BrowserError('UNREACHABLE', 'Invalid broker response')); }
+    });
   });
 }
 function brokerPolicy(task, config) {
@@ -160,7 +170,7 @@ export class BrowserCapability {
           const launched = await brokerRequest(this.config.broker_socket, { op: 'launch', session_id: created.session.session_id, token: created.session.session_token });
           this.assertOpen();
           if (signal?.aborted) throw new BrowserError('CANCELLED');
-          network = { socket: this.config.broker_socket, session_id: created.session.session_id, token: created.session.session_token };
+          network = { socket: this.config.broker_socket, session_id: created.session.session_id, token: created.session.session_token, inventory: launched.inventory || created.inventory || null };
           backendConfig = { ...this.config, socket: launched.endpoint, command: undefined };
         }
         const backend = this.backendFactory(backendConfig);
@@ -184,7 +194,10 @@ export class BrowserCapability {
         session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner).catch(error => { session.cleanupError = error; }); };
         signal.addEventListener('abort', session.abort, { once: true });
       }
-      try { session.metadata = await session.backend.start(task); }
+      try {
+        session.metadata = await session.backend.start(task);
+        if (network) session.metadata = { ...session.metadata, broker: { inventory: network.inventory } };
+      }
       catch (error) { await (session.cleanupPromise || this.closeOwned(session.id, owner)); throw error; }
     }
     if (signal && !session.abort) {
@@ -341,8 +354,12 @@ export class BrowserCapability {
       try {
         if (s.network) {
           try {
-            await brokerRequest(s.network.socket, { op: 'destroy', session_id: s.network.session_id, token: s.network.token });
+            const destroyed = await brokerRequest(s.network.socket, { op: 'destroy', session_id: s.network.session_id, token: s.network.token });
+            s.network.cleanup = destroyed.cleanup || null;
+            s.metadata = { ...s.metadata, broker: { ...s.metadata?.broker, cleanup: s.network.cleanup } };
           } catch (error) {
+            s.network.cleanup = error.response?.cleanup || null;
+            s.metadata = { ...s.metadata, broker: { ...s.metadata?.broker, cleanup: s.network.cleanup } };
             cleanupErrors.push(error);
           }
         }
