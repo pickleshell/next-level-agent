@@ -15,8 +15,10 @@ let forbiddenRequests = 0;
 const forbidden = http.createServer((_, response) => { forbiddenRequests++; response.end('Forbidden'); });
 await new Promise(resolve => forbidden.listen(0, '127.0.0.1', resolve));
 const forbiddenURL = `http://127.0.0.1:${forbidden.address().port}/`;
+const secretCanary = 'REAL_PLAYWRIGHT_SECRET_CANARY';
 const html = `<!doctype html><title>Browser fixture</title>
 <a href='/article'>Relevant source</a><h1>Source data</h1><p data-testid='fact'>Answer: 42</p>
+<section data-testid='secret-container'>Container <span data-secret>${secretCanary} suffix</span></section>
 <form><label>Name<input id='name'></label><button>Submit</button></form>
 <p data-testid='result'>Ready</p><p data-testid='hostile'></p>
 <script>document.querySelector('[data-testid=result]').textContent=localStorage.result||'Ready';
@@ -31,7 +33,7 @@ const server = http.createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-real-'));
-const config = { command: [process.execPath, process.env.NLA_SMOKE_MCP_CLI, '--isolated', '--headless', '--executable-path', process.env.NLA_SMOKE_BROWSER_EXECUTABLE], allowed_origins: [origin], timeout_ms: 30000, action_timeout_ms: 5000 };
+const config = { command: [process.env.NLA_SMOKE_NODE || process.execPath, process.env.NLA_SMOKE_MCP_CLI, '--isolated', '--headless', '--executable-path', process.env.NLA_SMOKE_BROWSER_EXECUTABLE], allowed_origins: [origin], timeout_ms: 30000, action_timeout_ms: 5000 };
 const capability = new BrowserCapability({ config, root });
 const permissions = { navigation: true, interaction: true, external_mutation: true };
 const task = (criteria, extras = {}) => ({ goal: 'Find a relevant source, extract a fact and verify it', origins: [origin], permissions, success_criteria: criteria, ...extras });
@@ -63,6 +65,19 @@ try {
   assert.equal(JSON.parse((await capability.finish(fresh)).output).result, 'PASS');
   console.log('Real smoke 3: explicit resume retains storage; new task starts fresh PASS');
 
+  const secret = await start(task([{ id: 'secret-contains', check: 'text_contains', expected: secretCanary, locator: { test_id: 'secret-container' }, wait_ms: 1000 }]), 'secret');
+  await invoke(secret, 'action', { operation: 'navigate', url: origin + '/secret' });
+  const secretCheck = await invoke(secret, 'check', { id: 'secret-contains', check: 'text_contains', expected: secretCanary, locator: { test_id: 'secret-container' }, wait_ms: 1000 });
+  assert.equal(secretCheck.status, 'PASS');
+  assert.equal(secretCheck.observed, '[REDACTED]');
+  assert.equal(secretCheck.expected, '[REDACTED]');
+  assert.ok(!JSON.stringify(secretCheck).includes(secretCanary));
+  const secretResult = JSON.parse((await capability.finish(secret)).output);
+  assert.ok(!JSON.stringify(secretResult).includes(secretCanary));
+  assert.ok(!fs.readFileSync(secretResult.evidence, 'utf8').includes(secretCanary));
+  console.log('Real smoke secret container/text_contains redaction PASS');
+  if (process.env.NLA_SMOKE_SECRET_ONLY === '1') { console.log(`Real browser evidence: ${root}`); }
+  else {
   const policy = await start(task([check('ready', 'Ready')]), 'policy');
   assert.equal((await invoke(policy, 'action', { operation: 'navigate', url: origin + '/redirect-allowed' })).status, 'PASS');
   const denied = await invoke(policy, 'action', { operation: 'navigate', url: origin + '/redirect-denied' });
@@ -70,6 +85,7 @@ try {
   await capability.finish(policy);
   console.log('Real smoke policy: forbidden redirect blocked before target request PASS');
   console.log(`Real browser evidence: ${root}`);
+  }
 } finally {
   await capability.dispose();
   server.closeAllConnections(); forbidden.closeAllConnections();

@@ -16,9 +16,32 @@ export async function operation(page, input) {
   const allowed = url => input.origins.includes(origin(url));
   const secretSelectors = ['input[type="password"]', '[data-secret]', '[data-sensitive]', '[data-private]', '[name*="token" i]', '[name*="api-key" i]', '[name*="apikey" i]', '[name*="secret" i]', '[name*="auth" i]', '[id*="token" i]', '[id*="api-key" i]', '[id*="apikey" i]', '[id*="secret" i]', '[id*="auth" i]'];
   const secretSelector = secretSelectors.join(',');
-  const secretText = async l => (await l.evaluate((element, selector) => element.matches(selector) || Boolean(element.closest(selector)), secretSelector))
+  const isSecretRegion = async l => l.evaluate((element, selector) =>
+    element.matches(selector)
+      || Boolean(element.closest(selector))
+      || Boolean(element.querySelector(selector)),
+  secretSelector);
+  const secretText = async l => (await isSecretRegion(l))
     ? '[REDACTED]'
     : (await l.innerText()).slice(0, input.limit);
+  // A check must not use its result channel to bypass the observation policy.
+  // For secret regions, compare inside the page and return only the verdict.
+  const checkedText = async (l, expected, contains) => {
+    try {
+      const passed = await l.evaluate((element, args) => {
+        const secret = element.matches(args.selector)
+          || Boolean(element.closest(args.selector))
+          || Boolean(element.querySelector(args.selector));
+        if (secret) {
+          const value = element.innerText;
+          return { secret: true, passed: args.contains ? value.includes(args.expected) : value === args.expected };
+        }
+        const observed = element.innerText.slice(0, args.limit);
+        return { secret: false, observed, passed: args.contains ? observed.includes(args.expected) : observed === args.expected };
+      }, { expected, contains, selector: secretSelector, limit: input.limit });
+      return passed.secret ? { observed: '[REDACTED]', passed: passed.passed, secret: true } : passed;
+    } catch { return { observed: '[REDACTED]', passed: false, secret: true }; }
+  };
   const bodyText = async () => (await page.locator('body').evaluate((body, selector) => {
     const clone = body.cloneNode(true);
     clone.querySelectorAll(selector).forEach(node => node.replaceWith(document.createTextNode('[REDACTED]')));
@@ -141,7 +164,7 @@ export async function operation(page, input) {
   }
   if (input.kind === 'check') {
     const deadline = Date.now() + (Number.isFinite(input.wait_ms) ? Math.min(10000, Math.max(0, input.wait_ms)) : 1000);
-    let observed; let passed = false;
+    let observed; let passed = false; let redactExpected = false;
     do {
       if (input.check === 'url_equals') { observed = safeURL(page.url()); passed = observed === input.expected; }
       else if (input.check === 'no_console_errors') { observed = state.console.filter(x => ['error', 'exception'].includes(x.type)).length; passed = observed === 0; }
@@ -150,13 +173,24 @@ export async function operation(page, input) {
         const l = locator(input.locator);
         if (input.check === 'element_visible') { observed = await l.isVisible(); passed = observed === true; }
         else if (input.check === 'element_enabled') { observed = await l.isEnabled({ timeout: 200 }); passed = observed === true; }
-        else { observed = (await l.innerText({ timeout: 200 })).slice(0, input.limit); passed = input.check === 'text_equals' ? observed === input.expected : observed.includes(input.expected); }
-      } catch { observed = null; passed = false; }
+        else {
+          const checked = await checkedText(l, input.expected, input.check === 'text_contains');
+          observed = checked.observed; passed = checked.passed;
+          redactExpected ||= checked.secret;
+        }
+      } catch {
+        // A failed text read cannot prove that the locator was non-secret.
+        redactExpected ||= ['text_equals', 'text_contains'].includes(input.check);
+        observed = redactExpected ? '[REDACTED]' : null;
+        passed = false;
+      }
       if (passed || Date.now() >= deadline) break;
       // Bounded condition polling, never an arbitrary task-level sleep.
       await page.waitForTimeout(50);
     } while (true);
-    return { status: passed ? 'PASS' : 'FAIL', check: input.check, expected: input.expected ?? true, observed };
+    const expected = typeof input.expected === 'string' && (redactExpected || observed === '[REDACTED]') ? '[REDACTED]' : input.expected ?? true;
+    const safeObserved = redactExpected ? '[REDACTED]' : observed;
+    return { status: passed ? 'PASS' : 'FAIL', check: input.check, expected, observed: safeObserved };
   }
   const l = locator(input.locator);
   if (await l.getAttribute('type') === 'password' && !input.permissions.authentication) return { status: 'BLOCKED', reason: 'POLICY_DENIED' };

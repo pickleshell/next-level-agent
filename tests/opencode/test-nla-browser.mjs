@@ -166,7 +166,13 @@ try {
   let reads = 0; let becomesTrue = true;
   const checkedPage = {
     context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
-    getByTestId: () => ({ innerText: async () => (++reads >= 2 && becomesTrue ? 'Correct' : 'Wrong') }),
+    getByTestId: () => ({
+      evaluate: async (callback, args) => callback({
+        matches: () => false, closest: () => null, querySelector: () => null,
+        get innerText() { return ++reads >= 2 && becomesTrue ? 'Correct' : 'Wrong'; },
+      }, args),
+      innerText: async () => (++reads >= 2 && becomesTrue ? 'Correct' : 'Wrong'),
+    }),
     waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
   };
   const checkInput = { kind: 'check', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Correct', limit: 100, wait_ms: 200 };
@@ -177,6 +183,81 @@ try {
   const beforeNoWait = Date.now();
   assert.equal((await operation(checkedPage, noWaitInput)).status, 'FAIL');
   assert.ok(Date.now() - beforeNoWait < 3000, 'omitted wait_ms must terminate inside the backend');
+  const checkCanary = 'CHECK_SECRET_CANARY';
+  const secretLocator = {
+    evaluate: async (callback, ...args) => callback({ matches: () => true, closest: () => null, innerText: checkCanary }, ...args),
+    innerText: async () => checkCanary,
+  };
+  const secretCheckPage = {
+    context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
+    getByTestId: () => secretLocator,
+    waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  };
+  const secretCheck = await operation(secretCheckPage, { ...checkInput, expected: checkCanary });
+  assert.equal(secretCheck.status, 'PASS');
+  assert.equal(secretCheck.observed, '[REDACTED]');
+  assert.equal(secretCheck.expected, '[REDACTED]');
+  assert.ok(!JSON.stringify(secretCheck).includes(checkCanary), 'secret-region check result must not expose its canary');
+  const secretManager = make({ backendFactory: () => ({
+    start: async () => ({}),
+    invoke: async input => input.kind === 'status' ? { status: 'PASS' } : operation(secretCheckPage, input),
+    close: async () => {},
+  }) });
+  const secretSession = await secretManager.begin(task({ success_criteria: [{ id: 'secret-check', check: 'text_equals', locator: { test_id: 'result' }, expected: checkCanary }] }), 'parent', root);
+  secretManager.bind(secretSession, 'secret-child');
+  await secretManager.execute('secret-child', secretSession.id, 'session', { operation: 'preflight' });
+  const secretResult = JSON.parse((await secretManager.finish(secretSession)).output);
+  assert.ok(!JSON.stringify(secretResult).includes(checkCanary), 'model-visible Browser result must not expose the canary');
+  assert.ok(!fs.readFileSync(secretResult.evidence, 'utf8').includes(checkCanary), 'persisted manifest must not expose the canary');
+  let secretEvaluation = 0;
+  const failingSecretPage = {
+    context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
+    getByTestId: () => ({ evaluate: async callback => {
+      secretEvaluation++;
+      throw new Error('secret text evaluation failed');
+    } }),
+    waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
+  };
+  const failedSecretCheck = await operation(failingSecretPage, { ...checkInput, expected: checkCanary, wait_ms: 0 });
+  assert.equal(failedSecretCheck.status, 'FAIL');
+  assert.equal(failedSecretCheck.observed, '[REDACTED]');
+  assert.equal(failedSecretCheck.expected, '[REDACTED]');
+  assert.ok(!JSON.stringify(failedSecretCheck).includes(checkCanary), 'failed secret checks must not expose their expected value');
+
+  const retryingSecretPage = () => {
+    let evaluations = 0;
+    return {
+      context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),
+      getByTestId: () => ({ evaluate: async (callback, args) => {
+        evaluations++;
+        const secret = evaluations === 1;
+        return callback({
+          matches: () => secret,
+          closest: () => null,
+          querySelector: () => null,
+          innerText: secret ? 'not-the-expected-secret' : 'public retry state',
+        }, args);
+      } }),
+      waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    };
+  };
+  const retryingCheck = await operation(retryingSecretPage(), { ...checkInput, expected: checkCanary, wait_ms: 60 });
+  assert.equal(retryingCheck.status, 'FAIL');
+  assert.equal(retryingCheck.observed, '[REDACTED]');
+  assert.equal(retryingCheck.expected, '[REDACTED]');
+  assert.ok(!JSON.stringify(retryingCheck).includes(checkCanary), 'secret disappearance during polling must not reveal expected text');
+  const retryManager = make({ backendFactory: () => ({
+    start: async () => ({}),
+    invoke: async input => input.kind === 'status' ? { status: 'PASS' } : operation(retryingSecretPage(), input),
+    close: async () => {},
+  }) });
+  const retrySession = await retryManager.begin(task({ success_criteria: [{ id: 'retry-secret', check: 'text_equals', locator: { test_id: 'result' }, expected: checkCanary, wait_ms: 60 }] }), 'parent', root);
+  retryManager.bind(retrySession, 'retry-child');
+  await retryManager.execute('retry-child', retrySession.id, 'session', { operation: 'preflight' });
+  const retryResult = JSON.parse((await retryManager.finish(retrySession)).output);
+  assert.ok(!JSON.stringify(retryResult).includes(checkCanary));
+  assert.ok(!fs.readFileSync(retryResult.evidence, 'utf8').includes(checkCanary), 'retry manifest must not expose the canary');
+
   let savedDownload;
   const downloadPage = {
     context: () => ({ __nlaBrowser: { console: [], dialogs: 0 } }),

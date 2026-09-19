@@ -13,41 +13,31 @@ import { BrowserError } from '../../.opencode/plugins/nla-browser-mcp.mjs';
 import { reconcileGitWorkspace } from '../../.opencode/plugins/nla-reconciliation.mjs';
 import { deterministicToolShortlist } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 import { browserGateReport } from './browser-production-gate-result.mjs';
+import { ownedProcessInventory, processSnapshot } from './browser-production-process-inventory.mjs';
+import { persistentRecoveryNotReadyChecks } from './browser-production-recovery-classification.mjs';
 
 const started_at = new Date().toISOString();
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-production-'));
 fs.chmodSync(root, 0o700);
 const checks = []; const managers = new Set(); const knownProcesses = new Map();
 const canary = 'PRIVATE_CANARY_' + randomUUID();
-const metrics = { sequential_tasks: 0, parallel_batches: 0, peak_owned_rss_kb: 0, cleanup_failures: [], resource_samples: [] };
+const metrics = { sequential_tasks: 0, parallel_batches: 0, peak_owned_rss_kb: 0, cleanup_failures: [], process_inventory: [], resource_samples: [] };
 const revision = reconcileGitWorkspace(process.cwd()).observed;
 const record = (layer, id, status, evidence) => { checks.push({ layer, id, mandatory: true, status, evidence, completed_at: new Date().toISOString() }); fs.writeFileSync(path.join(root, 'checks.json'), JSON.stringify(checks, null, 2), {mode:0o600}); console.log(layer + '/' + id + ': ' + status); };
 const test = async (layer, id, fn) => {
   try { record(layer, id, 'PASS', (await fn()) || 'Deterministic assertions exercised'); }
   catch (e) { record(layer, id, e instanceof BrowserError ? 'BLOCKED' : 'FAIL', { error: e.code || e.name, detail: String(e.message).split(canary).join('[REDACTED]').slice(0, 1200), manifest: e.evidence }); }
 };
-function processes() {
-  const result = new Map();
-  for (const pid of fs.readdirSync('/proc').filter(x => /^\d+$/.test(x))) {
-    try {
-      const raw = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
-      const fields = raw.slice(raw.lastIndexOf(')') + 2).split(' ');
-      result.set(Number(pid), { pid: Number(pid), state: fields[0], parent: Number(fields[1]), start: fields[19], rss_kb: Number(fields[21]) * 4 });
-    } catch {}
-  }
-  return result;
-}
+const processes = () => processSnapshot();
 function capture(session) {
-  const all = processes(); const pids = new Set();
-  if (Number.isInteger(session.backend.client.process?.pid)) pids.add(session.backend.client.process.pid);
-  let changed = true;
-  while (changed) { changed = false; for (const p of all.values()) if (pids.has(p.parent) && !pids.has(p.pid)) { pids.add(p.pid); changed = true; } }
-  let rss = 0;
-  for (const pid of pids) if (all.has(pid)) { const p = all.get(pid); knownProcesses.set(pid, p); rss += p.rss_kb; }
-  metrics.peak_owned_rss_kb = Math.max(metrics.peak_owned_rss_kb, rss);
-  session.gateProcesses ||= new Map();
-  for (const pid of pids) if (all.has(pid)) session.gateProcesses.set(pid, all.get(pid));
-  return [...session.gateProcesses.values()];
+  const inventory = ownedProcessInventory({ clientProcess: session.backend.client.process, brokerSession: session.network, processes: processes() });
+  metrics.process_inventory.push({ session_id: session.id, status: inventory.status, source: inventory.source, reason: inventory.reason, observed_processes: inventory.identities.length });
+  if (inventory.status === 'OBSERVED') {
+    let rss = 0;
+    for (const process of inventory.identities) { knownProcesses.set(process.pid, process); rss += process.rss_kb; }
+    metrics.peak_owned_rss_kb = Math.max(metrics.peak_owned_rss_kb, rss);
+  }
+  return inventory;
 }
 const alive = identities => { const all = processes(); return identities.filter(p => all.get(p.pid)?.start === p.start); };
 async function waitUntil(fn, deadline = 3000) {
@@ -55,13 +45,15 @@ async function waitUntil(fn, deadline = 3000) {
   while (!fn()) { if (Date.now() >= end) return false; await delay(25); }
   return true;
 }
-async function cleanupResources(session, identities) {
-  const clean = await waitUntil(() => !alive(identities).length);
-  if (!clean) {
-    const remaining = alive(identities);
-    metrics.cleanup_failures.push({ session_id: session.id, processes: remaining });
-    // Kill only positively identified owned fixture resources after recording the failure.
-    for (const p of remaining) if (p.state !== 'Z') try { process.kill(p.pid, 'SIGKILL'); } catch {}
+async function cleanupResources(session, inventory) {
+  if (inventory.status === 'OBSERVED') {
+    const clean = await waitUntil(() => !alive(inventory.identities).length);
+    if (!clean) {
+      const remaining = alive(inventory.identities);
+      metrics.cleanup_failures.push({ session_id: session.id, processes: remaining });
+      // Kill only positively identified owned fixture resources after recording the failure.
+      for (const p of remaining) if (p.state !== 'Z') try { process.kill(p.pid, 'SIGKILL'); } catch {}
+    }
   }
   assert.ok(!fs.existsSync(session.backend.outputDir), 'Owned MCP output directory must be removed');
 }
@@ -341,7 +333,7 @@ try {
       const owned=capture(s);assert.equal(JSON.parse((await m.finish(s)).output).result,'PASS');await cleanupResources(s,owned);
       await assert.rejects(m.begin(task({session_id:saved.session_id}),'gate-parent',root),e=>e.code==='POLICY_DENIED');
     });
-    for (const id of ['orchestrator-process-restart','browser-child-process-restart','persistent-compaction-recovery']) record('failure_recovery',id,'NOT_RUN','Requires persistent OpenCode session experiment; in-memory ownership tests are insufficient');
+    for (const recovery of persistentRecoveryNotReadyChecks()) record('failure_recovery', recovery.id, 'NOT_RUN', recovery.evidence);
 
     const count=Number(process.env.NLA_PRODUCTION_TASKS||40);
     if (!Number.isInteger(count)||count<30||count>200) throw new Error('NLA_PRODUCTION_TASKS must be 30..200');
@@ -378,6 +370,10 @@ try {
     await test('repeated_use','all-owned-processes-closed',async()=>{
       await Promise.all([...managers].map(m=>m.dispose()));
       assert.equal(metrics.cleanup_failures.length,0,'One or more owned process trees outlived cleanup');
+      assert.ok(metrics.process_inventory.length > 0, 'No owned process inventory was captured');
+      const unobservable = metrics.process_inventory.filter(sample => sample.status !== 'OBSERVED');
+      if (unobservable.length) throw new BrowserError('OWNERSHIP_UNOBSERVABLE', JSON.stringify(unobservable));
+      assert.ok(knownProcesses.size > 0, 'Owned process inventory is empty');
       assert.deepEqual(alive([...knownProcesses.values()]),[],'Owned browser/MCP processes still present');
       return {tracked_processes:knownProcesses.size,peak_owned_rss_kb:metrics.peak_owned_rss_kb};
     });
