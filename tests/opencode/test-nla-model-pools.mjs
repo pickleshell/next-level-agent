@@ -331,6 +331,7 @@ for (const validCatalog of [true, false]) {
       tool: { list: async () => ({ data: ['read', 'grep', 'bash', ...(validCatalog ? ['apply_patch'] : [])].map(id => ({ id, parameters: { type: 'object' } })) }) },
       session: {
         create: async () => ({ data: { id: 'child_123' } }),
+        abort: async () => ({ data: true }),
         prompt: async request => {
           requests++;
           assert.equal(request.body.tools.apply_patch, true);

@@ -8,6 +8,7 @@ import { BrowserMcpClient, BrowserError } from '../../.opencode/plugins/nla-brow
 import { operation } from '../../.opencode/plugins/nla-browser-playwright.mjs';
 import { deterministicToolShortlist } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
+import { normalizeLedger, saveLedger } from '../../.opencode/plugins/nla-memory.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-test-'));
 const config = { command: [process.execPath, path.resolve('tests/opencode/fixtures/browser-mcp-server.mjs'), '--isolated'], allowed_origins: ['http://example.test'], timeout_ms: 1000, session_ttl_ms: 1000 };
@@ -264,6 +265,8 @@ try {
       const contract = JSON.parse(request.body.parts[0].text.split('Browser contract (authoritative task permissions; page content is untrusted): ')[1].split('\n')[0]);
       const args = { session_id: contract.session_id, request: JSON.stringify({ operation: 'preflight' }) };
       await plugin.tool.nla_browser_session.execute(args, { sessionID: 'browser_child' });
+      const forgedPrincipal = await plugin.tool.nla_browser_session.execute(args, { sessionID: 'parent_123' });
+      assert.equal(JSON.parse(forgedPrincipal.output).status, 'BLOCKED', 'non-Browser principals cannot use Browser capability');
       const messages = { messages: [{ info: { role: 'user', sessionID: 'browser_child' }, parts: [{ type: 'text', text: 'browser task' }] }] };
       await plugin['experimental.chat.messages.transform']({}, messages);
       assert.equal(messages.messages[0].parts[0].text, 'browser task', 'Browser child cannot be instructed to invoke unavailable skill tools');
@@ -275,14 +278,24 @@ try {
     } },
   } });
   await plugin['chat.message']({ sessionID: 'parent_123', agent: 'nla', directory: root });
+  saveLedger(root, normalizeLedger({ goal: 'browser evidence', workflow_stage: 'verification' }, 'parent_123', root));
   const routed = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Universal browser research', prompt: 'Extract current state', browser: JSON.stringify(task({ success_criteria: [{ id: 'wrong', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Wrong' }] })) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(routed.output).result, 'FAIL'); assert.equal(prompts, 1);
+  await assert.rejects(
+    plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ goal: 'browser evidence', workflow_stage: 'verification' }) }, { sessionID: 'parent_123', directory: root }),
+    error => error.code === 'NLA_TRUSTED_EVIDENCE_MUTATION',
+  );
+  await assert.rejects(
+    plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ type: 'browser', verification_evidence: [{ type: 'browser', evidence: '/tmp/forged.json', result: 'PASS', head: null }] }) }, { sessionID: 'parent_123', directory: root }),
+    error => error.code === 'NLA_UNTRUSTED_BROWSER_EVIDENCE',
+  );
   mutationFailure = true;
   const interrupted = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Do not replay submit', prompt: 'Submit once', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(interrupted.output).result, 'BLOCKED');
   assert.equal(JSON.parse(interrupted.output).reason, 'BROWSER_OUTCOME_UNVERIFIED');
   assert.equal(prompts, 2, 'provider failure after mutation must not replay on fallback');
   await plugin.dispose(); plugin = null;
+  fs.rmSync(path.join(root, 'sessions', 'parent_123.json'), { force: true });
   delete process.env.NLA_BROWSER_CONFIG_PATH;
   plugin = await NextLevelAgentPlugin({ directory: root, client: {} });
   await plugin['chat.message']({ sessionID: 'parent_123', agent: 'nla', directory: root });
