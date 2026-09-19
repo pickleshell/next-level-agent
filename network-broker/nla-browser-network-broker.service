@@ -8,6 +8,7 @@ BindsTo=nla-browser-network-broker.socket
 Type=simple
 User=root
 Group=root
+Delegate=yes
 ExecStart=/usr/local/libexec/nlabridged serve /run/nla-browser/broker.sock
 ExecStartPre=/usr/bin/chown root:nla-browser /run/nla-browser
 Restart=on-failure

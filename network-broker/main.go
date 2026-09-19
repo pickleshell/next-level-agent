@@ -418,7 +418,7 @@ func destroy(id, t string, uid uint32) Response {
 	delete(sessions, id)
 	sessionsMu.Unlock()
 	if len(cleanupErrs) > 0 {
-		log.Printf("cleanup session=%s stage=destroy-result result=error", id)
+		log.Printf("cleanup session=%s stage=destroy-result result=error detail=%q process=%s socket=%s namespace=%s proxy=%s policy=%s veth=%s cgroup=%s", id, errors.Join(cleanupErrs...).Error(), cleanupReport.Inventory.Status, cleanupReport.MCPRemoved, cleanupReport.NamespaceRemoved, cleanupReport.ProxyRemoved, cleanupReport.PolicyRemoved, cleanupReport.VethRemoved, cleanupReport.CgroupState)
 		return Response{Error: errors.Join(cleanupErrs...).Error(), Cleanup: cleanupReport}
 	}
 	log.Printf("cleanup session=%s stage=destroy-result result=ok", id)
@@ -752,7 +752,9 @@ func stableOwnedStateWith(owned []ProcessIdentity, read func(ProcessIdentity) (P
 	return remaining, true
 }
 
-const cgroupRoot = "/sys/fs/cgroup/nla-browser"
+// The broker owns a delegated child hierarchy under its systemd service cgroup.
+// NLA and Browser never receive cgroup management privileges.
+const cgroupRoot = "/sys/fs/cgroup/system.slice/nla-browser-network-broker.service/nla-browser"
 
 func createCgroup(sessionID string) (string, error) {
 	if os.Geteuid() != 0 {
