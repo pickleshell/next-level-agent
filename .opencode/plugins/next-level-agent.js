@@ -655,7 +655,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const validateTrustedBrowserEvidence = (entries) => {
     for (const entry of Array.isArray(entries) ? entries : []) {
-      if (entry?.type !== 'browser') continue;
+      if (typeof entry?.type !== 'string' || entry.type.toLowerCase() !== 'browser') continue;
       const provenance = entry.provenance;
       const trusted = provenance?.trusted === true && trustedBrowserEvidence.get(`${provenance.run_id}:${entry.evidence}`);
       if (!trusted || trusted.child_id !== provenance.child_id || trusted.session_id !== provenance.session_id || trusted.owner_session_id !== provenance.owner_session_id || trusted.result !== entry.result || trusted.head !== (entry.head || null)) {
