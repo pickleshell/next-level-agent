@@ -138,8 +138,22 @@ export async function operation(page, input) {
     const result = { status: 'PASS', url: safeURL(page.url()), title: (await page.title()).slice(0, 1000) };
     if (input.locator) {
       const l = locator(input.locator);
-      result.count = await l.count(); result.visible = await l.isVisible();
-      if (result.count === 1) { result.text = await secretText(l); result.enabled = await l.isEnabled(); }
+      result.count = await l.count();
+      result.visible = false;
+      if (result.count === 1) { result.visible = await l.isVisible(); result.text = await secretText(l); result.enabled = await l.isEnabled(); }
+      else if (result.count > 1) {
+        result.items = [];
+        let remaining = input.limit;
+        for (let index = 0; index < Math.min(result.count, 20); index++) {
+          const item = l.nth(index);
+          const visible = await item.isVisible();
+          const text = (await secretText(item)).slice(0, remaining);
+          remaining -= text.length;
+          result.items.push({ index, visible, text });
+        }
+        result.visible = result.items.some(item => item.visible);
+        result.truncated = result.count > result.items.length || remaining === 0;
+      }
     } else result.text = await bodyText();
     result.console = state.console; result.network = state.network;
     result.streaming = { sse_responses: state.sse_responses || 0, websocket_connections: state.websocket || 0, websocket_messages: state.websocket_messages || 0, websocket_closed: state.websocket_closed || 0 };

@@ -300,6 +300,45 @@ try {
   assert.equal(observedSelector[0], 'body');
   assert.match(observedSelector[1], /data-secret/);
 
+  // A collection of headings is a valid observation, not backend loss.
+  const headings = { ...observePage, getByRole: () => ({
+    count: async () => 26,
+    isVisible: async () => { throw new Error('strict mode violation'); },
+    nth: index => ({ isVisible: async () => true, evaluate: async () => index === 1,
+      innerText: async () => `Heading ${index}` }),
+  }) };
+  const collection = await operation(headings, { kind: 'observe', locator: { role: 'heading' }, limit: 100 });
+  assert.equal(collection.count, 26); assert.equal(collection.items.length, 20);
+  assert.equal(collection.items[1].text, '[REDACTED]');
+  assert.ok(collection.items.reduce((sum, item) => sum + item.text.length, 0) <= 100);
+  assert.equal(collection.truncated, true);
+  const empty = await operation({ ...headings, getByRole: () => ({ count: async () => 0 }) }, { kind: 'observe', locator: { role: 'heading' }, limit: 100 });
+  assert.equal(empty.visible, false);
+
+  const classification = new BrowserMcpClient({ command: ['unused'] });
+  classification.tools = ['browser_run_code'];
+  classification.request = async () => ({ isError: true, content: [{ text: "### Error\nError: locator.isVisible: Error: strict mode violation: getByRole('heading') resolved to 6 elements" }] });
+  await assert.rejects(classification.call('browser_run_code', {}), e => e.code === 'AMBIGUOUS_LOCATOR');
+  classification.request = async () => ({ isError: true, content: [{ text: 'Browser closed' }] });
+  await assert.rejects(classification.call('browser_run_code', {}), e => e.code === 'UNREACHABLE');
+
+  const recoverable = make({ backendFactory: () => ({ start: async () => ({}), close: async () => {},
+    invoke: async input => {
+      if (input.kind === 'observe') throw new BrowserError('AMBIGUOUS_LOCATOR');
+      if (input.kind === 'screenshot') return { status: 'PASS', artifact: input.artifact };
+      return { status: 'PASS', expected: input.expected, observed: 'Ready' };
+    },
+  }) });
+  const recovered = await recoverable.begin(task(), 'parent', root); recoverable.bind(recovered, 'recoverable');
+  await recoverable.execute('recoverable', recovered.id, 'session', { operation: 'preflight' });
+  const ambiguous = await recoverable.execute('recoverable', recovered.id, 'observe', {});
+  assert.equal(ambiguous.reason, 'AMBIGUOUS_LOCATOR');
+  const captured = await recoverable.execute('recoverable', recovered.id, 'action', { operation: 'screenshot' });
+  const recoveredResult = JSON.parse((await recoverable.finish(recovered)).output);
+  assert.equal(recoveredResult.result, 'PASS');
+  assert.deepEqual(recoveredResult.artifacts, [{ operation: 'screenshot', path: captured.artifact }]);
+  assert.equal(JSON.parse(fs.readFileSync(recoveredResult.evidence)).operations.find(e => e.operation === 'observe').status, 'BLOCKED');
+
   assert.equal(JSON.parse((await manager.finish(notRun)).output).result, 'NOT_RUN');
 
   let clock = 0;

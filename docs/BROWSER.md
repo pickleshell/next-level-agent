@@ -338,8 +338,14 @@ prevent PASS. Infrastructure failures carry stable reason codes such as
 NOT_CONFIGURED, UNREACHABLE, AUTH_REQUIRED, UNSUPPORTED_CAPABILITY,
 POLICY_DENIED or RESOURCE_EXHAUSTED. Timed-out actions have UNKNOWN outcomes.
 
-Results include structured checks, the last bounded observation, and an evidence
-reference. Private artifacts live under
+Results include structured checks, the last bounded observation, an explicit
+`artifacts` list (operation and path), and an evidence reference. Report artifacts
+from these fields rather than inferring their absence from the overall verdict.
+Observing multiple matching elements returns up to 20 bounded, secret-masked
+items; it does not require a unique locator. A strict locator error is reported as
+`AMBIGUOUS_LOCATOR`, not a lost connection. A failed read can be corrected without
+poisoning the session; mandatory checks still must pass. Transport failures and
+ambiguous actions remain fail-closed. Private artifacts live under
 `NLA_MEMORY_DIR/evidence/browser/<run-id>/`, outside target repositories by
 default. Manifests record the run/child IDs, browser metadata, operation/check
 facts, timestamps, initial repository revision and repository state after the
