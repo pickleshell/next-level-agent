@@ -28,6 +28,11 @@ const same = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical
 const within = (root, file) => typeof file === 'string' && path.resolve(file).startsWith(root + path.sep);
 const checkSummary = checks => checks.map(({ id, status }) => ({ id, status }));
 const GATES = ['bootstrap', 'go_only', 'restart', 'native_compaction', 'forbidden_zero_requests', 'revision_stable', 'owned_server_cleanup'];
+const providerFailure = info => !info.error ? null : ({
+  code: /insufficient balance/i.test(info.error.data?.message || '') ? 'PROVIDER_INSUFFICIENT_BALANCE' : 'PROVIDER_REQUEST_FAILED',
+  provider: info.providerID, model: info.modelID,
+  status: Number.isInteger(info.error.data?.statusCode) ? info.error.data.statusCode : null,
+});
 
 function assertGo(config, agents, providers) {
   requireThat(same(config.enabled_providers, ['opencode-go']), 'PROVIDER_ALLOWLIST_MISMATCH');
@@ -185,6 +190,8 @@ async function main() {
       if (info.role === 'assistant') {
         requireThat(info.providerID === model.providerID && info.modelID === model.modelID, 'OBSERVED_NON_GO_MODEL');
         seenMessages.add(info.id);
+        const failure = providerFailure(info);
+        if (failure) { report.provider_failure = failure; requireThat(false, failure.code); }
       }
       for (const part of message.parts || []) {
         if (part.type !== 'tool') continue;
@@ -373,6 +380,8 @@ async function main() {
 }
 
 function selfTest() {
+  assert.equal(providerFailure({}), null);
+  assert.deepEqual(providerFailure({ providerID: 'opencode-go', modelID: 'gpt-5.6-luna', error: { data: { statusCode: 401, message: 'Insufficient balance. Private billing URL omitted.' } } }), { code: 'PROVIDER_INSUFFICIENT_BALANCE', provider: 'opencode-go', model: 'gpt-5.6-luna', status: 401 });
   const names = ['nla', 'browser', 'compactor', 'compaction', 'title', 'summary'];
   const config = { enabled_providers: ['opencode-go'], model: MODEL, small_model: MODEL, agent: {} };
   const agents = names.map(name => ({ name, model }));
