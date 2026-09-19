@@ -29,6 +29,7 @@ npm run test:browser:gate-result
 
 NLA_SMOKE_MCP_CLI=/absolute/path/to/@playwright/mcp/cli.js \
 NLA_SMOKE_BROWSER_EXECUTABLE=/absolute/path/to/chrome \
+NLA_PRODUCTION_BROKER_SOCKET=/run/nla-browser/broker.sock \
 NLA_PRODUCTION_TASKS=40 \
 npm run test:browser:production
 ```
@@ -42,6 +43,7 @@ NLA_PRODUCTION_MODEL_TEST=1 \
 NLA_SMOKE_LAUNCHER=/absolute/path/to/nla \
 NLA_SMOKE_MCP_CLI=/absolute/path/to/@playwright/mcp/cli.js \
 NLA_SMOKE_BROWSER_EXECUTABLE=/absolute/path/to/chrome \
+NLA_PRODUCTION_BROKER_SOCKET=/run/nla-browser/broker.sock \
 npm run test:browser:production
 ```
 
@@ -84,6 +86,13 @@ revision-bound certification cycle. Broker cleanup is authoritative and
 fail-closed; the current implementation uses a delegated cgroup boundary,
 bounded teardown, serialized destroy, owned-process identity checks, and
 observable cleanup errors.
+
+The external cleanup observer also requires zero remaining PID/start-time
+identities. A previous observer compared broker `start_time` against an absent
+`start` field, incorrectly treating vanished processes as alive (`undefined ===
+undefined`). The observer now supports both identity shapes and requires a
+present matching process. Its strict assertion is restored; broker reports do
+not override a contradictory external observation.
 
 Manifests redact typed values, omit raw console messages, credentials,
 headers and bodies, and normalize network URL metadata. Screenshots mask

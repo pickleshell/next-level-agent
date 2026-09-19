@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { aggregateChecks, browserGateReport, GATE_LAYERS } from './browser-production-gate-result.mjs';
-import { ownedProcessInventory, processSnapshot } from './browser-production-process-inventory.mjs';
+import { ownedProcessInventory, processSnapshot, aliveOwnedProcesses } from './browser-production-process-inventory.mjs';
 import { persistentRecoveryNotReadyChecks } from './browser-production-recovery-classification.mjs';
 const passing = GATE_LAYERS.map(layer => ({ layer, id: layer, status: 'PASS' }));
 assert.equal(browserGateReport({ checks: passing }).result, 'PASS');
@@ -19,6 +19,10 @@ assert.equal(ownedProcessInventory({ clientProcess: {}, brokerSession: { session
 const brokerSession = { session_id: 'broker-session' };
 const brokerInventory = { status: 'OBSERVED', source: 'broker-owned-process-group', session_id: 'broker-session',
   identities: [{ pid: 201, parent_pid: 1, process_group_id: 201, start_time: 'one', state: 'S', rss_kb: 10 }] };
+assert.deepEqual(aliveOwnedProcesses(brokerInventory.identities, new Map()), [], 'absent broker PID must not compare undefined == undefined');
+assert.equal(aliveOwnedProcesses(brokerInventory.identities, new Map([[201, { start: 'one' }]])).length, 1);
+assert.equal(aliveOwnedProcesses(brokerInventory.identities, new Map([[201, { start: 'reused' }]])).length, 0);
+assert.throws(() => aliveOwnedProcesses([{ pid: 201 }], new Map()), /lacks/);
 assert.equal(ownedProcessInventory({ brokerSession, brokerInventory, processes: new Map() }).status, 'OBSERVED');
 assert.equal(ownedProcessInventory({ brokerSession: { session_id: 'other' }, brokerInventory, processes: new Map() }).reason, 'BROKER_SESSION_OWNERSHIP_MISMATCH');
 assert.equal(ownedProcessInventory({ brokerSession, brokerInventory: { ...brokerInventory, status: 'BLOCKED' }, processes: new Map() }).reason, 'BROKER_PROCESS_INVENTORY_UNAVAILABLE');
@@ -30,9 +34,16 @@ try {
   const inventory = ownedProcessInventory({ clientProcess: child, processes: processSnapshot() });
   assert.equal(inventory.status, 'OBSERVED', 'a directly spawned MCP process must have real owned-process evidence');
   assert.ok(inventory.identities.some(process => process.pid === child.pid));
-} finally {
+  const brokerShape = inventory.identities.map(p => ({ pid: p.pid, start_time: p.start }));
+  assert.ok(aliveOwnedProcesses(brokerShape).length);
+  const exited = once(child, 'exit');
   child.kill('SIGKILL');
-  await once(child, 'exit');
+  await exited;
+  assert.deepEqual(aliveOwnedProcesses(brokerShape), [], 'actual terminated child is absent');
+} finally {
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+  }
 }
 const notReady = persistentRecoveryNotReadyChecks();
 assert.deepEqual(notReady.map(check => check.id), ['orchestrator-process-restart', 'browser-child-process-restart', 'persistent-compaction-recovery']);

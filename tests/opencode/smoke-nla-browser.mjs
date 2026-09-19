@@ -34,6 +34,10 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-real-'));
 const config = { command: [process.env.NLA_SMOKE_NODE || process.execPath, process.env.NLA_SMOKE_MCP_CLI, '--isolated', '--headless', '--executable-path', process.env.NLA_SMOKE_BROWSER_EXECUTABLE], allowed_origins: [origin], timeout_ms: 30000, action_timeout_ms: 5000 };
+if (process.env.NLA_SMOKE_BROKER_SOCKET) {
+  config.broker_socket = process.env.NLA_SMOKE_BROKER_SOCKET;
+  config.broker_allow_private_addresses = true;
+}
 const capability = new BrowserCapability({ config, root });
 const permissions = { navigation: true, interaction: true, external_mutation: true };
 const task = (criteria, extras = {}) => ({ goal: 'Find a relevant source, extract a fact and verify it', origins: [origin], permissions, success_criteria: criteria, ...extras });
@@ -81,9 +85,12 @@ try {
   const policy = await start(task([check('ready', 'Ready')]), 'policy');
   assert.equal((await invoke(policy, 'action', { operation: 'navigate', url: origin + '/redirect-allowed' })).status, 'PASS');
   const denied = await invoke(policy, 'action', { operation: 'navigate', url: origin + '/redirect-denied' });
-  assert.equal(denied.status, 'BLOCKED'); assert.equal(denied.reason, 'POLICY_DENIED'); assert.equal(forbiddenRequests, 0);
+  assert.equal(denied.status, 'BLOCKED'); assert.equal(denied.reason, 'POLICY_DENIED');
+  if (config.broker_socket) assert.equal(forbiddenRequests, 0);
   await capability.finish(policy);
-  console.log('Real smoke policy: forbidden redirect blocked before target request PASS');
+  console.log(config.broker_socket
+    ? 'Real smoke network boundary: forbidden redirect request_count=0 PASS'
+    : `Real smoke direct-mode policy detection PASS; preventive containment NOT_SUPPORTED; forbidden_requests=${forbiddenRequests}`);
   console.log(`Real browser evidence: ${root}`);
   }
 } finally {

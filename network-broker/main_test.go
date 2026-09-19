@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +21,30 @@ func containsIdentity(identities []ProcessIdentity, expected ProcessIdentity) bo
 		}
 	}
 	return false
+}
+
+func TestBrowserEnvironmentUsesPeerAccount(t *testing.T) {
+	t.Setenv("HOME", "/not-the-peer-home")
+	t.Setenv("SECRET_CANARY", "must-not-inherit")
+	account, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := browserEnvironment(uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{}
+	for _, pair := range env {
+		parts := strings.SplitN(pair, "=", 2)
+		values[parts[0]] = parts[1]
+	}
+	if len(values) != 6 || values["HOME"] != account.HomeDir || values["USER"] != account.Username || values["LOGNAME"] != account.Username {
+		t.Fatalf("unexpected child environment: %v", values)
+	}
+	if _, err := browserEnvironment(^uint32(0)); err == nil {
+		t.Fatal("unknown peer account must fail closed")
+	}
 }
 
 func TestStopManagedMCPTreatsExpectedSignalAsSuccessfulCleanup(t *testing.T) {

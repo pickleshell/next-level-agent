@@ -6,16 +6,26 @@ start this privileged service.
 
 ## Installation
 
+Requirements: Linux with systemd and writable cgroup v2 (`cgroup.kill` support),
+Go, `ip` (iproute2), `nft` (nftables), `/usr/bin/setpriv` (util-linux), and the
+installed Playwright MCP/Chromium from the Browser quick start. Retain the
+supplied service name: the delegated cgroup path is tied to it.
+
 Run these commands from the repository root after replacing `NLA_USER` with
-the unprivileged account that runs NLA:
+the unprivileged account that runs NLA. These steps install privileged files;
+run them as the administrator, never as a Browser task:
 
 ```bash
-sudo groupadd --system nla-browser 2>/dev/null || true
+getent group nla-browser >/dev/null || sudo groupadd --system nla-browser
 sudo usermod -aG nla-browser NLA_USER
-GO111MODULE=off go build -o /tmp/nlabridged ./network-broker
-sudo install -o root -g root -m 0755 /tmp/nlabridged /usr/local/libexec/nlabridged
+NLA_BUILD_DIR="$(mktemp -d)"
+GO111MODULE=off go build -o "$NLA_BUILD_DIR/nlabridged" ./network-broker
+sudo install -d -o root -g root -m 0755 /usr/local/libexec
+sudo install -o root -g root -m 0755 "$NLA_BUILD_DIR/nlabridged" /usr/local/libexec/nlabridged
 sudo install -d -o root -g root -m 0755 /etc/nla-browser
-sudo install -o root -g root -m 0644 network-broker/broker.env.example /etc/nla-browser/network-broker.env
+if ! sudo test -e /etc/nla-browser/network-broker.env; then
+  sudo install -o root -g root -m 0600 network-broker/broker.env.example /etc/nla-browser/network-broker.env
+fi
 sudo install -o root -g root -m 0644 network-broker/nla-browser-network-broker.service /etc/systemd/system/
 sudo install -o root -g root -m 0644 network-broker/nla-browser-network-broker.socket /etc/systemd/system/
 sudo install -o root -g root -m 0644 network-broker/nla-browser-network-broker.tmpfiles /etc/tmpfiles.d/nla-browser-network-broker.conf
@@ -37,10 +47,21 @@ The NLA user must start a new login session after group membership changes.
 Verify access with `id NLA_USER` and `namei -l /run/nla-browser/broker.sock`.
 Do not make the socket world-writable.
 
-The current reviewed broker child environment is still the BOS reference
-environment (`HOME=/home/next`, `USER=next`). Operators using another account
-should use the portable direct backend described in `docs/BROWSER.md` until
-that broker child environment is generalized and re-reviewed.
+The broker obtains HOME/USER/LOGNAME from the OS account matching SO_PEERCRED.
+It does not assume an account named `next`. The configured executables must be
+accessible to that UID with supplementary groups cleared. The template is a
+systemd EnvironmentFile: keep the JSON on one line. Never copy private credentials
+or a personal browser profile into it.
+
+`Delegate=yes` gives only the broker ownership of its service's cgroup subtree.
+Missing delegation fails browser launch closed. Check `systemctl show
+nla-browser-network-broker.service -p Delegate` and the journal if launch fails.
+
+To upgrade, rebuild/install the binary, preserve the private env file, and restart
+the service after active Browser tasks finish. To stop and disable it, run
+`sudo systemctl disable --now nla-browser-network-broker.socket nla-browser-network-broker.service`.
+Remove the `NLA_BROWSER_CONFIG_PATH` override or private `browser.json` if Browser
+is no longer needed. Ordinary NLA work continues without the broker.
 
 Create a dedicated nla-browser group and run the broker as UID 0 with only
 the capabilities required to create/delete the per-session namespace and

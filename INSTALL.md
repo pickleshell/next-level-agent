@@ -72,16 +72,11 @@ Bounded Explorer or Compactor pools may instead select the direct utility-model
 runtime. Ollama or generic OpenAI-compatible endpoint settings belong in the
 same external pool file; see the [utility-model runtime configuration](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime).
 
-The public Architect pool begins with the smoke-tested free model:
-
-```text
-opencode/mimo-v2.5-free
-```
-
-Provider availability can change. Confirm this model and the configured fallback
-in `opencode debug config` before real work. Provider-rejection and failover
-behavior are tested with deterministic fixtures rather than a broken live
-production default.
+The checked-in pools are examples, not a promise of provider access. Inspect
+`opencode models` and use models available to your account. In particular the
+Architect and Supervisor defaults use Sol, which may have a different provider
+or cost from your primary model. Ask NLA for `nla_models` to see the effective
+role bindings and source; `opencode debug config` alone does not show pool routing.
 
 Never place API keys in `opencode.json`, `model-pools.json`, Notebook, ledger, or telemetry.
 
@@ -90,12 +85,15 @@ Never place API keys in `opencode.json`, `model-pools.json`, Notebook, ledger, o
 Use OpenCode's custom configuration path:
 
 ```bash
-export NLA_HOME="$HOME/.local/share/nla/next-level-agent"
-export OPENCODE_CONFIG="$NLA_HOME/opencode.json"
-opencode /absolute/path/to/your/project
+"$HOME/.local/share/nla/next-level-agent/scripts/nla" /absolute/path/to/your/project
 ```
 
-The NLA plugin and skills resolve relative to `opencode.json`. The path passed to `opencode` remains the working project.
+The launcher locates its own clone, loads its `opencode.json`, and automatically
+uses `~/.config/nla/model-pools.json` and `~/.config/nla/browser.json` only when
+they exist (or `$XDG_CONFIG_HOME/nla/` when configured). Explicit environment
+overrides take precedence. A fresh clone needs neither private file.
+The plugin and skills resolve relative to `opencode.json`; the project argument
+remains your working project. No shell profile edit or global config copy is needed.
 
 This is the supported Alpha installation method. It does not copy NLA files into the target repository and does not overwrite global OpenCode configuration.
 
@@ -148,9 +146,7 @@ The user may define a shell function outside the repository:
 
 ```bash
 nla() {
-  NLA_HOME="$HOME/.local/share/nla/next-level-agent" \
-  OPENCODE_CONFIG="$HOME/.local/share/nla/next-level-agent/opencode.json" \
-  opencode "${1:-$PWD}"
+  "$HOME/.local/share/nla/next-level-agent/scripts/nla" "$@"
 }
 ```
 
@@ -161,6 +157,14 @@ nla /absolute/path/to/project
 ```
 
 Do not edit shell startup files without explicit user approval.
+
+## Optional Browser
+
+Normal NLA installation needs no browser or privileged service. To enable web
+tasks, follow the [Browser quick start](docs/BROWSER.md#quick-start).
+It installs a separate Playwright backend and creates two private config files;
+the launcher picks them up on the next run. Linux broker isolation is a separate
+installation for operators who need preventive network containment.
 
 ## Updating
 
