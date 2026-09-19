@@ -9,6 +9,7 @@ import { operation } from '../../.opencode/plugins/nla-browser-playwright.mjs';
 import { deterministicToolShortlist } from '../../.opencode/plugins/nla-prompt-optimizer.mjs';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { normalizeLedger, saveLedger } from '../../.opencode/plugins/nla-memory.mjs';
+import { createBrowserRecovery } from '../../.opencode/plugins/nla-browser-recovery.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-browser-test-'));
 const config = { command: [process.execPath, path.resolve('tests/opencode/fixtures/browser-mcp-server.mjs'), '--isolated'], allowed_origins: ['http://example.test'], timeout_ms: 1000, session_ttl_ms: 1000 };
@@ -315,15 +316,23 @@ try {
     error => error.code === 'NLA_UNTRUSTED_BROWSER_EVIDENCE',
   );
   mutationFailure = true;
-  const interrupted = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Do not replay submit', prompt: 'Submit once', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
+  const interrupted = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Do not replay submit', prompt: 'Submit once', browser: JSON.stringify(task({ success_criteria: [{ id: 'wrong', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Wrong' }] })) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(interrupted.output).result, 'BLOCKED');
-  assert.equal(JSON.parse(interrupted.output).reason, 'NLA_BROWSER_RECOVERY_BLOCKED');
-  assert.equal(prompts, 1, 'a mismatched continuation cannot start a Browser child');
+  assert.equal(JSON.parse(interrupted.output).reason, 'BROWSER_OUTCOME_UNVERIFIED');
+  assert.equal(prompts, 2, 'provider failure after mutation must not replay on fallback');
+  const mismatch = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Mismatched continuation', prompt: 'Read', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
+  assert.equal(JSON.parse(mismatch.output).reason, 'NLA_BROWSER_RECOVERY_BLOCKED');
+  assert.equal(prompts, 2, 'a mismatched continuation cannot start a Browser child');
   await plugin.dispose(); plugin = null;
   fs.rmSync(path.join(root, 'sessions', 'parent_123.json'), { force: true });
+  fs.rmSync(path.join(root, 'browser-recovery'), { recursive: true, force: true });
+  const historicalEvidence = path.join(root, 'historical-evidence.json'); fs.writeFileSync(historicalEvidence, '{"trusted":true}\n');
+  const historicalTask = task({ success_criteria: [{ id: 'A', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Ready', mandatory: true }] });
+  createBrowserRecovery(root, 'parent_123', historicalTask, { run_id: 'historical-run', id: 'historical-browser', child: 'historical-child', revision: { head: null } }, { metadata: { evidence: historicalEvidence, browser_result: 'PASS' } }, [{ id: 'A', status: 'PASS' }]);
   delete process.env.NLA_BROWSER_CONFIG_PATH;
-  plugin = await NextLevelAgentPlugin({ directory: root, client: {} });
+  plugin = await NextLevelAgentPlugin({ directory: root, client: { session: { prompt: async () => ({ data: true }) } } });
   await plugin['chat.message']({ sessionID: 'parent_123', agent: 'nla', directory: root });
+  await plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ goal: 'retain recovered evidence', workflow_stage: 'verification', verification_evidence: [{ head: null, type: 'browser', evidence: historicalEvidence, result: 'PASS', provenance: { source: 'browser-capability', trusted: true, run_id: 'historical-run', session_id: 'historical-browser', child_id: 'historical-child', owner_session_id: 'parent_123' } }] }) }, { sessionID: 'parent_123', directory: root });
   const blocked = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Absent browser', prompt: 'Read', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(blocked.output).reason, 'NOT_CONFIGURED');
   assert.ok(plugin.tool.nla_models);
