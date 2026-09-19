@@ -479,7 +479,14 @@ func stopManagedMCP(m *managedMCP, stdin io.WriteCloser, stdout io.ReadCloser) e
 	select {
 	case err := <-wait:
 		if err != nil {
-			return fmt.Errorf("browser process: %w", err)
+			// The broker owns teardown of this process. Once Wait has
+			// completed, the process is gone; its exit status (including a
+			// non-zero status after stdin/socket shutdown) is not itself a
+			// resource-cleanup failure. Namespace, nft, and veth cleanup are
+			// checked separately by destroy/cleanup.
+			if _, ok := err.(*exec.ExitError); !ok {
+				return fmt.Errorf("browser process: %w", err)
+			}
 		}
 	case <-time.After(2 * time.Second):
 		return errors.New("browser process cleanup timed out")

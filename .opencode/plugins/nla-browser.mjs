@@ -268,13 +268,13 @@ export class BrowserCapability {
     const required = checks.filter(c => c.mandatory);
     let result = required.some(c => c.status === 'FAIL') ? 'FAIL' : required.some(c => c.status === 'BLOCKED') || error ? 'BLOCKED' : required.some(c => c.status === 'NOT_RUN') || !required.length ? 'NOT_RUN' : 'PASS';
     const repository_after = reconcileGitWorkspace(s.directory).observed;
-    const manifest = this.redact(s, { version: 1, run_id: s.run_id, task_id: s.child || null, revision: s.revision, repository_after, browser: s.metadata, checks, operations: s.events, result, reason: error?.code, session_id: s.id });
     let cleanupError = null;
     if (!(s.task.keep_session && !error && !s.poisoned && this.sessions.has(s.id))) {
       try { await this.closeOwned(s.id, s.owner); } catch (closeError) { cleanupError = closeError; }
     }
     if (cleanupError && !error) error = cleanupError;
     if (cleanupError) result = 'BLOCKED';
+    const manifest = this.redact(s, { version: 1, run_id: s.run_id, task_id: s.child || null, revision: s.revision, repository_after, browser: s.metadata, checks, operations: s.events, result, reason: error?.code, session_id: s.id });
     const file = path.join(s.artifacts, 'manifest.json');
     try { atomicWrite(file, JSON.stringify(manifest, null, 2) + '\n'); }
     catch { await this.closeOwned(s.id, s.owner); throw new BrowserError('RESOURCE_EXHAUSTED', 'Browser evidence storage unavailable'); }

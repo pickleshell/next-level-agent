@@ -80,7 +80,11 @@ export async function operation(page, input) {
     const url = input.url;
     if (!allowed(url)) return { status: 'BLOCKED', reason: 'POLICY_DENIED' };
     delete state.redirects[url];
-    try { await page.goto(url, { waitUntil: 'domcontentloaded' }); }
+    try {
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+      if (response && response.status() >= 500) throw new Error('Navigation unavailable');
+      if (page.url().startsWith('chrome-error://')) throw new Error('Navigation unavailable');
+    }
     catch { if (!state.redirects[url]) throw new Error('Navigation unavailable'); }
     if (state.redirects[url]) return { status: 'PASS', redirect: { base: url, location: state.redirects[url] } };
     if (!allowed(page.url())) return { status: 'BLOCKED', reason: 'POLICY_DENIED' };
