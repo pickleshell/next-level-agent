@@ -247,15 +247,46 @@ Sessions are process-local. After an NLA restart, old IDs are unavailable and
 a new task starts fresh. This slice does not restore live browser processes
 after an OS crash or provide a system-level process sandbox.
 
-When mandatory Browser criteria remain pending, NLA also writes a private,
-authenticated runtime recovery record. It binds the owning primary session,
+Logical recovery is separate from a retained live browser session. Each new
+`nla_task(role=browser)` creates a runtime-generated logical task identity,
+returned as `metadata.browser_task_id`. To continue that workflow after a
+restart or compaction, pass `browser_task_id` to `nla_task` with the original
+complete Browser contract. Only pending criteria execute. Omitting this ID
+starts independent work, even if criterion names match an earlier task.
+Continuing a completed task or changing its contract is rejected before effects.
+
+NLA writes a private, authenticated runtime recovery record. It binds the owning primary session,
 normalized target policy, effective grants and prohibitions, completed and
-pending criteria, evidence references/provenance, and the next criterion.
+pending criteria, canonical criterion definitions, evidence references/provenance,
+and the next criterion. Run-level evidence includes FAIL, BLOCKED and NOT_RUN,
+not only successful checks. Separate attempts retain separate provenance.
 Restart and compaction restoration validate it before execution; malformed,
 missing, weakened, or unverifiable state blocks durably. The record prevents
 model-authored ledger omission or mutation and accidental corruption. It does
 not defend against a hostile process running with the same Unix UID, which can
 read and alter NLA private state.
+
+`nla_state`, `nla_compact`, and restore use the same evidence validation boundary.
+A model snapshot cannot invent Browser evidence, borrow another owner's result,
+or remove authenticated history. Restore failures leave a private durable block;
+restarting the runtime does not clear it. Start a new session after resolving
+the underlying storage/transport problem rather than editing evidence to resume.
+
+Logical task execution is claimed atomically across processes before browser
+allocation. Only the runtime's opaque claim owner may finalize it. Successful
+terminal evidence persistence releases the claim in the same transaction.
+An interrupted process or uncertain allocation may leave an `UNKNOWN` claim:
+there is no timed expiry, automatic stealing, or automatic replay of potentially
+completed external actions. Such a task requires operator resolution, not a
+model's assertion that retry is safe. Ordinary continuation from a persisted
+partial terminal result is supported.
+
+Recovery format v2 stores authenticated task membership and history atomically.
+Legacy v1 records lack the complete contract/provenance needed for safe automatic
+migration and are rejected, not rewritten. Preserve old state for diagnosis;
+use a separately configured private state root for a new workflow after operator
+review. Abandoned storage locks also fail closed and require investigation;
+do not remove them while another runtime may still be using the state root.
 
 ## Results and evidence
 

@@ -6,11 +6,12 @@ Date: 2026-09-19
 
 `NLA BROWSER PRODUCTION NOT READY`
 
-N1, N2 and N3 remain accepted and frozen. R1--R5 remediation and
-re-certification evidence is now recorded on the exact clean HEAD below. The
-overall verdict remains open pending the fresh independent production review
-and the persistent OpenCode scenarios that the harness deliberately reports as
-`NOT_RUN`.
+N1, N2 and N3 remain accepted and frozen. The checkpoint and R1--R6 evidence
+below is historical supporting evidence, not certification of current recovery
+remediation. Shared ledger ingress, task-scoped recovery, all-status provenance,
+durable restore blocking, and capacity reservation are being revalidated.
+Current-code persistent scenarios and stress must be revision-bound again
+before an independent production review may change the verdict.
 
 ## Accepted implementation checkpoints
 
@@ -156,8 +157,15 @@ coverage was therefore not reported as a passing suite.
 
 ## Remaining blockers
 
-1. Run a fresh independent production Reviewer against the final HEAD and all
-   R1--R6 plus live persistent evidence. The verdict must be exactly
+1. Complete recovery/evidence remediation and adversarial regressions, then
+   freeze an exact clean tracked implementation revision.
+2. Run live prompt injection, persistent restart/restore, native compaction and
+   pending-only continuation through the broker-backed NLA path. Use only
+   operator-approved `opencode-go` models for live model tests.
+3. Re-run full regression and sequential/parallel stress on that same revision,
+   recording immediate cleanup and final resource baseline.
+4. Run a fresh independent production Reviewer against that exact HEAD and
+   revision-bound evidence. The verdict must be exactly
    `PRODUCTION ACCEPT` before the readiness verdict can change.
 
 No production-ready claim should be made until every item is closed.

@@ -110,7 +110,8 @@ export function validateBrowserTask(input, config) {
 export class BrowserCapability {
   constructor({ config, root, backendFactory = config => new PlaywrightMcpBackend(config), now = Date.now, onDiagnostic = null }) {
     this.config = config; this.root = path.resolve(root); this.backendFactory = backendFactory; this.now = now;
-    this.sessions = new Map(); this.children = new Map();
+    this.sessions = new Map(); this.children = new Map(); this.pendingSessions = 0;
+    this.begins = new Set(); this.disposing = false; this.disposal = null;
     this.diagnostics = []; this.onDiagnostic = onDiagnostic;
     this.timer = setInterval(() => {
       void this.reap().catch(error => this.recordDiagnostic({ event: 'browser_reaper_failed', reason: error }));
@@ -122,62 +123,89 @@ export class BrowserCapability {
     try { this.onDiagnostic?.(detail); } catch {}
   }
   async begin(input, owner, directory, signal) {
+    this.assertOpen();
+    // Register before any asynchronous provisioning or reaping can yield to dispose.
+    const pending = Promise.resolve().then(() => this.beginSession(input, owner, directory, signal));
+    this.begins.add(pending);
+    try { return await pending; }
+    finally { this.begins.delete(pending); }
+  }
+  assertOpen() {
+    if (this.disposing) throw new BrowserError('SESSION_CLOSED', 'Browser capability is disposed');
+  }
+  async beginSession(input, owner, directory, signal) {
+    this.assertOpen();
     if (!this.config) throw new BrowserError('NOT_CONFIGURED');
     if (signal?.aborted) throw new BrowserError('CANCELLED');
     const task = validateBrowserTask(input, this.config);
     await this.reap();
+    this.assertOpen();
     const fingerprint = JSON.stringify({ origins: task.origins, permissions: task.permissions, upload_files: task.upload_files });
     let session = task.session_id && this.sessions.get(task.session_id);
     if (task.session_id && (!session || session.owner !== owner || session.busy || session.fingerprint !== fingerprint)) throw new BrowserError('POLICY_DENIED', 'Browser session cannot be resumed');
     if (!session) {
-      if (this.sessions.size >= (this.config.max_sessions || 2)) throw new BrowserError('RESOURCE_EXHAUSTED');
+      if (this.sessions.size + this.pendingSessions >= (this.config.max_sessions || 2)) throw new BrowserError('RESOURCE_EXHAUSTED');
+      // Claim capacity synchronously; broker provisioning has not created a session yet.
+      this.pendingSessions++;
       let network = null;
       let backendConfig = this.config;
       let createdNetwork = null;
-      if (this.config.broker_socket) {
-        const created = await brokerRequest(this.config.broker_socket, { op: 'create', policy: brokerPolicy(task, this.config) });
-        createdNetwork = created.session;
-        try {
+      try {
+        if (signal?.aborted) throw new BrowserError('CANCELLED');
+        if (this.config.broker_socket) {
+          const created = await brokerRequest(this.config.broker_socket, { op: 'create', policy: brokerPolicy(task, this.config) });
+          createdNetwork = created.session;
+          this.assertOpen();
           if (signal?.aborted) throw new BrowserError('CANCELLED');
           const launched = await brokerRequest(this.config.broker_socket, { op: 'launch', session_id: created.session.session_id, token: created.session.session_token });
+          this.assertOpen();
           if (signal?.aborted) throw new BrowserError('CANCELLED');
           network = { socket: this.config.broker_socket, session_id: created.session.session_id, token: created.session.session_token };
           backendConfig = { ...this.config, socket: launched.endpoint, command: undefined };
-        } catch (error) {
-          await brokerRequest(this.config.broker_socket, { op: 'destroy', session_id: created.session.session_id, token: created.session.session_token }).catch(() => {});
-          createdNetwork = null;
-          throw error;
         }
-      }
-      let backend;
-      try { backend = this.backendFactory(backendConfig); }
-      catch (error) {
-        if (createdNetwork) await brokerRequest(this.config.broker_socket, { op: 'destroy', session_id: createdNetwork.session_id, token: createdNetwork.session_token }).catch(() => {});
+        const backend = this.backendFactory(backendConfig);
+        session = { id: randomUUID(), owner, fingerprint, backend, network, busy: true, events: [], secrets: [] };
+        this.sessions.set(session.id, session);
+      } catch (error) {
+        if (createdNetwork) {
+          try { await brokerRequest(this.config.broker_socket, { op: 'destroy', session_id: createdNetwork.session_id, token: createdNetwork.session_token }); }
+          catch (cleanupError) {
+            this.recordDiagnostic({ event: 'browser_cleanup_failed', session_id: createdNetwork.session_id, reason: cleanupError });
+            throw new BrowserError('UNREACHABLE', `Browser resource cleanup failed: ${String(cleanupError.message || cleanupError).slice(0, 500)}`);
+          }
+        }
         throw error;
+      } finally {
+        // Transfer to sessions without yielding, or release after failed provisioning cleanup.
+        this.pendingSessions--;
       }
-      session = { id: randomUUID(), owner, fingerprint, backend, network, busy: true, events: [], secrets: [] };
-      this.sessions.set(session.id, session);
       if (signal) {
         session.signal = signal;
         session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner).catch(error => { session.cleanupError = error; }); };
         signal.addEventListener('abort', session.abort, { once: true });
       }
-      try { session.metadata = await backend.start(task); }
-      catch (error) { await this.closeOwned(session.id, owner); throw error; }
+      try { session.metadata = await session.backend.start(task); }
+      catch (error) { await (session.cleanupPromise || this.closeOwned(session.id, owner)); throw error; }
     }
     if (signal && !session.abort) {
       session.signal = signal;
       session.abort = () => { session.cancelled = true; void this.closeOwned(session.id, owner).catch(error => { session.cleanupError = error; }); };
       signal.addEventListener('abort', session.abort, { once: true });
     }
-    if (signal?.aborted || session.cancelled) { await this.closeOwned(session.id, owner); throw new BrowserError('CANCELLED'); }
-    session.busy = true; session.task = task; session.preflight = false; session.events = [];
-    session.run_id = randomUUID(); session.directory = path.resolve(directory);
-    session.revision = reconcileGitWorkspace(directory).observed;
-    session.artifacts = path.join(this.root, 'evidence', 'browser', session.run_id);
-    session.expires = this.now() + (this.config.session_ttl_ms || 600000);
-    try { atomicWrite(path.join(session.artifacts, 'preflight.json'), JSON.stringify({ run_id: session.run_id, browser: session.metadata }) + '\n'); }
-    catch { await this.closeOwned(session.id, owner); throw new BrowserError('RESOURCE_EXHAUSTED'); }
+    try {
+      this.assertOpen();
+      if (signal?.aborted || session.cancelled) throw new BrowserError('CANCELLED');
+      session.busy = true; session.task = task; session.preflight = false; session.events = [];
+      session.run_id = randomUUID(); session.directory = path.resolve(directory);
+      session.revision = reconcileGitWorkspace(directory).observed;
+      session.artifacts = path.join(this.root, 'evidence', 'browser', session.run_id);
+      session.expires = this.now() + (this.config.session_ttl_ms || 600000);
+      try { atomicWrite(path.join(session.artifacts, 'preflight.json'), JSON.stringify({ run_id: session.run_id, browser: session.metadata }) + '\n'); }
+      catch { throw new BrowserError('RESOURCE_EXHAUSTED'); }
+    } catch (error) {
+      await (session.cleanupPromise || this.closeOwned(session.id, owner));
+      throw error;
+    }
     return session;
   }
   bind(session, child) {
@@ -338,9 +366,18 @@ export class BrowserCapability {
     if (failures.length) throw new BrowserError('UNREACHABLE', `Browser reaper cleanup failed: ${failures.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
   }
   async dispose() {
+    this.disposing = true;
     clearInterval(this.timer);
-    const results = await Promise.allSettled([...this.sessions.values()].map(s => this.closeOwned(s.id, s.owner)));
-    const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
-    if (failures.length) throw new BrowserError('UNREACHABLE', `Browser dispose cleanup failed: ${failures.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
+    if (this.disposal) return this.disposal;
+    this.disposal = (async () => {
+      // Startup must settle before closing its backend: start can acquire resources.
+      const begun = await Promise.allSettled([...this.begins]);
+      const closed = await Promise.allSettled([...this.sessions.values()].map(s => this.closeOwned(s.id, s.owner)));
+      const provisioningFailures = begun.filter(result => result.status === 'rejected' && result.reason?.code !== 'SESSION_CLOSED').map(result => result.reason);
+      const cleanupFailures = closed.filter(result => result.status === 'rejected').map(result => result.reason);
+      const failures = [...provisioningFailures, ...cleanupFailures];
+      if (failures.length) throw new BrowserError('UNREACHABLE', `Browser dispose ${provisioningFailures.length ? 'failed' : 'cleanup failed'}: ${failures.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
+    })();
+    return this.disposal;
   }
 }
