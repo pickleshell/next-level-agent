@@ -72,6 +72,6 @@ Also verify direct allowed access, direct forbidden denial, multihop
 redirects, port/hostname/IP changes, and destroy cleanup (ip netns list,
 veths, nft rules, and broker helpers).
 
-This primitive is not yet an NLA Browser integration. N2/N3 and production
-recovery remain gated on an independent security review and on a real browser
-being launched inside the session boundary.
+This primitive is used by the optional NLA Browser capability. The complete
+role-facing setup, Playwright MCP configuration, permissions, sessions,
+evidence, and operational limits are documented in `docs/BROWSER.md`.
