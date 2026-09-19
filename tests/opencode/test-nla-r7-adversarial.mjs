@@ -45,6 +45,23 @@ try {
     error => error.code === 'NLA_CONTEXT_RESTORE_BLOCKED',
   );
   await restorePlugin.dispose();
+
+  // Malformed persisted JSON must take the same fail-closed path.
+  const malformedID = 'r7-malformed';
+  const malformedFile = path.join(root, 'sessions', `${malformedID}.json`);
+  const malformedPlugin = await NextLevelAgentPlugin({
+    directory: root,
+    client: { session: { prompt: async () => ({ data: true }) } },
+  });
+  await malformedPlugin['chat.message']({ sessionID: malformedID, agent: 'nla', directory: root });
+  fs.mkdirSync(path.dirname(malformedFile), { recursive: true });
+  fs.writeFileSync(malformedFile, '{not-json');
+  await malformedPlugin.event({ event: { type: 'session.compacted', properties: { sessionID: malformedID } } });
+  await assert.rejects(
+    malformedPlugin['chat.message']({ sessionID: malformedID, agent: 'nla', directory: root }),
+    error => error.code === 'NLA_CONTEXT_RESTORE_BLOCKED',
+  );
+  await malformedPlugin.dispose();
 } finally {
   for (const [key, value] of Object.entries(old)) {
     if (value === undefined) delete process.env[key]; else process.env[key] = value;
