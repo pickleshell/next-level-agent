@@ -9,9 +9,16 @@ for pull requests because provider availability, latency, and cost are external.
 From the repository root, run:
 
 ```bash
+npm install --no-save --prefix .opencode @opencode-ai/plugin@1.18.9
 npm run test:nla
-python3 -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
+python3 -m venv .venv
+.venv/bin/python -m pip install pytest
+.venv/bin/python -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
 ```
+
+The first command installs the same pinned test dependency as CI. It is needed
+on a fresh clone: do not rely on an earlier OpenCode launch having populated
+`.opencode/node_modules`. This is test setup, not a paid provider/model call.
 
 `npm run test:nla` covers the OpenCode-side memory, Compactor checkpoint,
 utility runtime, prompt optimizer, capability cache, and model-pool retry logic.
