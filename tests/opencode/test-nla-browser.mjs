@@ -192,6 +192,24 @@ try {
   expiring.bind(retained, 'lease'); await expiring.finish(retained);
   clock = 1001; await expiring.reap(); assert.equal(expiring.sessions.size, 0);
 
+  let failureClock = 0;
+  const cleanupFailure = make({ config: { ...config, session_ttl_ms: 1000 }, now: () => failureClock,
+    backendFactory: () => ({ start: async () => ({}), invoke: async () => ({ status: 'PASS' }), close: async () => { throw new BrowserError('UNREACHABLE', 'fixture cleanup failure'); } }),
+  });
+  const expiringFailure = await cleanupFailure.begin(task({ keep_session: true }), 'parent', root);
+  cleanupFailure.bind(expiringFailure, 'lease-failure'); await cleanupFailure.finish(expiringFailure);
+  failureClock = 1001;
+  await assert.rejects(cleanupFailure.reap(), /reaper cleanup failed/);
+  assert.ok(cleanupFailure.diagnostics.some(event => event.event === 'browser_cleanup_failed'));
+  assert.ok(cleanupFailure.diagnostics.some(event => event.event === 'browser_reaper_cleanup_failed'));
+
+  const disposeFailure = make({
+    backendFactory: () => ({ start: async () => ({}), invoke: async () => ({ status: 'PASS' }), close: async () => { throw new BrowserError('UNREACHABLE', 'fixture dispose failure'); } }),
+  });
+  const activeFailure = await disposeFailure.begin(task(), 'parent', root);
+  disposeFailure.bind(activeFailure, 'dispose-failure');
+  await assert.rejects(disposeFailure.dispose(), /dispose cleanup failed/);
+
   let closed = 0;
   const unavailable = make({ backendFactory: () => ({ start: async () => { throw new BrowserError('AUTH_REQUIRED'); }, close: async () => { closed++; } }) });
   await assert.rejects(unavailable.begin(task(), 'parent', root), e => e.code === 'AUTH_REQUIRED');

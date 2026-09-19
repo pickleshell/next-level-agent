@@ -108,10 +108,18 @@ export function validateBrowserTask(input, config) {
 }
 
 export class BrowserCapability {
-  constructor({ config, root, backendFactory = config => new PlaywrightMcpBackend(config), now = Date.now }) {
+  constructor({ config, root, backendFactory = config => new PlaywrightMcpBackend(config), now = Date.now, onDiagnostic = null }) {
     this.config = config; this.root = path.resolve(root); this.backendFactory = backendFactory; this.now = now;
     this.sessions = new Map(); this.children = new Map();
-    this.timer = setInterval(() => { void this.reap(); }, 1000); this.timer.unref();
+    this.diagnostics = []; this.onDiagnostic = onDiagnostic;
+    this.timer = setInterval(() => {
+      void this.reap().catch(error => this.recordDiagnostic({ event: 'browser_reaper_failed', reason: error }));
+    }, 1000); this.timer.unref();
+  }
+  recordDiagnostic({ event, session_id, reason }) {
+    const detail = { event, session_id, reason: String(reason?.message || reason || '').slice(0, 500), timestamp: new Date(this.now()).toISOString() };
+    this.diagnostics.push(detail); this.diagnostics = this.diagnostics.slice(-100);
+    try { this.onDiagnostic?.(detail); } catch {}
   }
   async begin(input, owner, directory, signal) {
     if (!this.config) throw new BrowserError('NOT_CONFIGURED');
@@ -314,16 +322,25 @@ export class BrowserCapability {
         this.sessions.delete(id);
       }
       if (cleanupErrors.length) {
-        throw new BrowserError('UNREACHABLE', `Browser resource cleanup failed: ${cleanupErrors.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
+        const error = new BrowserError('UNREACHABLE', `Browser resource cleanup failed: ${cleanupErrors.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
+        this.recordDiagnostic({ event: 'browser_cleanup_failed', session_id: id, reason: error });
+        throw error;
       }
     })();
     return s.cleanupPromise;
   }
   async reap() {
-    for (const s of this.sessions.values()) if (!s.busy && s.expires <= this.now()) await this.closeOwned(s.id, s.owner);
+    const failures = [];
+    for (const s of this.sessions.values()) if (!s.busy && s.expires <= this.now()) {
+      try { await this.closeOwned(s.id, s.owner); }
+      catch (error) { this.recordDiagnostic({ event: 'browser_reaper_cleanup_failed', session_id: s.id, reason: error }); failures.push(error); }
+    }
+    if (failures.length) throw new BrowserError('UNREACHABLE', `Browser reaper cleanup failed: ${failures.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
   }
   async dispose() {
     clearInterval(this.timer);
-    await Promise.allSettled([...this.sessions.values()].map(s => this.closeOwned(s.id, s.owner)));
+    const results = await Promise.allSettled([...this.sessions.values()].map(s => this.closeOwned(s.id, s.owner)));
+    const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failures.length) throw new BrowserError('UNREACHABLE', `Browser dispose cleanup failed: ${failures.map(error => String(error.message || error)).join('; ').slice(0, 500)}`);
   }
 }
