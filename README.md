@@ -431,19 +431,6 @@ detailed snapshot.
 
 > Introspection must describe the configuration NLA actually executes, and persisted Work State must be reconciled with observable repository state before it is treated as current.
 
-## Current Development Status
-
-**Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed end-to-end tests.
-
-> [!WARNING]
-> NLA is an experimental Alpha developed and tested in a controlled personal OpenCode environment. It is not yet a hardened security boundary.
-
-Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
-
-This repository is based on Superpowers and retains some upstream integrations and tests. The complete NLA runtime is currently OpenCode-specific. Manifests for other agent platforms do not imply full NLA support on those platforms.
-
-Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
-
 ## Optional Browser
 
 Browser handles website research, extraction, forms and UI verification through
@@ -475,6 +462,19 @@ NLA never needs to know which extraction profile the external service uses.
 See [Install the Mem0 service](docs/MEM0_INSTALL.md) for a clean-clone deployment
 and [Mem0 plugin reference](docs/NLA_MEM0_PLUGIN.md) for architecture, tool
 semantics, security boundaries, failure handling, and cross-session behavior.
+
+## Current Development Status
+
+**Current maturity: Alpha, active development.** The core workflow, model failover, memory, controlled compaction, restoration, and telemetry have passed end-to-end tests.
+
+> [!WARNING]
+> NLA is an experimental Alpha developed and tested in a controlled personal OpenCode environment. It is not yet a hardened security boundary.
+
+Current limitations include incomplete hard role permissions, no strict Task Context Packet validator, no hard token or monetary budgets, and no transactional installer or resolved-config validator. Controlled compaction requires a persistent OpenCode TUI or server.
+
+This repository is based on Superpowers and retains some upstream integrations and tests. The complete NLA runtime is currently OpenCode-specific. Manifests for other agent platforms do not imply full NLA support on those platforms.
+
+Read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md) for the supported environment, installation model, known limitations, data locations, telemetry, evidence, and focused roadmap.
 
 ## Install
 
