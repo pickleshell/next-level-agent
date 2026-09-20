@@ -54,7 +54,15 @@ default. Overrides are complete pool files and invalid or missing overrides fail
 closed. The repository default is portable; operator-specific bindings belong in
 the external override. Startup telemetry records the selected source and
 resolution reason without secrets. `nla_models` reports the same resolved roles
-consumed by `nla_task`; `nla_work_state` reports a reconciled ledger.
+consumed by `nla_task`; `nla_models_reload` validates and atomically replaces
+that in-memory snapshot without restarting OpenCode. Run `nla_models` after a
+reload to verify the effective role ordering and health. New tasks use the new
+snapshot; active tasks retain the snapshot already assigned to them.
+`nla_work_state` reports a reconciled ledger.
+
+The ordered `models` array is the complete attempt budget. Runtime attempt count
+is always `models.length`; there is no separate `max_failovers` or model-count
+field in the architecture or configuration.
 
 Work State has two authority classes. NLA owns intent and semantic fields such
 as goals, approvals, workflow stage, acceptance criteria, blockers, and planned

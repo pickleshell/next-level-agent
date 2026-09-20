@@ -87,7 +87,7 @@ assert.equal(healthManager.claim('p/a'), true);
 healthManager.success('p/a');
 assert.equal(healthManager.state('p/a').state, 'available');
 
-const utilityPool = { runtime: 'utility', backend: 'ollama', provider: { api: 'native', base_url: 'http://example.test/a?token=SECRET' }, models: ['one', 'two', 'three'], max_failovers: 1, request_timeout_ms: 1000, cooldown_ms: 77 };
+const utilityPool = { runtime: 'utility', backend: 'ollama', provider: { api: 'native', base_url: 'http://example.test/a?token=SECRET' }, models: ['one', 'two', 'three'], request_timeout_ms: 1000, cooldown_ms: 77 };
 const endpoint = utilityHealthEndpoint(utilityPool);
 assert.notEqual(endpoint, utilityHealthEndpoint({ ...utilityPool, provider: { ...utilityPool.provider, base_url: 'http://example.test/b?token=SECRET' } }));
 assert.ok(!endpoint.includes('SECRET'));
@@ -114,7 +114,7 @@ const savedEnv = { pool: process.env.NLA_MODEL_POOLS_PATH, memory: process.env.N
 let plugin;
 try {
   const fixturePool = path.join(fixture, 'pools.json');
-  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], max_failovers: 2, cooldown_ms: 123456, idle_timeout_ms: 0 }, router: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], max_failovers: 2, idle_timeout_ms: 0 } } }));
+  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], cooldown_ms: 123456, idle_timeout_ms: 0 }, router: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], idle_timeout_ms: 0 } } }));
   process.env.NLA_MODEL_POOLS_PATH = fixturePool;
   process.env.NLA_MEMORY_DIR = path.join(fixture, 'memory');
   const actual = [];
@@ -159,6 +159,17 @@ try {
   assert.deepEqual(actual, [], 'no early probe when cooling or in-flight');
   await plugin.event({ event: { type: 'session.idle', properties: { sessionID: 'native' } } });
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
+  fs.writeFileSync(fixturePool, JSON.stringify({ roles: {
+    architect: { enabled: true, models: ['fixture/reloaded'], idle_timeout_ms: 0 },
+    router: { enabled: true, models: ['fixture/reloaded'], idle_timeout_ms: 0 },
+  } }));
+  const reloaded = await plugin.tool.nla_models_reload.execute({}, context);
+  assert.deepEqual(reloaded.metadata.roles.find((item) => item.role === 'architect').fallbacks, []);
+  assert.equal(reloaded.metadata.roles.find((item) => item.role === 'architect').primary, 'fixture/reloaded');
+  assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').primary, 'fixture/reloaded');
+  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, models: ['fixture/reloaded', 'fixture/reloaded'] } } }));
+  await assert.rejects(plugin.tool.nla_models_reload.execute({}, context), /repeats model binding/);
+  assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').primary, 'fixture/reloaded', 'failed reload preserves current snapshot');
   assert.ok(!fs.readFileSync(path.join(fixture, '.opencode', 'agent-run.log'), 'utf8').includes('SECRET'));
 } finally {
   if (plugin) await plugin.dispose();
@@ -177,7 +188,7 @@ for (const mode of ['reject', 'response-error', 'early-idle', 'early-status-idle
   try {
     process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
     process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
-    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b', 'p/c'], max_failovers: 2, idle_timeout_ms: 0 } } }));
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b', 'p/c'], idle_timeout_ms: 0 } } }));
     const calls = [];
     let finish;
     let aborts = 0;
@@ -253,7 +264,7 @@ for (const outcome of ['reject', 'error-result', 'false-result', 'confirmed']) {
   try {
     process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
     process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
-    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b'], max_failovers: 1, idle_timeout_ms: 5 } } }));
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b'], idle_timeout_ms: 5 } } }));
     const calls = [];
     let stopped = false;
     let releaseStop;
@@ -325,7 +336,7 @@ for (const validCatalog of [true, false]) {
   try {
     process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
     process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
-    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { implementer: { enabled: true, models: ['opencode-go/gpt-5.6-luna'], max_failovers: 0 } } }));
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { implementer: { enabled: true, models: ['opencode-go/gpt-5.6-luna'] } } }));
     let requests = 0;
     instance = await NextLevelAgentPlugin({ directory: dir, client: {
       tool: { list: async () => ({ data: ['read', 'grep', 'bash', ...(validCatalog ? ['apply_patch'] : [])].map(id => ({ id, parameters: { type: 'object' } })) }) },

@@ -9,7 +9,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-r7-test-'));
 const old = Object.fromEntries(['NLA_MODEL_POOLS_PATH', 'NLA_MEMORY_DIR', 'NLA_BROWSER_CONFIG_PATH'].map(key => [key, process.env[key]]));
 try {
   const pool = path.join(root, 'models.json');
-  fs.writeFileSync(pool, JSON.stringify({ roles: { explorer: { enabled: true, models: ['fixture/model'], max_failovers: 0 } } }));
+  fs.writeFileSync(pool, JSON.stringify({ roles: { explorer: { enabled: true, models: ['fixture/model'] } } }));
   process.env.NLA_MODEL_POOLS_PATH = pool;
   process.env.NLA_MEMORY_DIR = root;
 

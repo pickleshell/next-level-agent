@@ -11,7 +11,7 @@ const started = Date.now();
 const pool = {
   enabled: true, runtime: 'utility', backend: 'ollama',
   provider: { api: 'native', base_url: process.env.NLA_OLLAMA_BASE_URL || 'http://127.0.0.1:11434' },
-  models: [process.env.NLA_OLLAMA_MODEL || 'qwen3:4b'], request_timeout_ms: 120000, max_failovers: 0,
+  models: [process.env.NLA_OLLAMA_MODEL || 'qwen3:4b'], request_timeout_ms: 120000,
   output_format: 'json',
 };
 const ledger = {

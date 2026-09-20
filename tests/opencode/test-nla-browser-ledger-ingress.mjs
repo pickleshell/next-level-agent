@@ -77,7 +77,7 @@ async function fixture(run) {
     fs.writeFileSync(env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: {
       // Health claims serialize each model binding; two fake bindings allow
       // the concurrency regression to exercise independent Browser tasks.
-      browser: { enabled: true, models: ['fixture/browser', 'fixture/browser-parallel'], max_failovers: 0, idle_timeout_ms: 2000 },
+      browser: { enabled: true, models: ['fixture/browser', 'fixture/browser-parallel'], idle_timeout_ms: 2000 },
     } }));
     Object.assign(process.env, env);
     const recreate = async () => {

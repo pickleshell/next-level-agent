@@ -38,5 +38,4 @@ def test_profile_and_bounded_defaults(monkeypatch):
         else:
             assert pool["idle_timeout_ms"] > 0 or not pool["enabled"]
             model = pool["models"][0]
-        assert 0 <= pool["max_failovers"] <= len(pool["models"]) - 1
         assert profile["agent"][role]["model"] == model
