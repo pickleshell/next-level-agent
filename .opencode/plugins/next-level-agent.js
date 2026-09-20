@@ -769,7 +769,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModels = tool({
-    description: 'Report the effective NLA model pools consumed by nla_task, including ordered fallbacks, enabled state, source, and resolution reason. Never includes credentials.',
+    description: 'Report the effective NLA model pools consumed by nla_task, including primary model, ordered fallbacks, status, source, resolution reason, and health. When presenting this result, preserve one separate row per role with distinct Primary and Fallbacks fields; never call the complete model chain a fallback chain, group roles, or omit fallbacks. Use none when a role has no fallback. Never includes credentials.',
     args: {},
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
@@ -981,7 +981,7 @@ When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → \`todowrite\`
 	- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
-	- Inspect effective model routing → \`nla_models\`; reload it after an approved config change with \`nla_models_reload\`
+	- Inspect effective model routing → \`nla_models\`; relay every role separately with distinct Primary and Fallbacks fields, use none for no fallback, and never group roles, omit fallbacks, or call the complete chain a fallback chain; reload it after an approved config change with \`nla_models_reload\`
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
