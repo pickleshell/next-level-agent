@@ -44,7 +44,24 @@ try {
     restorePlugin['chat.message']({ sessionID, agent: 'nla', directory: root }),
     error => error.code === 'NLA_CONTEXT_RESTORE_BLOCKED',
   );
+  const restoreMarker = JSON.parse(fs.readFileSync(path.join(root, 'restore-blocked', `${sessionID}.json`), 'utf8'));
+  assert.equal(restoreMarker.reason, 'restore transport failed');
+  assert.equal(restoreMarker.code, 'NLA_CONTEXT_RESTORE_BLOCKED');
   await restorePlugin.dispose();
+
+  // Child compaction is owned by the child runtime, not the primary NLA
+  // ledger. It must not create a persistent restore block or deny tools.
+  const childPlugin = await NextLevelAgentPlugin({
+    directory: root,
+    client: { session: { prompt: async () => ({ data: true }) } },
+  });
+  for (const childID of ['r7-child-compaction-1', 'r7-child-compaction-2', 'r7-child-compaction-3']) {
+    await childPlugin['chat.message']({ sessionID: childID, agent: 'implementer', directory: root });
+    await childPlugin.event({ event: { type: 'session.compacted', properties: { sessionID: childID } } });
+    await childPlugin['tool.execute.before']({ sessionID: childID, tool: 'read' }, { args: {} });
+    assert.equal(fs.existsSync(path.join(root, 'restore-blocked', `${childID}.json`)), false);
+  }
+  await childPlugin.dispose();
 
   // Malformed persisted JSON must take the same fail-closed path.
   const malformedID = 'r7-malformed';

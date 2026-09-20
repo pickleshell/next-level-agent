@@ -699,6 +699,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const restoreBlockPath = sessionID => path.join(stateRoot, 'restore-blocked', `${safeSessionID(sessionID)}.json`);
+  const restoreFailureReason = error => String(error?.message || error?.reason || error?.code || error || 'Unknown NLA restore failure').slice(0, 300);
   const assertExecutionAllowed = sessionID => {
     const owner = sessionRoots.get(sessionID) || browserPrincipals.get(sessionID)?.parent || sessionID;
     for (const id of new Set([sessionID, owner])) {
@@ -708,9 +709,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     }
   };
   const blockRestore = (sessionID, error) => {
-    const reason = error?.code || 'NLA_CONTEXT_RESTORE_BLOCKED';
+    const reason = restoreFailureReason(error);
+    const code = typeof error?.code === 'string' ? error.code : undefined;
     compactionState.set(sessionID, { ...compactionState.get(sessionID), blocked: true, level: 'blocked', restoreError: reason });
-    atomicWrite(restoreBlockPath(sessionID), JSON.stringify({ version: 1, session_id: sessionID, reason }));
+    atomicWrite(restoreBlockPath(sessionID), JSON.stringify({ version: 1, session_id: sessionID, reason, code }));
   };
 
   const validateTrustedBrowserEvidence = (entries, owner) => {
@@ -867,7 +869,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       ledger = loadLedger(stateRoot, sessionID);
       if (ledger) validateLedgerIngress(ledger, sessionID);
     } catch (error) {
-      current.blocked = true; current.restoreError = error.code || 'NLA_CONTEXT_RESTORE_BLOCKED'; current.level = 'blocked';
+      current.blocked = true; current.restoreError = restoreFailureReason(error); current.level = 'blocked';
       compactionState.set(sessionID, current);
       blockRestore(sessionID, error);
       appendRunLog({ event: 'compaction_failed', session_id: sessionID, reason: current.restoreError });
@@ -1059,7 +1061,7 @@ ${toolMapping}
           }
           } catch (error) {
             blockRestore(props.info.id, error);
-            appendRunLog({ event: 'context_restore_blocked', session_id: props.info.id, reason: error.code || 'NLA_CONTEXT_RESTORE_BLOCKED' });
+            appendRunLog({ event: 'context_restore_blocked', session_id: props.info.id, reason: restoreFailureReason(error) });
           }
         }
       }
@@ -1127,7 +1129,10 @@ ${toolMapping}
         }
         compactionState.set(sessionID, current);
       }
-      if (event.type === 'session.compacted' && props.sessionID) {
+      // Native compaction events also arrive for pooled child sessions. Only
+      // the primary NLA owns a durable workflow ledger; children must never be
+      // blocked merely because they have no primary-session checkpoint.
+      if (event.type === 'session.compacted' && props.sessionID && primarySessions.get(props.sessionID)?.agent === 'nla') {
         const current = compactionState.get(props.sessionID) || {};
         current.compactionCount = current.compactionCount || 1;
         const primary = primarySessions.get(props.sessionID);
@@ -1183,7 +1188,7 @@ ${toolMapping}
         } else {
           current.level = 'blocked';
           current.noticePending = false;
-          blockRestore(props.sessionID, { code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
+          blockRestore(props.sessionID, { message: current.restoreError, code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
           appendRunLog({ event: 'context_restore_blocked', session_id: props.sessionID, reason: current.restoreError });
         }
         compactionState.set(props.sessionID, current);
@@ -1228,7 +1233,7 @@ ${toolMapping}
         }
         } catch (error) {
           blockRestore(input.sessionID, error);
-          appendRunLog({ event: 'context_restore_blocked', session_id: input.sessionID, reason: error.code || 'NLA_CONTEXT_RESTORE_BLOCKED' });
+          appendRunLog({ event: 'context_restore_blocked', session_id: input.sessionID, reason: restoreFailureReason(error) });
           throw error;
         }
       }
