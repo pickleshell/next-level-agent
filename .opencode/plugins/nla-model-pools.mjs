@@ -45,7 +45,7 @@ export function modelPoolSummary(resolved) {
       role,
       enabled: coordinator ? null : enabled,
       pooled: !coordinator && enabled,
-      status: coordinator ? 'primary' : (enabled ? 'enabled' : 'disabled'),
+      status: coordinator ? 'orchestrator' : (enabled ? 'enabled' : 'disabled'),
       primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
       fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [],
     };
