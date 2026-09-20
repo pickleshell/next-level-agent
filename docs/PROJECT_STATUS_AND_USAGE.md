@@ -339,8 +339,7 @@ machine-specific role bindings.
       "preferred/provider-model",
       "fallback/provider-model"
     ],
-    "idle_timeout_ms": 300000,
-    "max_failovers": 1
+    "idle_timeout_ms": 300000
   }
 }
 ```
@@ -349,8 +348,8 @@ Rules:
 
 - models are tried in order;
 - the first entry is preferred;
-- the next entry is the bounded fallback;
-- `max_failovers` prevents retry loops;
+- the following entries are ordered fallbacks;
+- every listed model may be attempted in order until one succeeds;
 - each role has its own timeout;
 - the same child session is retained across a supported failover;
 - the visible primary NLA session does not silently switch models;
@@ -419,7 +418,6 @@ required roles, especially Supervisor, in the complete file:
       },
       "models": ["qwen3:4b"],
       "request_timeout_ms": 90000,
-      "max_failovers": 0,
       "output_format": "json"
     }
   }
@@ -427,7 +425,7 @@ required roles, especially Supervisor, in the complete file:
 ```
 
 `provider.api` may be `native` or `openai-compatible`. `models` remains an
-ordered bounded pool, and `max_failovers` limits additional attempts. Every
+ordered fallback pool; every listed model may be attempted. Every
 utility request has an explicit positive `request_timeout_ms`. `output_format`
 is optional for general bounded roles; Compactor should use `json`.
 

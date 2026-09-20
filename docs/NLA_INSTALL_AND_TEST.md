@@ -86,7 +86,7 @@ and the user explicitly approves the resulting written design.
 - Confirm `.logs/compact.log` exists with event types (`compact`, `checkpoint_save`, `checkpoint_restore`, `token_threshold_exceeded`).
 - Confirm eight enabled subagent pools and the deliberately disabled primary
   `nla` pool in `config/model-pools.json`; every enabled pool has one fallback
-  and `max_failovers: 1`.
+  and the ordered models are tried through the complete fallback chain.
 
 ## Run log
 
@@ -225,8 +225,7 @@ Compactor uses the existing role/model-pool boundary; its role prompt is in
 "compactor": {
   "enabled": true,
   "models": ["provider/preferred-model", "provider/fallback-model"],
-  "idle_timeout_ms": 90000,
-  "max_failovers": 1
+  "idle_timeout_ms": 90000
 }
 ```
 

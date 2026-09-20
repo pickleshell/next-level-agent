@@ -93,7 +93,7 @@ export async function runUtilityModel({ role, pool, prompt, fetchImpl = globalTh
   const config = utilityConfig(pool);
   if (!config) throw new Error(`Role ${role} is not configured for the utility runtime`);
   if (typeof fetchImpl !== 'function') throw new Error('Utility-model runtime requires fetch');
-  const maxAttempts = Number(pool.max_failovers || 0) + 1;
+  const maxAttempts = config.models.length;
   const endpointKey = utilityHealthEndpoint(pool);
   const selection = healthManager.candidates(config.models, maxAttempts, endpointKey);
   const attempts = config.models;

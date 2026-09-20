@@ -184,8 +184,7 @@ Edit the existing operator model-pool file and add/enable its `browser` entry:
 "browser": {
   "enabled": true,
   "models": ["opencode-go/gpt-5.6-luna"],
-  "idle_timeout_ms": 180000,
-  "max_failovers": 0
+  "idle_timeout_ms": 180000
 }
 ```
 
