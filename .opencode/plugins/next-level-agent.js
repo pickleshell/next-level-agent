@@ -135,8 +135,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const softContextTokens = Number(process.env.NLA_CONTEXT_SOFT_TOKENS || 50000);
   const hardContextTokens = Number(process.env.NLA_CONTEXT_HARD_TOKENS || 70000);
 
-  const resolvedPools = effectiveModelPools();
-  const pools = resolvedPools.roles;
+  let resolvedPools = effectiveModelPools();
+  let pools = resolvedPools.roles;
   const pendingTasks = new Map();
   const healthManager = new ModelHealthManager();
   const trackedSessions = new Map();
@@ -173,7 +173,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     const failure = healthManager.failure(state.model, reason, '', modelCooldownMs(state.pool));
     state.healthClaim = false;
     if (!['transient', 'defective', 'configuration'].includes(failure.category)) { state.busy = false; return; }
-    if (state.failovers >= state.pool.max_failovers) { state.busy = false; return; }
+    if (state.modelIndex >= state.pool.models.length - 1) { state.busy = false; return; }
     let nextIndex = state.modelIndex + 1;
     while (nextIndex < state.pool.models.length && !healthManager.claim(state.pool.models[nextIndex])) nextIndex += 1;
     const nextModel = state.pool.models[nextIndex];
@@ -321,7 +321,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
       }
 
-      const maxAttempts = (pool.max_failovers || 0) + 1;
+      const maxAttempts = pool.models.length;
       const selection = healthManager.candidates(pool.models, maxAttempts);
       const attempts = pool.models;
       let attempted = 0;
@@ -782,6 +782,29 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     },
   });
 
+  const nlaModelsReload = tool({
+    description: 'Reload the NLA model-pool configuration from its resolved source without restarting OpenCode. The new snapshot applies to new tasks; active tasks keep their existing pool snapshot. Never includes credentials.',
+    args: {},
+    execute: async (_args, context) => {
+      assertPrimaryNla(context.sessionID);
+      const nextResolvedPools = effectiveModelPools();
+      resolvedPools = nextResolvedPools;
+      pools = nextResolvedPools.roles;
+      appendRunLog({
+        event: 'model_pools_reloaded',
+        session_id: context.sessionID,
+        source: resolvedPools.source,
+        resolution: resolvedPools.resolution,
+        roles: modelPoolSummary(resolvedPools),
+      });
+      return {
+        title: 'NLA model pools reloaded',
+        output: `${formatModelPools(resolvedPools)}\n\nReloaded successfully. New tasks use this snapshot; active tasks retain their existing snapshot.`,
+        metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools) },
+      };
+    },
+  });
+
   const nlaModelHealthReset = tool({
     description: 'Reset health for one exact provider/model binding. Primary NLA only; this does not change configuration or credentials.',
     args: { binding: tool.schema.string().describe('Exact provider/model binding'), endpoint: tool.schema.string().optional().describe('Optional exact runtime endpoint identity') },
@@ -958,7 +981,7 @@ When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → \`todowrite\`
 	- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
-	- Inspect effective model routing → \`nla_models\`
+	- Inspect effective model routing → \`nla_models\`; reload it after an approved config change with \`nla_models_reload\`
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
@@ -990,6 +1013,7 @@ ${toolMapping}
       nla_task: nlaTask,
       nla_state: nlaState,
       nla_models: nlaModels,
+      nla_models_reload: nlaModelsReload,
       nla_model_health_reset: nlaModelHealthReset,
       nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
@@ -1223,7 +1247,7 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -1234,7 +1258,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,

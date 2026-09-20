@@ -39,7 +39,7 @@ try {
   if (fs.existsSync(browserFile) || fs.existsSync(poolFile) || process.env.NLA_MODEL_POOLS_PATH) {
     throw new Error('Existing configuration preserved. See docs/BROWSER.md to add Browser to your existing files.');
   }
-  pools.roles.browser = { enabled: true, models: [options['--model']], idle_timeout_ms: 180000, max_failovers: 0 };
+  pools.roles.browser = { enabled: true, models: [options['--model']], idle_timeout_ms: 180000 };
   const config = { command: [process.execPath, cli, '--headless', '--isolated', '--executable-path', browser], allowed_origins: [...new Set(options.origins)], timeout_ms: 30000, action_timeout_ms: 5000, max_sessions: 2, session_ttl_ms: 600000 };
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
   const created = [];
