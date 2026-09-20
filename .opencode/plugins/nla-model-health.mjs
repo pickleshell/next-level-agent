@@ -31,6 +31,11 @@ export function classifyProviderError(error, now = Date.now()) {
   const headers = data.responseHeaders || data.headers || error?.headers;
   const retryAfter = retryAfterMs(data.retryAfter ?? data.retry_after ?? error?.retryAfter ?? headers?.get?.('retry-after') ?? headers?.['retry-after'] ?? headers?.['Retry-After'], now);
   if (error?.name === 'AbortError' || /abort|cancel|permission denied|invalid task|invalid tool|application error/.test(lower)) return { category: 'non_provider', reason: 'caller_or_application_error', retryAfterMs: 0 };
+  // Ollama/Qwen emits this when a structurally invalid or provider-truncated
+  // tool continuation no longer contains a user turn. Repeating the identical
+  // request cannot recover it, even when the compatibility endpoint reports
+  // HTTP 500, so classify it before the generic transient-5xx branch.
+  if (/no user query found in messages/.test(lower)) return { category: 'defective', reason: 'provider_message_validation_failed', retryAfterMs: 0 };
   if (status === 410 || /model\s+(?:not\s+found|unavailable|retired)|unknown model|model missing|model_not_found|model[^\n]{0,80}does not exist|end of life/.test(lower)) return { category: 'defective', reason: 'model_binding_unavailable', retryAfterMs: 0 };
   if (status === 404) return { category: 'configuration', reason: 'provider_endpoint_not_found', retryAfterMs: 0 };
   if (status === 401 || status === 403 || /unauthori[sz]ed|forbidden|invalid (?:api|access) key|authentication/.test(lower)) return { category: 'configuration', reason: 'provider_authorization_failed', retryAfterMs: 0 };

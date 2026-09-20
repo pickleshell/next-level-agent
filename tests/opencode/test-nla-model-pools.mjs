@@ -57,6 +57,11 @@ assert.equal(coordinatorSummary.pooled, false);
 assert.equal(coordinatorSummary.status, 'orchestrator');
 assert.match(formatModelPools({ roles: { nla: { enabled: false, models: ['fixture/coordinator'] } } }), /nla.*orchestrator/s);
 assert.equal(classifyProviderError(new Error('Rate limit exceeded. Please try again later.')).category, 'transient');
+assert.deepEqual(
+  classifyProviderError({ data: { statusCode: 500, message: 'no user query found in messages' } }),
+  { category: 'defective', reason: 'provider_message_validation_failed', retryAfterMs: 0 },
+  'deterministic Ollama message validation failures must bypass transient retry/cooldown handling',
+);
 assert.equal(classifyProviderError({ data: { statusCode: 410 }, message: 'gone' }).category, 'defective');
 const clock = { value: 1000 };
 const healthManager = new ModelHealthManager({ now: () => clock.value });
