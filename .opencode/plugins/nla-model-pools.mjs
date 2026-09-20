@@ -38,11 +38,22 @@ export function resolveModelPools({ explicitPath = null, env = process.env, home
 
 export function modelPoolSummary(resolved) {
   if (!resolved || typeof resolved !== 'object' || !resolved.roles || typeof resolved.roles !== 'object') return [];
-  return Object.entries(resolved.roles).map(([role, pool]) => ({ role, enabled: Boolean(pool?.enabled), primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null, fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [] }));
+  return Object.entries(resolved.roles).map(([role, pool]) => {
+    const coordinator = role === 'nla';
+    const enabled = Boolean(pool?.enabled);
+    return {
+      role,
+      enabled: coordinator ? null : enabled,
+      pooled: !coordinator && enabled,
+      status: coordinator ? 'primary' : (enabled ? 'enabled' : 'disabled'),
+      primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
+      fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [],
+    };
+  });
 }
 
 export function formatModelPools(resolved) {
   if (!resolved || typeof resolved !== 'object' || !resolved.roles || typeof resolved.roles !== 'object') return '';
-  const lines = ['Role        Primary                         Fallbacks                         Enabled', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.enabled ? 'yes' : 'no'}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
+  const lines = ['Role        Primary                         Fallbacks                         Status', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
   return lines.join('\n');
 }
