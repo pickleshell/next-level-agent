@@ -90,6 +90,17 @@ and the user explicitly approves the resulting written design.
 
 ## Run log
 
+After editing the resolved model-pool file, the primary NLA coordinator can
+apply it without restarting OpenCode:
+
+1. Run `nla_models_reload` to validate and load the new snapshot.
+2. Run `nla_models` to verify each role's primary model, ordered fallbacks,
+   source, resolution reason, and health.
+
+The `models` array is the complete ordered attempt list. Do not add a separate
+`max_failovers` or model-count field; runtime attempts are always bounded by
+`models.length`.
+
 NLA writes newline-delimited JSON to `.opencode/agent-run.log` in the target project. Entries are emitted by OpenCode hooks, not authored by the model. They record timestamps, session and call identifiers, primary-agent selection, skill calls, subagent dispatch, and subagent completion. Prompts, tool output, and model replies are not written.
 
 ## Verification Log

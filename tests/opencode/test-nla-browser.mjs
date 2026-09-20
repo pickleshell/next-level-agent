@@ -410,7 +410,7 @@ try {
 
   // nla_task dispatch, actual child permissions/preflight and authoritative result.
   const configFile = path.join(root, 'browser.json'); fs.writeFileSync(configFile, JSON.stringify(config));
-  const pool = path.join(root, 'models.json'); fs.writeFileSync(pool, JSON.stringify({ roles: { browser: { enabled: true, models: ['fixture/a', 'fixture/b'], max_failovers: 1, idle_timeout_ms: 1000 } } }));
+  const pool = path.join(root, 'models.json'); fs.writeFileSync(pool, JSON.stringify({ roles: { browser: { enabled: true, models: ['fixture/a', 'fixture/b'], idle_timeout_ms: 1000 } } }));
   process.env.NLA_BROWSER_CONFIG_PATH = configFile; process.env.NLA_MODEL_POOLS_PATH = pool; process.env.NLA_MEMORY_DIR = root;
   let prompts = 0; let mutationFailure = false;
   plugin = await NextLevelAgentPlugin({ directory: root, client: {

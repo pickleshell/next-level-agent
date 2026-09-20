@@ -26,7 +26,7 @@ const baseURL = `http://127.0.0.1:${server.address().port}`;
 const pool = {
   enabled: true, runtime: 'utility', backend: 'ollama',
   provider: { api: 'native', base_url: baseURL }, models: ['missing', 'working'],
-  request_timeout_ms: 1000, max_failovers: 1, output_format: 'json',
+  request_timeout_ms: 1000, output_format: 'json',
 };
 assert.equal(configuredUtilityPool(pool), true);
 const result = await runUtilityModel({ role: 'compactor', pool, prompt: 'Return JSON' });
@@ -39,7 +39,7 @@ assert.equal(requests[0].body.format, 'json');
 server.close();
 await once(server, 'close');
 
-const timeoutPool = { ...pool, models: ['slow'], max_failovers: 0, request_timeout_ms: 10 };
+const timeoutPool = { ...pool, models: ['slow'], request_timeout_ms: 10 };
 await assert.rejects(
   runUtilityModel({
     role: 'compactor', pool: timeoutPool, prompt: 'wait',
@@ -59,7 +59,7 @@ let cloudRequest;
 const cloudPool = {
   enabled: true, runtime: 'utility', backend: 'openai-compatible',
   provider: { api: 'openai-compatible', base_url: 'https://example.test/prefix' }, models: ['free-json'],
-  request_timeout_ms: 1000, max_failovers: 0, output_format: 'json', reasoning_effort: 'none', max_output_tokens: 128,
+  request_timeout_ms: 1000, output_format: 'json', reasoning_effort: 'none', max_output_tokens: 128,
 };
 const cloud = await runUtilityModel({
   role: 'compactor', pool: cloudPool, prompt: 'select',

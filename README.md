@@ -102,6 +102,13 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
 | **Compactor** | Optimizes model input: compresses structured state, shapes prompts, and prunes tool schemas to a small relevant shortlist | Before controlled compaction and before model invocation when prompt optimization is enabled |
 
+The primary NLA coordinator can inspect the currently loaded model pool for
+every role with `nla_models`. After an operator edits the resolved pool file,
+`nla_models_reload` validates and atomically loads the new snapshot without
+restarting OpenCode; a subsequent `nla_models` call confirms the effective
+role-to-model ordering. New tasks use the reloaded snapshot, while active tasks
+continue with the pool snapshot they already received.
+
 ### Recommended models by role
 
 > [!WARNING]
@@ -196,10 +203,15 @@ request override, then `NLA_MODEL_POOLS_PATH`, then the portable repository
 default. An explicitly selected but missing or invalid file fails closed; it is
 never silently replaced by another pool. `nla_task` and the primary-only
 `nla_models` tool use the same resolved object. `nla_models` reports each role's
-primary and ordered fallbacks, enabled state, source, and resolution reason,
-without credentials.
+primary and ordered fallbacks, enabled state, source, resolution reason, and
+health without credentials. `nla_models_reload` re-reads that same source,
+validates it before replacing the in-memory snapshot, and leaves the previous
+snapshot active if validation fails. Model attempts are derived from the
+ordered `models` array itself: every listed model is eligible in order, and
+there is no separate `max_failovers` or model-count setting.
 Apply the role recommendations above through your operator override, and verify
-the effective bindings with `nla_models` before starting a task.
+the effective bindings with `nla_models_reload` followed by `nla_models` before
+starting a task after a configuration change.
 
 ### Compactor prompt optimization
 

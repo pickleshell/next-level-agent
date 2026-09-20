@@ -272,7 +272,7 @@ async function main() {
       permission: { '*': 'deny', skill: 'allow', 'nla_*': 'allow' },
       agent: Object.fromEntries(roles.map(role => [role, { ...source.agent?.[role], model: MODEL, steps: 12 }])) };
     const pools = { version: 1, roles: Object.fromEntries(roles.map(role => [role, {
-      enabled: role !== 'nla', runtime: 'agent', models: [MODEL], max_failovers: 0, idle_timeout_ms: 120000,
+      enabled: role !== 'nla', runtime: 'agent', models: [MODEL], idle_timeout_ms: 120000,
     }])) };
     save('opencode.json', config); save('pools.json', pools);
     save('browser.json', { broker_socket: broker, broker_allow_private_addresses: true,
