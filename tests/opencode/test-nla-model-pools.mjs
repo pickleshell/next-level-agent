@@ -54,8 +54,8 @@ assert.equal(modelPoolSummary({ roles: { explorer: { enabled: true, models: ['fi
 const coordinatorSummary = modelPoolSummary({ roles: { nla: { enabled: false, models: ['fixture/coordinator'] } } })[0];
 assert.equal(coordinatorSummary.enabled, null);
 assert.equal(coordinatorSummary.pooled, false);
-assert.equal(coordinatorSummary.status, 'primary');
-assert.match(formatModelPools({ roles: { nla: { enabled: false, models: ['fixture/coordinator'] } } }), /nla.*primary/s);
+assert.equal(coordinatorSummary.status, 'orchestrator');
+assert.match(formatModelPools({ roles: { nla: { enabled: false, models: ['fixture/coordinator'] } } }), /nla.*orchestrator/s);
 assert.equal(classifyProviderError(new Error('Rate limit exceeded. Please try again later.')).category, 'transient');
 assert.equal(classifyProviderError({ data: { statusCode: 410 }, message: 'gone' }).category, 'defective');
 const clock = { value: 1000 };
