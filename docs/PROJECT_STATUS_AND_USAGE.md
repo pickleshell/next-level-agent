@@ -326,6 +326,23 @@ Unavailable pools expose a structured error with actual attempt count and retry
 or reset information. These rules are covered by deterministic manager,
 utility-runtime and public plugin-tool/event regression tests.
 
+### Model-pool preflight
+
+The resolver fails closed on malformed role pools before dispatch. Every binding
+must have a provider and model component, may not repeat its provider prefix in
+the model component, and may not appear twice in one role. Run the offline
+preflight before a long task:
+
+```bash
+node scripts/nla-model-pools-preflight.mjs --pools /absolute/path/to/model-pools.json
+```
+
+The optional `--available-models` JSON inventory adds an exact runtime-binding
+check. It is deliberately operator-supplied: NLA does not query providers or
+infer availability from a similar model name. Thus a configured
+`provider-a/model-x` remains blocked if the supplied runtime inventory
+contains only `provider-b/model-x`.
+
 Quarantined bindings are excluded rather than
 being retried on every cooldown cycle. Cooling or quarantined models are
 excluded before actual-call failover budgets are applied. If every model is
@@ -505,6 +522,11 @@ Notebook contains compact durable knowledge and retrieval cues. It must not cont
 
 Telemetry records lifecycle metadata such as sessions, models, tool events, failover, context usage, and compaction. It does not intentionally copy prompts, model replies, or tool output.
 
+NLA sanitizes its telemetry at the write boundary: command, prompt, request,
+response, environment and header fields are omitted, and common secret
+assignments are redacted. This does not alter OpenCode's own `opencode.log` or
+other host-level logging outside this repository's control.
+
 NLA creates private state directories with mode `0700` and state files with mode `0600`. Writes use atomic replacement. Obvious secret assignments are rejected, but this is not a complete secret scanner. Users remain responsible for keeping credentials out of memory and logs.
 
 ## Reading Telemetry
@@ -575,6 +597,16 @@ Distinguish session behavior:
   optional operator-managed dependencies; their availability is not required
   for ordinary NLA startup or non-Mem0 workflows;
 - NLA is not a sandbox and does not replace operating-system security boundaries.
+- NLA rejects common full-environment dump commands, nested shell launchers,
+  and direct `sudo`/`doas`/`runuser`/`su` commands for NLA-managed sessions,
+  but OpenCode exposes `bash` as a coarse capability and this is not a complete
+  command parser or shell sandbox. Do not rely on it to protect secrets or to
+  contain a process that already has elevated operating-system privileges.
+- External-directory controls are not a privilege boundary when the operator
+  grants the runtime `sudo`, another privileged shell, or broad filesystem
+  access. Do not grant NLA/OpenCode sudo for acceptance runs; use a dedicated
+  unprivileged account and a task-owned worktree. This alpha does not enforce
+  canonical path containment or prevent a privileged user from bypassing it.
 
 For a full requirement-by-requirement analysis, read [Draft 0.4 Implementation Status](DRAFT_0_4_IMPLEMENTATION_STATUS.md).
 

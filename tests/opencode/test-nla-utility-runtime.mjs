@@ -54,6 +54,12 @@ for (const invalid of [
   { ...pool, provider: { ...pool.provider, base_url: '' } },
   { ...pool, request_timeout_ms: 0 },
 ]) assert.equal(configuredUtilityPool(invalid), false);
+assert.equal(configuredUtilityPool({ ...pool, models: { not: 'an array' } }), false, 'guard malformed models before calling Array.filter');
+await assert.rejects(
+  runUtilityModel({ role: 'compactor', pool: { ...pool, models: { not: 'an array' } }, prompt: 'no call' }),
+  /requires at least one model/,
+  'malformed pools fail with a diagnostic instead of models.filter is not a function',
+);
 
 let cloudRequest;
 const cloudPool = {

@@ -7,7 +7,7 @@
   "type": "module",
   "main": ".opencode/plugins/next-level-agent.js",
   "scripts": {
-    "test:nla": "bash tests/opencode/test-nla-memory.sh && node tests/opencode/test-nla-launcher.mjs && node tests/opencode/test-nla-model-pools.mjs && node tests/opencode/test-nla-ollama-tool-continuation.mjs && node tests/opencode/test-nla-reconciliation.mjs && node tests/opencode/test-nla-version.mjs && node tests/opencode/test-nla-browser-recovery.mjs && npm run test:browser && node tests/opencode/test-nla-r7-adversarial.mjs && node tests/opencode/test-browser-production-gate-result.mjs",
+    "test:nla": "bash tests/opencode/test-nla-memory.sh && node tests/opencode/test-nla-launcher.mjs && node tests/opencode/test-nla-model-pools.mjs && node tests/opencode/test-nla-ollama-tool-continuation.mjs && node tests/opencode/test-nla-runtime-hardening.mjs && node tests/opencode/test-nla-reconciliation.mjs && node tests/opencode/test-nla-version.mjs && node tests/opencode/test-nla-browser-recovery.mjs && npm run test:browser && node tests/opencode/test-nla-r7-adversarial.mjs && node tests/opencode/test-browser-production-gate-result.mjs",
     "test:browser": "node tests/opencode/test-browser-setup.mjs && node tests/opencode/test-nla-browser.mjs && node --test tests/opencode/test-nla-browser-capacity.mjs && node tests/opencode/test-nla-browser-ledger-ingress.mjs",
     "test:browser:production": "node --expose-gc tests/opencode/gate-nla-browser-production.mjs",
     "test:browser:gate-result": "node tests/opencode/test-browser-production-gate-result.mjs"

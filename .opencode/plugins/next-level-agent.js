@@ -28,6 +28,8 @@ import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
 import { BrowserCapability, loadBrowserConfig, validateBrowserTask, BROWSER_TOOLS, BROWSER_TOOL_GUIDE } from './nla-browser.mjs';
 import { beginBrowserRecovery, claimBrowserRecoveryTask, releaseBrowserRecoveryTask, createBrowserRecovery, recoveryEvidence, validateBrowserRecovery } from './nla-browser-recovery.mjs';
+import { sanitizeTelemetry } from './nla-telemetry.mjs';
+import { assertSafeNlaShellCommand } from './nla-shell-policy.mjs';
 export { modelCooldownMs };
 
 export { formatModelPools };
@@ -292,7 +294,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const appendRunLog = (entry) => {
     try {
       fs.mkdirSync(path.dirname(runLogPath), { recursive: true });
-      const enriched = { ...entry };
+      const enriched = sanitizeTelemetry(entry);
       if (enriched.session_id && !enriched.root_session_id) {
         enriched.root_session_id = sessionRoots.get(enriched.session_id) || enriched.session_id;
       }
@@ -1243,6 +1245,8 @@ ${toolMapping}
     },
     'tool.execute.before': async (input, output) => {
       assertExecutionAllowed(input.sessionID);
+      const managedRole = trackedSessions.has(input.sessionID) || primarySessions.get(input.sessionID)?.agent === 'nla';
+      if (input.tool === 'bash' && managedRole) assertSafeNlaShellCommand(output.args?.command);
       if (input.tool === 'task') {
         const args = output.args || {};
         const role = args.subagent_type || args.agent || args.type;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { modelPoolSummary } from '../../.opencode/plugins/nla-model-pools.mjs';
+import { modelPoolSummary, preflightModelPools, validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
 import { ModelHealthManager, classifyProviderError, retryAfterMs } from '../../.opencode/plugins/nla-model-health.mjs';
 import { runUtilityModel, utilityHealthEndpoint } from '../../.opencode/plugins/nla-utility-runtime.mjs';
 import { NextLevelAgentPlugin, availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
@@ -30,6 +30,23 @@ try {
     assert.deepEqual(effectiveModelPools({ explicitPath: explicit }).roles.explorer.models, ['fixture/explicit']);
     process.env.NLA_MODEL_POOLS_PATH = path.join(tempDir, 'missing.json');
     assert.throws(() => effectiveModelPools(), /Could not load model pools/);
+    const provider = 'fixture';
+    const repeatedProviderBinding = [provider, provider, 'model'].join('/');
+    assert.throws(
+      () => validateModelPools({ roles: { explorer: { enabled: true, models: [repeatedProviderBinding] } } }),
+      /must not repeat its provider prefix/,
+    );
+    assert.throws(
+      () => validateModelPools({ roles: { explorer: { enabled: true, models: ['fixture/model', 'fixture/model'] } } }),
+      /repeats model binding/,
+    );
+    const preflightPool = { roles: { explorer: { enabled: true, models: ['provider-a/model-x'] } } };
+    assert.throws(
+      () => preflightModelPools(preflightPool, ['provider-b/model-x']),
+      /absent from supplied runtime inventory: explorer:provider-a\/model-x/,
+      'availability is exact and never guessed from a similarly named model',
+    );
+    assert.deepEqual(preflightModelPools(preflightPool, ['provider-a/model-x']), { roles: 1, checkedAvailability: true });
   } finally { fs.rmSync(tempDir, { recursive: true }); }
 } finally {
   if (original === undefined) delete process.env.NLA_MODEL_POOLS_PATH;
@@ -142,6 +159,15 @@ try {
     promptAsync: async (request) => { continued.push(request.body.model.modelID); },
   } } });
   await plugin['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: fixture });
+  await assert.rejects(
+    plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'env' } }),
+    error => error.code === 'NLA_SHELL_POLICY_BLOCKED',
+  );
+  await assert.rejects(
+    plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'sudo -n id' } }),
+    error => error.code === 'NLA_SHELL_POLICY_BLOCKED',
+  );
+  await plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'npm test -- --runInBand' } });
   const context = { sessionID: 'primary_123', directory: fixture, abort: new AbortController().signal };
   const result = await plugin.tool.nla_task.execute({ role: 'architect', description: 'fixture', prompt: 'do bounded task' }, context);
   assert.deepEqual(actual, ['a', 'b', 'c']);

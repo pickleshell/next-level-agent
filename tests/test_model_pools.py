@@ -1,6 +1,6 @@
 import json
 import pytest
-from config.model_pools import get_pool, load_pools, next_model
+from config.model_pools import get_pool, load_pools, next_model, preflight_pools, validate_pools
 
 EXPECTED = {role: pool["models"] for role, pool in json.load(open("config/model-pools.json"))["roles"].items()}
 
@@ -25,6 +25,22 @@ def test_invalid_override_fails_closed(monkeypatch, tmp_path):
     monkeypatch.setenv("NLA_MODEL_POOLS_PATH", str(tmp_path / "missing.json"))
     with pytest.raises(FileNotFoundError):
         load_pools()
+
+
+def test_pool_validator_rejects_duplicate_or_repeated_provider_prefix():
+    provider = "fixture"
+    repeated_provider_binding = "/".join((provider, provider, "model"))
+    with pytest.raises(ValueError, match="must not repeat its provider prefix"):
+        validate_pools({"roles": {"explorer": {"enabled": True, "models": [repeated_provider_binding]}}})
+    with pytest.raises(ValueError, match="repeats model binding"):
+        validate_pools({"roles": {"explorer": {"enabled": True, "models": ["provider/model", "provider/model"]}}})
+
+
+def test_preflight_uses_exact_operator_supplied_inventory():
+    pools = {"roles": {"explorer": {"enabled": True, "models": ["provider-a/model-x"]}}}
+    with pytest.raises(ValueError, match="absent from supplied runtime inventory"):
+        preflight_pools(pools, ["provider-b/model-x"])
+    assert preflight_pools(pools, ["provider-a/model-x"]) == {"roles": 1, "checked_availability": True}
 
 def test_profile_and_bounded_defaults(monkeypatch):
     monkeypatch.delenv("NLA_MODEL_POOLS_PATH", raising=False)
