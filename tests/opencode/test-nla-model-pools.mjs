@@ -14,7 +14,18 @@ try {
   const resolved = effectiveModelPools();
   assert.equal(resolved.source, defaultPath);
   assert.equal(resolved.resolution, 'repository/package default');
-  assert.ok(Object.values(resolved.roles).every((pool) => !pool.models.some((model) => /hy3/i.test(model))));
+  assert.ok(Object.values(resolved.roles).every((pool) => !pool.models.some((model) => model.startsWith('ollama/'))), 'production pools do not assign local Ollama models');
+  assert.ok(Object.values(resolved.roles).every((pool) => pool.models.every((model) => model.startsWith('opencode-go/'))), 'production default contains only OpenCode Go bindings');
+  assert.ok(Object.values(resolved.roles).every((pool) => ['fallback', 'select'].includes(pool.selection_mode)), 'every production role declares its pool mode');
+  for (const role of ['architect', 'explorer', 'implementer', 'reviewer']) assert.equal(resolved.roles[role].selection_mode, 'select', `${role} uses adaptive selection by default`);
+  const seededModels = Object.keys(JSON.parse(fs.readFileSync('config/model-evaluations.json', 'utf8')).models).sort();
+  assert.deepEqual([...resolved.roles.implementer.models].sort(), seededModels, 'production Implementer pool is fully covered by initial evaluations');
+  assert.ok(resolved.roles.explorer.model_facts['opencode-go/gpt-5.6-luna'], 'static model facts are shared across role pools');
+  for (const role of ['explorer', 'reviewer']) {
+    assert.equal(resolved.roles[role].selection_mode, 'select', `${role} production example uses adaptive selection`);
+    assert.ok(resolved.roles[role].models.length >= 3 && resolved.roles[role].models.length <= 5, `${role} keeps a bounded specialized pool`);
+    assert.ok(resolved.roles[role].models.every((model) => model.startsWith('opencode-go/')), `${role} example contains only OpenCode Go bindings`);
+  }
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-pool-test-'));
   try {
     const override = path.join(tempDir, 'pools.json');
@@ -140,8 +151,8 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-health-plugin-'));
 const savedEnv = { pool: process.env.NLA_MODEL_POOLS_PATH, memory: process.env.NLA_MEMORY_DIR };
 let plugin;
 try {
-  const fixturePool = path.join(fixture, 'pools.json');
-  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], cooldown_ms: 123456, idle_timeout_ms: 0 }, router: { enabled: true, models: ['fixture/a', 'fixture/b', 'fixture/c'], idle_timeout_ms: 0 } } }));
+    const fixturePool = path.join(fixture, 'pools.json');
+    fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, selection_mode: 'select', models: ['fixture/a', 'fixture/b', 'fixture/c'], cooldown_ms: 123456, idle_timeout_ms: 0 }, router: { enabled: true, selection_mode: 'fallback', models: ['fixture/a', 'fixture/b', 'fixture/c'], idle_timeout_ms: 0 } } }));
   process.env.NLA_MODEL_POOLS_PATH = fixturePool;
   process.env.NLA_MEMORY_DIR = path.join(fixture, 'memory');
   const actual = [];
@@ -173,6 +184,11 @@ try {
   assert.deepEqual(actual, ['a', 'b', 'c']);
   assert.equal(result.metadata.attempt, 3);
   const inspection = await plugin.tool.nla_models.execute({}, context);
+  const changedPolicy = await plugin.tool.nla_model_policy.execute({ role: 'architect', policy: 'balanced', cost_weight: '0.4' }, context);
+  assert.equal(changedPolicy.metadata.policy, 'balanced');
+  assert.equal(changedPolicy.metadata.cost_weight, 0.4);
+  assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').selection_policy, 'balanced');
+  await assert.rejects(plugin.tool.nla_model_policy.execute({ role: 'router', policy: 'cost' }, context), /uses fallback/);
   const cooling = inspection.metadata.health.find((item) => item.binding === 'fixture/a');
   assert.ok(cooling.until - cooling.since === 123456, 'pool cooldown used by routing manager');
   assert.equal(inspection.metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');

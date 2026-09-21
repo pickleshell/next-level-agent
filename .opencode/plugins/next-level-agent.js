@@ -24,8 +24,8 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
-import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode } from './nla-model-selection.mjs';
-import { loadEvaluationStore, recordEvaluation, recordReviewerEvaluation, runtimeEvaluationScores } from './nla-model-evaluations.mjs';
+import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { initializeEvaluationStore, loadEvaluationStore, recordEvaluation, recordReviewerEvaluation, runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
 import { BrowserCapability, loadBrowserConfig, validateBrowserTask, BROWSER_TOOLS, BROWSER_TOOL_GUIDE } from './nla-browser.mjs';
@@ -80,6 +80,7 @@ let _bootstrapCache = undefined; // undefined = not yet loaded, null = file miss
 let _nlaBannerShown = false;
 
 const DEFAULT_MODEL_POOLS_PATH = path.resolve(__dirname, '../../config/model-pools.json');
+const DEFAULT_MODEL_EVALUATIONS_PATH = path.resolve(__dirname, '../../config/model-evaluations.json');
 
 export function modelPoolsPath(homeDir = os.homedir()) {
   if (typeof homeDir !== 'string') homeDir = os.homedir();
@@ -138,6 +139,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const capabilityCachePath = path.join(directory, '.opencode', 'nla-role-capabilities.json');
   const stateRoot = memoryRoot(homeDir);
   const evaluationPath = path.join(stateRoot, 'model-evaluations.json');
+  initializeEvaluationStore(evaluationPath, DEFAULT_MODEL_EVALUATIONS_PATH);
   let browserConfig = null;
   let browserConfigError = null;
   try { browserConfig = loadBrowserConfig(); } catch (error) { browserConfigError = error; }
@@ -375,6 +377,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       const taskProfile = {
         weights: parseSelectionWeights(args.selection_weights),
         context_window: parseContextWindow(args.context_window),
+        policy: args.selection_policy,
+        minimum_score: args.minimum_score,
+        cost_weight: args.cost_weight,
       };
       const maxAttempts = pool.models.length;
       const mode = selectionMode(pool);
@@ -761,6 +766,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
       selection_weights: tool.schema.string().optional().describe('Optional strict JSON object with only coding, reasoning, tool_use, reliability, and latency weights from 0 to 10'),
       context_window: tool.schema.string().optional().describe('Optional required context window as a positive integer; select excludes models without sufficient declared context'),
+      selection_policy: tool.schema.string().optional().describe('Optional select-policy override for this task: quality, balanced, or cost'),
+      minimum_score: tool.schema.string().optional().describe('Optional cost-policy quality floor from 0 to 10'),
+      cost_weight: tool.schema.string().optional().describe('Optional balanced-policy cost weight from 0 to 1'),
       review_target_session_id: tool.schema.string().optional().describe('Reviewer only: exact completed Implementer child session ID from prior nla_task metadata.sessionID. When supplied, the Reviewer must return only strict JSON with verdict (pass, fail, or needs_changes) and coding, reasoning, and tool_use scores from 1 to 10; no target prompt, response, secrets, or other target internals are provided or accepted.'),
       browser_task_id: tool.schema.string().optional().describe('Explicit logical Browser task continuation ID returned by runtime. Omit for new work; provide the original complete browser contract when continuing. This is not a live browser session_id.'),
       browser: tool.schema.string().optional().describe('Required for role browser. JSON object: {"goal":"read fact","permissions":{"navigation":true,"interaction":false,"authentication":false,"uploads":false,"downloads":false,"external_mutation":false},"origins":["http://approved-host:port"],"success_criteria":[{"id":"fact","check":"text_contains","locator":{"test_id":"fact"},"expected":"required prefix","wait_ms":1000,"mandatory":true}],"keep_session":false}. Only these permission names are valid; omitted rights are false. Each criterion requires id and check, with locator (exactly one of role plus optional name, label, test_id, text) for element/text checks. Supported checks: text_equals, text_contains, element_visible, element_enabled, url_equals, no_console_errors, no_dialogs. Optional session_id explicitly resumes an owned session; optional upload_files must fit operator grants.'),
@@ -892,6 +900,32 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         title: 'NLA model pools reloaded',
         output: `${formatModelPools(resolvedPools)}\n\nReloaded successfully. New tasks use this snapshot; active tasks retain their existing snapshot.`,
         metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools) },
+      };
+    },
+  });
+
+  const nlaModelPolicy = tool({
+    description: 'Change one select pool policy in the current OpenCode process without restarting or rewriting configuration. Applies to new tasks only; use config plus nla_models_reload for a persistent change. Primary NLA only.',
+    args: {
+      role: tool.schema.string().describe('Exact configured role name'),
+      policy: tool.schema.string().describe('quality, balanced, or cost'),
+      minimum_score: tool.schema.string().optional().describe('Cost-policy quality floor from 0 to 10; default 7.5'),
+      cost_weight: tool.schema.string().optional().describe('Balanced-policy cost weight from 0 to 1; default 0.25'),
+    },
+    execute: async (args, context) => {
+      assertPrimaryNla(context.sessionID);
+      const pool = pools[args.role];
+      if (!pool) throw new Error(`Unknown configured role: ${args.role}`);
+      if (selectionMode(pool) !== 'select') throw new Error(`Role ${args.role} uses fallback; runtime selection policy applies only to select pools`);
+      const preferences = selectionPreferences(pool, { policy: args.policy, minimum_score: args.minimum_score, cost_weight: args.cost_weight });
+      const updated = { ...pool, selection_policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight };
+      pools = { ...pools, [args.role]: updated };
+      resolvedPools = { ...resolvedPools, roles: pools, resolution: `${resolvedPools.resolution}; runtime policy override` };
+      appendRunLog({ event: 'model_policy_changed', session_id: context.sessionID, role: args.role, policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight });
+      return {
+        title: `NLA model policy changed for ${args.role}`,
+        output: `${formatModelPools(resolvedPools)}\n\nRuntime-only policy change applied to new tasks. Active tasks retain their snapshot; reload restores file-backed values.`,
+        metadata: { role: args.role, ...preferences, roles: modelPoolSummary(resolvedPools) },
       };
     },
   });
@@ -1073,6 +1107,7 @@ When skills request actions, substitute OpenCode equivalents:
 	- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
 	- Inspect effective model routing → \`nla_models\`; relay every role separately with distinct Primary and Fallbacks fields, use none for no fallback, and never group roles, omit fallbacks, or call the complete chain a fallback chain; reload it after an approved config change with \`nla_models_reload\`
+	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; use config plus \`nla_models_reload\` when the change must persist
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
@@ -1105,6 +1140,7 @@ ${toolMapping}
       nla_state: nlaState,
       nla_models: nlaModels,
       nla_models_reload: nlaModelsReload,
+      nla_model_policy: nlaModelPolicy,
       nla_model_health_reset: nlaModelHealthReset,
       nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
@@ -1348,7 +1384,7 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -1359,7 +1395,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,

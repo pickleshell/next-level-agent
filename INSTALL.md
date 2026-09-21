@@ -91,11 +91,25 @@ Bounded Explorer or Compactor pools may instead select the direct utility-model
 runtime. Ollama or generic OpenAI-compatible endpoint settings belong in the
 same external pool file; see the [utility-model runtime configuration](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime).
 
-The checked-in pools are examples, not a promise of provider access. Inspect
-`opencode models` and use models available to your account. In particular the
-Architect and Supervisor defaults use Sol, which may have a different provider
-or cost from your primary model. Ask NLA for `nla_models` to see the effective
-role bindings and source; `opencode debug config` alone does not show pool routing.
+The checked-in default is a ready-to-use OpenCode Go example: all role bindings
+use `opencode-go/*`; Architect, Explorer, Implementer, and Reviewer use
+`selection_mode: "select"`, while the remaining roles use ordered `fallback`.
+The select examples use `quality` for Architect and Reviewer and `balanced`
+for Explorer and Implementer. `nla_models` reports the effective policies;
+`nla_model_policy` can change one select policy for new tasks without restart,
+while file-backed changes become active through `nla_models_reload`.
+Provider access still depends on the operator's OpenCode Go package and account,
+so inspect `opencode models` before a long run. Ask NLA for `nla_models` to see
+the effective role bindings and source; `opencode debug config` alone does not
+show pool routing.
+
+A fresh NLA state is initialized from `config/model-evaluations.json`. This
+checked-in example seeds `coding`, `reasoning`, and `tool_use` for 27
+`opencode-go` models so a `select` pool can make a useful first choice before
+local evidence exists. Provider-specific `reliability` and `latency` begin at
+zero and are learned at runtime. The seed is copied only when the local state
+file does not exist; upgrades never replace accumulated evaluations in
+`~/.local/share/nla/model-evaluations.json`.
 
 Never place API keys in `opencode.json`, `model-pools.json`, Notebook, ledger, or telemetry.
 

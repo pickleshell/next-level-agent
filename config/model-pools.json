@@ -3,6 +3,7 @@
   "roles": {
     "nla": {
       "enabled": false,
+      "selection_mode": "fallback",
       "models": [
         "opencode-go/gpt-5.6-luna"
       ],
@@ -10,6 +11,7 @@
     },
     "router": {
       "enabled": true,
+      "selection_mode": "fallback",
       "models": [
         "opencode-go/gpt-5.6-luna"
       ],
@@ -17,54 +19,263 @@
     },
     "supervisor": {
       "enabled": true,
+      "selection_mode": "fallback",
       "models": [
-        "command-code/gpt-5.6-terra",
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 180000
     },
     "scout": {
       "enabled": true,
+      "selection_mode": "fallback",
       "models": [
-        "ollama/qwen3.8:latest"
+        "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 180000
     },
     "explorer": {
       "enabled": true,
+      "selection_mode": "select",
       "models": [
         "opencode-go/gpt-5.6-luna",
-        "ollama/qwen3.8:latest"
+        "opencode-go/kimi-k3",
+        "opencode-go/deepseek-v4.1-flash",
+        "opencode-go/minimax-m3",
+        "opencode-go/glm-5.3"
       ],
-      "idle_timeout_ms": 900000
+      "idle_timeout_ms": 900000,
+      "selection_policy": "balanced",
+      "cost_weight": 0.25
     },
     "architect": {
       "enabled": true,
+      "selection_mode": "select",
       "models": [
-        "command-code/gpt-5.6-sol",
+        "opencode-go/kimi-k3",
         "opencode-go/gpt-5.6-luna",
-        "ollama/qwen3.8:latest"
+        "opencode-go/deepseek-v4-pro",
+        "opencode-go/glm-5.3",
+        "opencode-go/qwen3.8-max"
       ],
-      "idle_timeout_ms": 300000
+      "idle_timeout_ms": 300000,
+      "selection_policy": "quality"
     },
     "implementer": {
       "enabled": true,
+      "selection_mode": "select",
       "models": [
-        "ollama/qwen3.8:latest",
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/glm-5.3",
+        "opencode-go/glm-5.2",
+        "opencode-go/glm-5.1",
+        "opencode-go/kimi-k3",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/kimi-k2.6",
+        "opencode-go/longcat-2.0",
+        "opencode-go/mimo-v2.5",
+        "opencode-go/mimo-v2.5-pro",
+        "opencode-go/minimax-m3",
+        "opencode-go/minimax-m2.7",
+        "opencode-go/muse-spark-1.3-contributor",
+        "opencode-go/muse-spark-1.2-contributor",
+        "opencode-go/qwen3.8-max",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/qwen3.7-max",
+        "opencode-go/qwen3.7-plus",
+        "opencode-go/qwen3.6-plus",
+        "opencode-go/deepseek-v4.1-flash",
+        "opencode-go/deepseek-v4-pro",
+        "opencode-go/deepseek-v4-flash",
+        "opencode-go/deepseek-v4-flash-vision-exp",
+        "opencode-go/hy4-preview",
+        "opencode-go/hy3",
+        "opencode-go/grok-4.6",
         "opencode-go/gpt-5.6-luna"
       ],
-      "idle_timeout_ms": 300000
+      "idle_timeout_ms": 300000,
+      "model_facts": {
+        "opencode-go/glm-5.3-flash": {
+          "id": "opencode-go/glm-5.3-flash",
+          "input_cost": 0.15,
+          "output_cost": 0.5,
+          "availability": "always"
+        },
+        "opencode-go/glm-5.3": {
+          "id": "opencode-go/glm-5.3",
+          "input_cost": 1.4,
+          "output_cost": 4.4,
+          "availability": "always"
+        },
+        "opencode-go/glm-5.2": {
+          "id": "opencode-go/glm-5.2",
+          "input_cost": 1.4,
+          "output_cost": 4.4,
+          "availability": "always"
+        },
+        "opencode-go/glm-5.1": {
+          "id": "opencode-go/glm-5.1",
+          "input_cost": 1.4,
+          "output_cost": 4.4,
+          "availability": "always"
+        },
+        "opencode-go/kimi-k3": {
+          "id": "opencode-go/kimi-k3",
+          "input_cost": 3,
+          "output_cost": 15,
+          "availability": "always"
+        },
+        "opencode-go/kimi-k2.7-code": {
+          "id": "opencode-go/kimi-k2.7-code",
+          "input_cost": 0.95,
+          "output_cost": 4,
+          "availability": "always"
+        },
+        "opencode-go/kimi-k2.6": {
+          "id": "opencode-go/kimi-k2.6",
+          "input_cost": 0.95,
+          "output_cost": 4,
+          "availability": "always"
+        },
+        "opencode-go/longcat-2.0": {
+          "id": "opencode-go/longcat-2.0",
+          "input_cost": 0.3,
+          "output_cost": 1.2,
+          "availability": "always"
+        },
+        "opencode-go/mimo-v2.5": {
+          "id": "opencode-go/mimo-v2.5",
+          "input_cost": 0.14,
+          "output_cost": 0.28,
+          "availability": "always"
+        },
+        "opencode-go/mimo-v2.5-pro": {
+          "id": "opencode-go/mimo-v2.5-pro",
+          "input_cost": 0.435,
+          "output_cost": 0.87,
+          "availability": "always"
+        },
+        "opencode-go/minimax-m3": {
+          "id": "opencode-go/minimax-m3",
+          "input_cost": 0.3,
+          "output_cost": 1.2,
+          "availability": "always"
+        },
+        "opencode-go/minimax-m2.7": {
+          "id": "opencode-go/minimax-m2.7",
+          "input_cost": 0.3,
+          "output_cost": 1.2,
+          "availability": "always"
+        },
+        "opencode-go/muse-spark-1.3-contributor": {
+          "id": "opencode-go/muse-spark-1.3-contributor",
+          "input_cost": 0.1,
+          "output_cost": 0.2,
+          "availability": "always"
+        },
+        "opencode-go/muse-spark-1.2-contributor": {
+          "id": "opencode-go/muse-spark-1.2-contributor",
+          "input_cost": 0.1,
+          "output_cost": 0.2,
+          "availability": "always"
+        },
+        "opencode-go/qwen3.8-max": {
+          "id": "opencode-go/qwen3.8-max",
+          "input_cost": 2,
+          "output_cost": 6,
+          "availability": "always"
+        },
+        "opencode-go/qwen3.8-flash": {
+          "id": "opencode-go/qwen3.8-flash",
+          "input_cost": 0.15,
+          "output_cost": 0.47,
+          "availability": "always"
+        },
+        "opencode-go/qwen3.7-max": {
+          "id": "opencode-go/qwen3.7-max",
+          "input_cost": 2.5,
+          "output_cost": 7.5,
+          "availability": "always"
+        },
+        "opencode-go/qwen3.7-plus": {
+          "id": "opencode-go/qwen3.7-plus",
+          "input_cost": 0.4,
+          "output_cost": 1.6,
+          "availability": "always"
+        },
+        "opencode-go/qwen3.6-plus": {
+          "id": "opencode-go/qwen3.6-plus",
+          "input_cost": 0.5,
+          "output_cost": 3,
+          "availability": "always"
+        },
+        "opencode-go/deepseek-v4.1-flash": {
+          "id": "opencode-go/deepseek-v4.1-flash",
+          "input_cost": 0.3,
+          "output_cost": 1.2,
+          "availability": "always"
+        },
+        "opencode-go/deepseek-v4-pro": {
+          "id": "opencode-go/deepseek-v4-pro",
+          "input_cost": 1.32,
+          "output_cost": 3.96,
+          "availability": "always"
+        },
+        "opencode-go/deepseek-v4-flash": {
+          "id": "opencode-go/deepseek-v4-flash",
+          "input_cost": 0.3,
+          "output_cost": 1.2,
+          "availability": "always"
+        },
+        "opencode-go/deepseek-v4-flash-vision-exp": {
+          "id": "opencode-go/deepseek-v4-flash-vision-exp",
+          "input_cost": 0.3,
+          "output_cost": 1.2,
+          "availability": "always"
+        },
+        "opencode-go/hy4-preview": {
+          "id": "opencode-go/hy4-preview",
+          "input_cost": 0.834,
+          "output_cost": 2.501,
+          "availability": "always"
+        },
+        "opencode-go/hy3": {
+          "id": "opencode-go/hy3",
+          "input_cost": 0.14,
+          "output_cost": 0.58,
+          "availability": "always"
+        },
+        "opencode-go/grok-4.6": {
+          "id": "opencode-go/grok-4.6",
+          "input_cost": 2,
+          "output_cost": 6,
+          "availability": "always"
+        },
+        "opencode-go/gpt-5.6-luna": {
+          "id": "opencode-go/gpt-5.6-luna",
+          "input_cost": 0.2,
+          "output_cost": 1.2,
+          "availability": "always"
+        }
+      },
+      "selection_policy": "balanced",
+      "cost_weight": 0.25
     },
     "reviewer": {
       "enabled": true,
+      "selection_mode": "select",
       "models": [
+        "opencode-go/kimi-k3",
         "opencode-go/gpt-5.6-luna",
-        "ollama/qwen3.8:latest"
+        "opencode-go/deepseek-v4-pro",
+        "opencode-go/glm-5.3",
+        "opencode-go/qwen3.8-max"
       ],
-      "idle_timeout_ms": 180000
+      "idle_timeout_ms": 180000,
+      "selection_policy": "quality"
     },
     "compactor": {
       "enabled": true,
+      "selection_mode": "fallback",
       "prompt_optimization": {
         "exclude_models": [
           "ollama/*",
@@ -73,13 +284,7 @@
         ]
       },
       "runtime": "agent",
-      "backend": "ollama",
-      "provider": {
-        "api": "native",
-        "base_url": "http://127.0.0.1:11434"
-      },
       "models": [
-        "ollama/qwen3.8:latest",
         "opencode-go/gpt-5.6-luna"
       ],
       "idle_timeout_ms": 900000,

@@ -206,19 +206,48 @@ never silently replaced by another pool. `nla_task` and the primary-only
 primary and ordered fallbacks, enabled state, source, resolution reason, and
 health without credentials. `nla_models_reload` re-reads that same source,
 validates it before replacing the in-memory snapshot, and leaves the previous
-snapshot active if validation fails. In `fallback`, attempts follow the
-ordered `models` array; in `select`, health and suitability determine the
-candidate order. Every attempt is still bounded by the pool's `models` array,
-and there is no separate `max_failovers` or model-count setting.
-Apply the role recommendations above through your operator override, and verify
-the effective bindings with `nla_models_reload` followed by `nla_models` before
-starting a task after a configuration change.
+snapshot active if validation fails.
 
-Pools also accept `selection_mode: "select"`. The default `fallback` mode
-keeps the ordered primary-to-fallback behavior. `select` filters unhealthy or
-already attempted bindings and chooses the best remaining model using the
-role's readable weighted scores and operator-supplied facts; a later failure
-still selects another remaining candidate. See
+Every role pool declares one of two modes:
+
+- `fallback` attempts the configured `models` array in order and moves to the
+  next model after a retryable failure;
+- `select` filters unavailable or already attempted models, ranks the remaining
+  candidates with role/task weights and learned scores, and repeats selection
+  among the remaining candidates after a failure.
+
+`select` pools also declare a policy:
+
+- `quality` maximizes the role-weighted quality score and uses price as a
+  tie-break;
+- `balanced` combines quality with a normalized price score using
+  `cost_weight` (default `0.25`);
+- `cost` first requires `minimum_score` (default `7.5`), then chooses the least
+  expensive qualified model.
+
+`nla_models` displays mode and policy for every role. Primary NLA can call
+`nla_model_policy` to change a `select` pool's policy, quality floor, or cost
+weight immediately for new tasks without restarting OpenCode. This override is
+runtime-only; edit the pool file and call `nla_models_reload` to persist it.
+
+Every attempt is bounded by the pool's `models` array; there is no separate
+`max_failovers` or model-count setting. The checked-in default is ready to use
+with the OpenCode Go model package: every role binding is `opencode-go/*`, while
+Architect, Explorer, Implementer, and Reviewer demonstrate adaptive `select`
+pools. Architect and Reviewer default to `quality`; Explorer and Implementer
+default to `balanced`. Other roles retain predictable `fallback` behavior. Operators can still
+replace the complete configuration with `NLA_MODEL_POOLS_PATH`. After changing
+an active configuration, verify it with `nla_models_reload` and `nla_models`.
+
+Fresh installations seed the local evaluation store from
+[`config/model-evaluations.json`](config/model-evaluations.json). The example
+contains only `opencode-go` bindings and gives the selector initial coding,
+reasoning, and tool-use estimates. Reliability and latency remain zero until
+the installed runtime measures them. Existing local evaluations are never
+replaced by repository updates.
+
+`select` uses the role's readable weighted scores and operator-supplied facts;
+the default production configuration is also a complete working example. See
 [`docs/NLA_MODEL_ROUTING_ARCHITECTURE.md`](docs/NLA_MODEL_ROUTING_ARCHITECTURE.md)
 for the generic configuration shape and local evaluation-store contract.
 

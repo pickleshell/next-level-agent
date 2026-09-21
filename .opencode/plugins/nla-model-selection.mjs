@@ -1,4 +1,5 @@
 export const MODEL_SCORE_KEYS = ['coding', 'reasoning', 'tool_use', 'reliability', 'latency'];
+export const SELECTION_POLICIES = ['quality', 'balanced', 'cost'];
 
 export class ModelSelectionError extends Error {
   constructor(message) { super(message); this.name = 'ModelSelectionError'; }
@@ -26,6 +27,27 @@ export function normalizedScores(scores = {}) {
 
 export function selectionMode(pool = {}) {
   return pool.selection_mode === 'select' ? 'select' : 'fallback';
+}
+
+export function selectionPolicy(pool = {}, taskProfile = {}) {
+  const value = taskProfile.policy || pool.selection_policy || 'quality';
+  if (!SELECTION_POLICIES.includes(value)) throw new ModelSelectionError('selection_policy must be quality, balanced, or cost');
+  return value;
+}
+
+function boundedNumber(value, fallback, minimum, maximum, label) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  if (typeof parsed !== 'number' || !Number.isFinite(parsed) || parsed < minimum || parsed > maximum) throw new ModelSelectionError(`${label} must be a number from ${minimum} to ${maximum}`);
+  return parsed;
+}
+
+export function selectionPreferences(pool = {}, taskProfile = {}) {
+  return {
+    policy: selectionPolicy(pool, taskProfile),
+    minimum_score: boundedNumber(taskProfile.minimum_score ?? pool.minimum_score, 7.5, 0, 10, 'minimum_score'),
+    cost_weight: boundedNumber(taskProfile.cost_weight ?? pool.cost_weight, 0.25, 0, 1, 'cost_weight'),
+  };
 }
 
 export function parseSelectionWeights(value) {
@@ -104,7 +126,7 @@ function staticCost(facts) {
   return Math.max(0, Number.isFinite(input) ? input : 0) + Math.max(0, Number.isFinite(output) ? output : 0);
 }
 
-function compareCandidates(left, right) {
+function compareQuality(left, right) {
   const leftScore = left.score === null ? -1 : left.score;
   const rightScore = right.score === null ? -1 : right.score;
   if (leftScore !== rightScore) return rightScore - leftScore;
@@ -115,6 +137,32 @@ function compareCandidates(left, right) {
   if (left.cost !== null && right.cost === null) return -1;
   const latency = (right.scores.latency || 0) - (left.scores.latency || 0);
   return latency || left.index - right.index;
+}
+
+function rankByPolicy(candidates, preferences) {
+  const knownCosts = candidates.map((candidate) => candidate.cost).filter((cost) => cost !== null);
+  const minimumCost = knownCosts.length ? Math.min(...knownCosts) : null;
+  const maximumCost = knownCosts.length ? Math.max(...knownCosts) : null;
+  for (const candidate of candidates) {
+    candidate.cost_score = candidate.cost === null || minimumCost === null ? 0
+      : maximumCost === minimumCost ? 10
+        : 10 * (maximumCost - candidate.cost) / (maximumCost - minimumCost);
+    candidate.utility = candidate.score === null ? null
+      : (1 - preferences.cost_weight) * candidate.score + preferences.cost_weight * candidate.cost_score;
+  }
+  if (preferences.policy === 'quality') return candidates.sort(compareQuality);
+  if (preferences.policy === 'balanced') return candidates.sort((left, right) => {
+    const leftUtility = left.utility ?? -1;
+    const rightUtility = right.utility ?? -1;
+    return rightUtility - leftUtility || compareQuality(left, right);
+  });
+  const qualified = candidates.filter((candidate) => candidate.score !== null && candidate.score >= preferences.minimum_score);
+  return qualified.sort((left, right) => {
+    if (left.cost === null && right.cost !== null) return 1;
+    if (left.cost !== null && right.cost === null) return -1;
+    if (left.cost !== null && right.cost !== null && left.cost !== right.cost) return left.cost - right.cost;
+    return compareQuality(left, right);
+  });
 }
 
 export function rankModelCandidates({ role, pool = {}, evaluations, healthManager, endpoint = '', attempted = [], now = new Date(), taskProfile = {} } = {}) {
@@ -133,10 +181,12 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     const scores = evaluatedScores(evaluations, binding);
     return { binding, index, facts, health, scores, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
   });
-  const eligible = all.filter((candidate) => candidate.eligible);
-  eligible.sort(compareCandidates);
+  const preferences = selectionPreferences(pool, taskProfile);
+  const eligible = rankByPolicy(all.filter((candidate) => candidate.eligible), preferences);
   return {
     mode: selectionMode(pool),
+    policy: preferences.policy,
+    preferences,
     models: eligible.map((candidate) => candidate.binding),
     all,
     candidates: eligible,
