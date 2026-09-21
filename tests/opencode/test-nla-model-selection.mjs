@@ -4,10 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
-import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode } from '../../.opencode/plugins/nla-model-selection.mjs';
+import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode, selectionPreferences } from '../../.opencode/plugins/nla-model-selection.mjs';
 import {
   averageScore,
   emptyEvaluationStore,
+  initializeEvaluationStore,
   latencyScoreFromMs,
   loadEvaluationStore,
   parseReviewerEvaluation,
@@ -20,6 +21,11 @@ import {
 const health = (states = {}) => ({
   state(binding) { return states[binding] || { binding, state: 'available', eligible: true }; },
 });
+
+const productionSeed = JSON.parse(fs.readFileSync('config/model-evaluations.json', 'utf8'));
+assert.equal(Object.keys(productionSeed.models).length, 27, 'production seed covers the complete example Implementer pool');
+assert.ok(Object.keys(productionSeed.models).every((binding) => binding.startsWith('opencode-go/')), 'production seed contains only OpenCode Go bindings');
+assert.ok(Object.values(productionSeed.models).every(({ scores }) => scores.reliability === 0 && scores.latency === 0), 'environment-specific scores start unevaluated');
 
 const pool = {
   selection_mode: 'select',
@@ -40,6 +46,8 @@ assert.throws(() => parseSelectionWeights('{"coding":11}'), /selection_weights/)
 assert.equal(parseContextWindow('131072'), 131072);
 assert.throws(() => parseContextWindow('0'), /context_window/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'parallel', models: ['fixture/a'] } } }), /selection_mode/);
+assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'select', selection_policy: 'random', models: ['fixture/a'] } } }), /selection_policy/);
+assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'select', selection_policy: 'balanced', cost_weight: 2, models: ['fixture/a'] } } }), /cost_weight/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_weights: { coding: 11 }, models: ['fixture/a'] } } }), /selection_weights/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, model_facts: { 'fixture/b': {} }, models: ['fixture/a'] } } }), /unlisted binding/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, models: ['fixture/a'], model_facts: { 'fixture/a': { availability: { schedule: 'windows', windows: [{ start: 'not-a-date', end: '2030-01-01T00:00:00Z' }] } } } } } }), /invalid dates/);
@@ -56,6 +64,12 @@ const evaluations = {
 const ranked = rankModelCandidates({ role: 'implementer', pool, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
 assert.deepEqual(ranked.models, ['fixture/best', 'fixture/cheap', 'fixture/slow'], 'select ranks suitability and filters quarantined models');
 assert.ok(Math.abs(ranked.candidates[0].score - 8.619047619) < 0.000001, 'weighted suitability is explainable');
+assert.equal(selectionPreferences(pool).policy, 'quality');
+const balanced = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'balanced', cost_weight: 0.5 }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
+assert.equal(balanced.models[0], 'fixture/cheap', 'balanced policy combines normalized price and quality');
+const costFirst = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'cost', minimum_score: 7.5 }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
+assert.deepEqual(costFirst.models, ['fixture/cheap', 'fixture/best'], 'cost policy enforces quality floor before sorting by price');
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'cost', minimum_score: 9.5 }, evaluations, healthManager: health() }).models, ['fixture/down'], 'cost policy keeps only candidates meeting the quality floor');
 
 const unknown = rankModelCandidates({
   role: 'implementer',
@@ -107,6 +121,13 @@ for (const malformed of [
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-model-evaluation-'));
 const file = path.join(root, 'model-evaluations.json');
 try {
+  const seedFile = path.join(root, 'seed.json');
+  const seededFile = path.join(root, 'seeded.json');
+  fs.writeFileSync(seedFile, JSON.stringify({ version: 1, models: { 'fixture/seeded': { scores: { coding: 8, reasoning: 7, tool_use: 9, reliability: 0, latency: 0 } } } }));
+  assert.equal(initializeEvaluationStore(seededFile, seedFile).models['fixture/seeded'].scores.coding, 8, 'fresh state is initialized from the production seed');
+  fs.writeFileSync(seedFile, JSON.stringify({ version: 1, models: {} }));
+  assert.equal(initializeEvaluationStore(seededFile, seedFile).models['fixture/seeded'].scores.coding, 8, 'existing local evaluations are never replaced by a changed seed');
+  assert.equal(fs.statSync(seededFile).mode & 0o777, 0o600, 'seeded evaluation state is private');
   writeEvaluationStoreAtomic(file, emptyEvaluationStore());
   recordReviewerEvaluation(file, 'fixture/model', JSON.stringify({ verdict: 'pass', scores: { coding: 8, reasoning: 7, tool_use: 9 } }));
   recordEvaluation(file, 'fixture/model', { coding: 6, reliability: 10 });

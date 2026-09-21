@@ -45,6 +45,19 @@ export function loadEvaluationStore(filePath) {
   catch { return emptyEvaluationStore(); }
 }
 
+export function initializeEvaluationStore(filePath, seedPath) {
+  if (fs.existsSync(filePath)) return validateEvaluationStore(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+  const seed = seedPath && fs.existsSync(seedPath)
+    ? validateEvaluationStore(JSON.parse(fs.readFileSync(seedPath, 'utf8')))
+    : emptyEvaluationStore();
+  const lockPath = `${filePath}.lock`;
+  const fd = acquireLock(lockPath);
+  try {
+    if (fs.existsSync(filePath)) return readValid(filePath);
+    return writeWithoutLock(filePath, seed);
+  } finally { releaseLock(lockPath, fd); }
+}
+
 function waitForLock(milliseconds) {
   const buffer = new SharedArrayBuffer(4);
   Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);

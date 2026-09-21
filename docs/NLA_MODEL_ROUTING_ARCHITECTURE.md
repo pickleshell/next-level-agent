@@ -82,6 +82,20 @@ scores, and runtime state.
 This architecture supports both sequential `fallback` pools and `select` pools
 where healthy candidates compete by deterministic suitability ranking.
 
+Select ranking has three operator-visible policies. `quality` maximizes the
+weighted empirical score. `balanced` combines that score with a pool-relative
+normalized cost score using `cost_weight`. `cost` excludes models below
+`minimum_score`, then minimizes declared input-plus-output cost. Unknown costs
+never beat known costs in the cost-first policy. Policy is independent from
+pool mode and may be overridden for one task or changed in the in-memory pool
+snapshot by the primary NLA orchestrator.
+
+The production default makes both modes explicit for every role and contains
+only `opencode-go/*` bindings. Architect, Explorer, Implementer, and Reviewer
+are bounded `select` examples. Architect and Reviewer prefer `quality`; Explorer
+and Implementer use `balanced` with a `0.25` cost weight. Deterministic orchestration and utility roles
+remain `fallback` pools.
+
 ## Evaluation storage
 
 Empirical model evaluations are stored in a user-local runtime state file,
@@ -90,6 +104,12 @@ not in the repository or the static model configuration:
 ```text
 ~/.local/share/nla/model-evaluations.json
 ```
+
+On first use, if that file does not exist, NLA initializes it from the
+versioned production example at `config/model-evaluations.json`. Initialization
+is atomic and happens only once: repository updates do not overwrite local
+observations. The seed may initialize provider-independent capability estimates,
+while environment-dependent reliability and latency remain `0` until measured.
 
 The initial format is JSON because it is easy to inspect, back up, and migrate.
 The file contains a schema version and one record per exact model identity:

@@ -58,6 +58,9 @@ export function validateModelPools(parsed, source = 'model pool file') {
     if (!pool || typeof pool !== 'object' || Array.isArray(pool)) throw new ModelPoolValidationError(`Role ${role} must be an object in ${source}`, source);
     if (pool.enabled !== undefined && typeof pool.enabled !== 'boolean') throw new ModelPoolValidationError(`Role ${role}.enabled must be boolean in ${source}`, source);
     if (pool.selection_mode !== undefined && !['fallback', 'select'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_mode must be fallback or select in ${source}`, source);
+    if (pool.selection_policy !== undefined && !['quality', 'balanced', 'cost'].includes(pool.selection_policy)) throw new ModelPoolValidationError(`Role ${role}.selection_policy must be quality, balanced, or cost in ${source}`, source);
+    if (pool.minimum_score !== undefined && (typeof pool.minimum_score !== 'number' || !Number.isFinite(pool.minimum_score) || pool.minimum_score < 0 || pool.minimum_score > 10)) throw new ModelPoolValidationError(`Role ${role}.minimum_score must be a number from 0 to 10 in ${source}`, source);
+    if (pool.cost_weight !== undefined && (typeof pool.cost_weight !== 'number' || !Number.isFinite(pool.cost_weight) || pool.cost_weight < 0 || pool.cost_weight > 1)) throw new ModelPoolValidationError(`Role ${role}.cost_weight must be a number from 0 to 1 in ${source}`, source);
     if (pool.selection_weights !== undefined) {
       if (!pool.selection_weights || typeof pool.selection_weights !== 'object' || Array.isArray(pool.selection_weights) || !Object.keys(pool.selection_weights).length) throw new ModelPoolValidationError(`Role ${role}.selection_weights must be a non-empty object in ${source}`, source);
       for (const [key, value] of Object.entries(pool.selection_weights)) {
@@ -121,7 +124,13 @@ function readPoolFile(configPath, resolution) {
     if (error instanceof ModelPoolValidationError) throw new ModelPoolResolutionError(error.message, configPath);
     throw error;
   }
-  return { version: parsed.version ?? 1, roles: parsed.roles, source: configPath, resolution };
+  const sharedFacts = {};
+  for (const pool of Object.values(parsed.roles)) Object.assign(sharedFacts, pool.model_facts || pool.model_metadata || {});
+  const roles = Object.fromEntries(Object.entries(parsed.roles).map(([role, pool]) => [role, {
+    ...pool,
+    ...(Object.keys(sharedFacts).length ? { model_facts: Object.fromEntries((pool.models || []).filter((binding) => sharedFacts[binding]).map((binding) => [binding, sharedFacts[binding]])) } : {}),
+  }]));
+  return { version: parsed.version ?? 1, roles, source: configPath, resolution };
 }
 
 export function resolveModelPools({ explicitPath = null, env = process.env, homeDir = os.homedir(), defaultPath } = {}) {
@@ -144,6 +153,9 @@ export function modelPoolSummary(resolved) {
       pooled: !coordinator && enabled,
       status: coordinator ? 'orchestrator' : (enabled ? 'enabled' : 'disabled'),
       selection_mode: pool?.selection_mode || 'fallback',
+      selection_policy: pool?.selection_policy || 'quality',
+      minimum_score: pool?.minimum_score ?? 7.5,
+      cost_weight: pool?.cost_weight ?? 0.25,
       primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
       fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [],
     };
@@ -152,6 +164,6 @@ export function modelPoolSummary(resolved) {
 
 export function formatModelPools(resolved) {
   if (!resolved || typeof resolved !== 'object' || !resolved.roles || typeof resolved.roles !== 'object') return '';
-  const lines = ['Role        Mode     Primary                         Fallbacks                         Status', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.selection_mode || 'fallback').padEnd(8)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
+  const lines = ['Role        Mode      Policy     Primary                         Fallbacks                         Status', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.selection_mode || 'fallback').padEnd(9)} ${(row.selection_policy || 'quality').padEnd(10)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
   return lines.join('\n');
 }
