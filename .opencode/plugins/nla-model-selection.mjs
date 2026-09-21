@@ -1,0 +1,146 @@
+export const MODEL_SCORE_KEYS = ['coding', 'reasoning', 'tool_use', 'reliability', 'latency'];
+
+export class ModelSelectionError extends Error {
+  constructor(message) { super(message); this.name = 'ModelSelectionError'; }
+}
+
+// Role requirements, not model scores. Zero means the dimension is ignored.
+export const DEFAULT_ROLE_WEIGHTS = Object.freeze({
+  router: Object.freeze({ coding: 4, reasoning: 8, tool_use: 7, reliability: 9, latency: 10 }),
+  supervisor: Object.freeze({ coding: 5, reasoning: 10, tool_use: 7, reliability: 10, latency: 5 }),
+  scout: Object.freeze({ coding: 3, reasoning: 8, tool_use: 8, reliability: 8, latency: 7 }),
+  explorer: Object.freeze({ coding: 7, reasoning: 9, tool_use: 10, reliability: 9, latency: 7 }),
+  architect: Object.freeze({ coding: 7, reasoning: 10, tool_use: 7, reliability: 9, latency: 4 }),
+  implementer: Object.freeze({ coding: 10, reasoning: 7, tool_use: 9, reliability: 9, latency: 7 }),
+  reviewer: Object.freeze({ coding: 9, reasoning: 10, tool_use: 8, reliability: 9, latency: 6 }),
+  compactor: Object.freeze({ coding: 2, reasoning: 7, tool_use: 8, reliability: 10, latency: 10 }),
+});
+
+function validScore(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 10 ? value : 0;
+}
+
+export function normalizedScores(scores = {}) {
+  return Object.fromEntries(MODEL_SCORE_KEYS.map((key) => [key, validScore(scores?.[key])]));
+}
+
+export function selectionMode(pool = {}) {
+  return pool.selection_mode === 'select' ? 'select' : 'fallback';
+}
+
+export function parseSelectionWeights(value) {
+  if (value === undefined || value === null || value === '') return null;
+  let parsed = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { throw new ModelSelectionError('selection_weights must be valid JSON'); }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Object.keys(parsed).length) throw new ModelSelectionError('selection_weights must be a non-empty object');
+  const result = {};
+  for (const [key, weight] of Object.entries(parsed)) {
+    if (!MODEL_SCORE_KEYS.includes(key) || typeof weight !== 'number' || !Number.isFinite(weight) || weight < 0 || weight > 10) throw new ModelSelectionError(`selection_weights.${key} must be a number from 0 to 10`);
+    result[key] = weight;
+  }
+  return result;
+}
+
+export function parseContextWindow(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new ModelSelectionError('context_window must be a positive integer');
+  return parsed;
+}
+
+function staticAvailability(facts, now = new Date()) {
+  const availability = facts?.availability;
+  if (availability === undefined || availability === null || availability === 'always' || availability === 'available' || availability === true) return true;
+  if (availability === false || availability === 'never' || availability === 'unavailable') return false;
+  if (typeof availability !== 'object' || Array.isArray(availability)) return false;
+  if (availability.enabled === false) return false;
+  if (availability.schedule === 'always' || availability.schedule === undefined) return true;
+  if (!Array.isArray(availability.windows)) return false;
+  const time = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  return availability.windows.some((window) => {
+    if (!window || typeof window !== 'object') return false;
+    const start = window.start ? Date.parse(window.start) : -Infinity;
+    const end = window.end ? Date.parse(window.end) : Infinity;
+    return (Number.isFinite(start) || Number.isFinite(end)) && time >= start && time <= end;
+  });
+}
+
+function modelFacts(pool, binding) {
+  return pool?.model_facts?.[binding] || pool?.model_metadata?.[binding] || {};
+}
+
+function healthFor(healthManager, binding, endpoint, now) {
+  if (healthManager?.state) return healthManager.state(binding, endpoint);
+  const entry = healthManager?.get?.(binding);
+  if (!entry || !entry.until || entry.until <= now.getTime()) return { binding, state: 'available', eligible: true };
+  return { binding, ...entry, eligible: false };
+}
+
+function evaluatedScores(evaluations, binding) {
+  const record = evaluations?.models?.[binding] || evaluations?.[binding] || {};
+  return normalizedScores(record.scores);
+}
+
+function weightedScore(scores, weights) {
+  let numerator = 0;
+  let denominator = 0;
+  for (const key of MODEL_SCORE_KEYS) {
+    const score = scores[key];
+    const weight = validScore(weights?.[key]);
+    if (score > 0 && weight > 0) {
+      numerator += score * weight;
+      denominator += weight;
+    }
+  }
+  return denominator ? numerator / denominator : null;
+}
+
+function staticCost(facts) {
+  const input = Number(facts?.input_cost);
+  const output = Number(facts?.output_cost);
+  if (!Number.isFinite(input) && !Number.isFinite(output)) return null;
+  return Math.max(0, Number.isFinite(input) ? input : 0) + Math.max(0, Number.isFinite(output) ? output : 0);
+}
+
+function compareCandidates(left, right) {
+  const leftScore = left.score === null ? -1 : left.score;
+  const rightScore = right.score === null ? -1 : right.score;
+  if (leftScore !== rightScore) return rightScore - leftScore;
+  const reliability = (right.scores.reliability || 0) - (left.scores.reliability || 0);
+  if (reliability) return reliability;
+  if (left.cost !== null && right.cost !== null && left.cost !== right.cost) return left.cost - right.cost;
+  if (left.cost === null && right.cost !== null) return 1;
+  if (left.cost !== null && right.cost === null) return -1;
+  const latency = (right.scores.latency || 0) - (left.scores.latency || 0);
+  return latency || left.index - right.index;
+}
+
+export function rankModelCandidates({ role, pool = {}, evaluations, healthManager, endpoint = '', attempted = [], now = new Date(), taskProfile = {} } = {}) {
+  const models = Array.isArray(pool.models) ? pool.models : [];
+  const attemptedSet = new Set(attempted);
+  const baseWeights = DEFAULT_ROLE_WEIGHTS[role] || DEFAULT_ROLE_WEIGHTS.implementer;
+  const weights = taskProfile.weights || pool.selection_weights || baseWeights;
+  const all = models.map((binding, index) => {
+    const facts = modelFacts(pool, binding);
+    const health = healthFor(healthManager, binding, endpoint, now);
+    const reasons = [];
+    if (attemptedSet.has(binding)) reasons.push('attempted');
+    if (!health.eligible) reasons.push(health.state || 'unavailable');
+    if (!staticAvailability(facts, now)) reasons.push('static_unavailable');
+    if (taskProfile.context_window && (!Number.isFinite(Number(facts.context_window)) || facts.context_window < Number(taskProfile.context_window))) reasons.push('insufficient_context');
+    const scores = evaluatedScores(evaluations, binding);
+    return { binding, index, facts, health, scores, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
+  });
+  const eligible = all.filter((candidate) => candidate.eligible);
+  eligible.sort(compareCandidates);
+  return {
+    mode: selectionMode(pool),
+    models: eligible.map((candidate) => candidate.binding),
+    all,
+    candidates: eligible,
+    allQuarantined: all.length > 0 && all.every((candidate) => candidate.health.state === 'quarantined'),
+    earliestRetryAt: all.map((candidate) => candidate.health.until).filter(Boolean).sort((a, b) => a - b)[0] || null,
+  };
+}
