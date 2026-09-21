@@ -24,6 +24,8 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
+import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode } from './nla-model-selection.mjs';
+import { loadEvaluationStore, recordEvaluation, recordReviewerEvaluation, runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
 import { BrowserCapability, loadBrowserConfig, validateBrowserTask, BROWSER_TOOLS, BROWSER_TOOL_GUIDE } from './nla-browser.mjs';
@@ -98,6 +100,12 @@ function splitModel(model) {
   return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
 }
 
+function modelBinding(model) {
+  if (typeof model === 'string') return splitModel(model) ? model : null;
+  if (model && typeof model === 'object' && typeof model.providerID === 'string' && typeof model.modelID === 'string') return `${model.providerID}/${model.modelID}`;
+  return null;
+}
+
 export function retryableProviderError(error) { return classifyProviderError(error).category === 'transient'; }
 
 export function availablePoolModels(models, maxAttempts, health = new Map(), now = Date.now()) {
@@ -129,6 +137,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const runLogPath = path.join(directory, '.opencode', 'agent-run.log');
   const capabilityCachePath = path.join(directory, '.opencode', 'nla-role-capabilities.json');
   const stateRoot = memoryRoot(homeDir);
+  const evaluationPath = path.join(stateRoot, 'model-evaluations.json');
   let browserConfig = null;
   let browserConfigError = null;
   try { browserConfig = loadBrowserConfig(); } catch (error) { browserConfigError = error; }
@@ -142,6 +151,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const pendingTasks = new Map();
   const healthManager = new ModelHealthManager();
   const trackedSessions = new Map();
+  const completedResults = new Map();
   const primarySessions = new Map();
   const activeChildren = new Map();
   const compactionState = new Map();
@@ -160,6 +170,24 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     fs.writeFileSync(capabilityCachePath, serializeCapabilityCache(capabilityCache), { mode: 0o600 });
   };
 
+  const recordRuntimeEvaluation = (binding, succeeded, elapsedMs) => {
+    try {
+      recordEvaluation(evaluationPath, binding, runtimeEvaluationScores({ succeeded, elapsedMs }));
+    } catch (error) {
+      appendRunLog({ event: 'model_evaluation_write_failed', model: binding, reason: error.code || error.name || 'evaluation_write_failed' });
+    }
+  };
+
+  // Only transient provider execution failures are runtime reliability evidence.
+  // Protocol/message-shape, permission, application, auth, and configuration
+  // failures describe the request or environment, not model quality.
+  const runtimeFailureIsModelEvidence = (classification) => classification?.category === 'transient';
+
+  const rememberCompletedResult = (sessionID, result) => {
+    completedResults.set(sessionID, result);
+    while (completedResults.size > 128) completedResults.delete(completedResults.keys().next().value);
+  };
+
   const touch = (sessionID) => {
     const state = trackedSessions.get(sessionID);
     if (state) state.lastActivity = Date.now();
@@ -168,18 +196,33 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const failover = async (sessionID, reason) => {
     const state = trackedSessions.get(sessionID);
     if (!state || !state.pool.enabled) return;
+    state.attemptedModels ||= new Set();
     if (state.switching) {
       if (state.switchPhase === 'dispatch') state.pendingFailure ??= reason;
       return;
     }
-    const failure = healthManager.failure(state.model, reason, '', modelCooldownMs(state.pool));
+    const previousModel = state.model;
+    const failure = healthManager.failure(previousModel, reason, '', modelCooldownMs(state.pool));
+    const runtimeFailure = state.exactModel && runtimeFailureIsModelEvidence(failure);
+    if (state.exactModel) state.attemptedModels.add(previousModel);
     state.healthClaim = false;
     if (!['transient', 'defective', 'configuration'].includes(failure.category)) { state.busy = false; return; }
-    if (state.modelIndex >= state.pool.models.length - 1) { state.busy = false; return; }
-    let nextIndex = state.modelIndex + 1;
-    while (nextIndex < state.pool.models.length && !healthManager.claim(state.pool.models[nextIndex])) nextIndex += 1;
-    const nextModel = state.pool.models[nextIndex];
-    if (!nextModel) { state.busy = false; return; }
+    const attemptedForSelection = state.exactModel
+      ? [...state.attemptedModels]
+      // The configured initial binding is not attributed when OpenCode did
+      // not report the child model, but it must not be dispatched twice.
+      : [...state.attemptedModels, state.model];
+    const remaining = selectionMode(state.pool) === 'select'
+      ? rankModelCandidates({ role: state.role, pool: state.pool, evaluations: loadEvaluationStore(evaluationPath), healthManager, attempted: attemptedForSelection }).models
+      : state.pool.models.slice(state.modelIndex + 1).filter((binding) => healthManager.state(binding).eligible);
+    const nextModel = remaining[0];
+    const nextIndex = state.pool.models.indexOf(nextModel);
+    if (!nextModel || nextIndex < 0) {
+      if (runtimeFailure) recordRuntimeEvaluation(previousModel, false);
+      state.busy = false;
+      return;
+    }
+    if (!healthManager.claim(nextModel)) { state.busy = false; return; }
     const model = splitModel(nextModel);
     if (!model) { healthManager.release(nextModel); return; }
 
@@ -193,8 +236,11 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     });
     try {
       await stopChildSession(sessionID);
+      if (runtimeFailure) recordRuntimeEvaluation(previousModel, false);
       state.model = nextModel;
       state.modelIndex = nextIndex;
+      state.exactModel = true;
+      state.attemptedModels.add(nextModel);
       state.failovers += 1;
       state.healthClaim = true;
       state.switchPhase = 'dispatch';
@@ -222,7 +268,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       state.busy = true;
       appendRunLog({
         event: 'model_fallback_started', session_id: sessionID, agent: state.role,
-        previous_model: state.pool.models[nextIndex - 1], model: nextModel,
+        previous_model: previousModel, model: nextModel,
         failover: state.failovers,
       });
     } catch (error) {
@@ -270,7 +316,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (state.switchPhase === 'dispatch') state.pendingIdle = true;
       return;
     }
-    if (state.healthClaim) healthManager.success(state.model);
+    if (state.healthClaim) {
+      healthManager.success(state.model);
+      if (state.exactModel) recordRuntimeEvaluation(state.model, true);
+    }
     state.healthClaim = false;
     state.busy = false;
   };
@@ -323,9 +372,16 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
       }
 
+      const taskProfile = {
+        weights: parseSelectionWeights(args.selection_weights),
+        context_window: parseContextWindow(args.context_window),
+      };
       const maxAttempts = pool.models.length;
-      const selection = healthManager.candidates(pool.models, maxAttempts);
-      const attempts = pool.models;
+      const mode = selectionMode(pool);
+      const selection = mode === 'select'
+        ? rankModelCandidates({ role: args.role, pool, evaluations: loadEvaluationStore(evaluationPath), healthManager, taskProfile })
+        : healthManager.candidates(pool.models, maxAttempts);
+      const attempts = mode === 'select' ? selection.models : pool.models;
       let attempted = 0;
       if (!selection.models.length) {
         throw unavailablePoolError(selection, `NLA pooled task ${args.role}`);
@@ -374,6 +430,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         let onAbort = null;
         let stopRequired = false;
         let stopConfirmed = true;
+        let attemptStartedAt = null;
         try {
           let roleProfile = [];
           let capabilityCacheSource = 'tool-free';
@@ -430,6 +487,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             context.abort.addEventListener('abort', onAbort, { once: true });
           });
           attempted += 1;
+          attemptStartedAt = Date.now();
           appendRunLog({ event: 'model_attempt_started', session_id: childID, parent_session_id: context.sessionID, agent: args.role, model: modelName, attempt: attempted });
           const request = client.session.prompt({
             path: { id: childID },
@@ -475,6 +533,23 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             parent_session_id: context.sessionID, agent: args.role,
             model: modelName, attempt: attempted,
           });
+          if (args.role === 'reviewer' && args.review_target_session_id) {
+            const target = completedResults.get(args.review_target_session_id);
+            if (!target || target.consumed || target.ownerSessionID !== context.sessionID || target.role !== 'implementer' || !target.model) {
+              appendRunLog({ event: 'review_evaluation_skipped', session_id: childID, agent: args.role, reason: 'invalid_review_target' });
+            } else {
+              try {
+                recordReviewerEvaluation(evaluationPath, target.model, output);
+                target.consumed = true;
+                completedResults.delete(args.review_target_session_id);
+                appendRunLog({ event: 'review_evaluation_recorded', session_id: childID, agent: args.role, target_session_id: args.review_target_session_id, target_model: target.model });
+              } catch (evaluationError) {
+                appendRunLog({ event: 'review_evaluation_skipped', session_id: childID, agent: args.role, reason: evaluationError.name || 'invalid_review_payload' });
+              }
+            }
+          }
+          rememberCompletedResult(childID, { ownerSessionID: context.sessionID, role: args.role, model: modelName, completedAt: Date.now(), consumed: false });
+          recordRuntimeEvaluation(modelName, true, Date.now() - attemptStartedAt);
           healthManager.success(modelName);
           appendRunLog({ event: 'model_health_available', session_id: childID, agent: args.role, model: modelName });
           return {
@@ -497,7 +572,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           }
           if (context.abort.aborted) error = new Error('NLA pooled task aborted by caller');
           lastError = error;
-          const reason = classifyProviderError(error).reason;
+          const classification = classifyProviderError(error);
+          const reason = classification.reason;
           appendRunLog({
             event: 'model_attempt_failed', session_id: childID,
             parent_session_id: context.sessionID, agent: args.role,
@@ -519,10 +595,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             lastError.code = 'NLA_CHILD_STOP_UNCONFIRMED';
             break;
           }
-          if (context.browserSession?.events.some(e => ['click', 'fill', 'select', 'press', 'upload', 'download'].includes(e.operation))) {
+          const browserOutcomeUnverified = context.browserSession?.events.some(e => ['click', 'fill', 'select', 'press', 'upload', 'download'].includes(e.operation));
+          if (browserOutcomeUnverified) {
             lastError = Object.assign(new Error('Browser side effects require verification before another model attempt'), { code: 'BROWSER_OUTCOME_UNVERIFIED' });
             break;
           }
+          if (attemptStartedAt !== null && stopConfirmed && runtimeFailureIsModelEvidence(classification)) recordRuntimeEvaluation(modelName, false, Date.now() - attemptStartedAt);
           if (index + 1 >= attempts.length || !['transient', 'defective', 'configuration'].includes(health.category)) break;
           appendRunLog({
             event: 'model_fallback_started', session_id: childID,
@@ -574,6 +652,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const activeBrowserTasks = new Set();
   const runRoleTask = async (args, context) => {
     assertExecutionAllowed(context.sessionID);
+    if (args.review_target_session_id !== undefined && args.role !== 'reviewer') {
+      throw new Error('review_target_session_id is only valid for the reviewer role');
+    }
+    if (args.role === 'reviewer' && args.review_target_session_id !== undefined && !String(args.review_target_session_id).trim()) {
+      throw new Error('review_target_session_id must be a non-empty completed Implementer session ID');
+    }
     if (args.role === 'browser') {
       assertPrimaryNla(context.sessionID);
       if (browserConfigError || !pools.browser?.enabled || !browserConfig) {
@@ -670,11 +754,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaTask = tool({
-    description: 'Run one bounded NLA subagent task through its ordered model pool. Use this instead of task for NLA roles so early model errors, provider failures, and timeouts can fall back safely.',
+    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select ranks eligible models and retains bounded failover.',
     args: {
       role: tool.schema.string().describe('Configured NLA subagent role, for example explorer, architect, implementer, or reviewer'),
       description: tool.schema.string().max(120).describe('Short task title'),
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
+      selection_weights: tool.schema.string().optional().describe('Optional strict JSON object with only coding, reasoning, tool_use, reliability, and latency weights from 0 to 10'),
+      context_window: tool.schema.string().optional().describe('Optional required context window as a positive integer; select excludes models without sufficient declared context'),
+      review_target_session_id: tool.schema.string().optional().describe('Reviewer only: exact completed Implementer child session ID from prior nla_task metadata.sessionID. When supplied, the Reviewer must return only strict JSON with verdict (pass, fail, or needs_changes) and coding, reasoning, and tool_use scores from 1 to 10; no target prompt, response, secrets, or other target internals are provided or accepted.'),
       browser_task_id: tool.schema.string().optional().describe('Explicit logical Browser task continuation ID returned by runtime. Omit for new work; provide the original complete browser contract when continuing. This is not a live browser session_id.'),
       browser: tool.schema.string().optional().describe('Required for role browser. JSON object: {"goal":"read fact","permissions":{"navigation":true,"interaction":false,"authentication":false,"uploads":false,"downloads":false,"external_mutation":false},"origins":["http://approved-host:port"],"success_criteria":[{"id":"fact","check":"text_contains","locator":{"test_id":"fact"},"expected":"required prefix","wait_ms":1000,"mandatory":true}],"keep_session":false}. Only these permission names are valid; omitted rights are false. Each criterion requires id and check, with locator (exactly one of role plus optional name, label, test_id, text) for element/text checks. Supported checks: text_equals, text_contains, element_visible, element_enabled, url_equals, no_console_errors, no_dialogs. Optional session_id explicitly resumes an owned session; optional upload_files must fit operator grants.'),
     },
@@ -1074,17 +1161,22 @@ ${toolMapping}
         else pendingTasks.delete(props.info.parentID);
         const pool = role && pools[role];
         if (pool && pool.enabled) {
+          const observedModel = modelBinding(props.info.model);
+          const configuredModel = observedModel && pool.models.includes(observedModel) ? observedModel : pool.models[0];
+          const attemptedModels = new Set(observedModel && pool.models.includes(observedModel) ? [observedModel] : []);
           trackedSessions.set(props.info.id, {
             role,
             pool,
-            model: pool.models[0],
-            modelIndex: 0,
+            model: configuredModel,
+            modelIndex: Math.max(0, pool.models.indexOf(configuredModel)),
+            exactModel: Boolean(observedModel && pool.models.includes(observedModel)),
+            attemptedModels,
             failovers: 0,
             busy: true,
             switching: false,
             lastActivity: Date.now(),
           });
-          appendRunLog({ event: 'model_pool_attached', session_id: props.info.id, parent_session_id: props.info.parentID, agent: role, model: pool.models[0] });
+          appendRunLog({ event: 'model_pool_attached', session_id: props.info.id, parent_session_id: props.info.parentID, agent: role, model: configuredModel, model_attribution: observedModel ? 'observed' : 'pool_default' });
           startWatchdog();
         }
       }
@@ -1315,6 +1407,7 @@ ${toolMapping}
       if (watchdog) clearInterval(watchdog);
       watchdog = null;
       trackedSessions.clear();
+      completedResults.clear();
       pendingTasks.clear();
       primarySessions.clear();
       activeChildren.clear();

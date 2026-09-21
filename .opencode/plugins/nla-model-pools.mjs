@@ -15,6 +15,25 @@ export class ModelPoolValidationError extends Error {
 
 const ROLE_ID = /^[a-z][a-z0-9_-]*$/;
 const BINDING_PART = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const MODEL_SCORE_KEYS = ['coding', 'reasoning', 'tool_use', 'reliability', 'latency'];
+
+function validateAvailability(value, label) {
+  if (value === undefined || value === null || value === true || value === false || ['always', 'available', 'never', 'unavailable'].includes(value)) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ModelPoolValidationError(`${label}.availability is invalid`);
+  if (value.enabled !== undefined && typeof value.enabled !== 'boolean') throw new ModelPoolValidationError(`${label}.availability.enabled must be boolean`);
+  if (value.schedule !== undefined && value.schedule !== 'always' && value.schedule !== 'windows') throw new ModelPoolValidationError(`${label}.availability.schedule must be always or windows`);
+  if (value.windows === undefined) {
+    if (value.schedule && value.schedule !== 'always') throw new ModelPoolValidationError(`${label}.availability.windows is required for a scheduled availability`);
+    return;
+  }
+  if (!Array.isArray(value.windows) || value.windows.length === 0) throw new ModelPoolValidationError(`${label}.availability.windows must be a non-empty array`);
+  for (const [index, window] of value.windows.entries()) {
+    if (!window || typeof window !== 'object' || Array.isArray(window) || (!window.start && !window.end)) throw new ModelPoolValidationError(`${label}.availability.windows[${index}] must contain start or end`);
+    const start = window.start ? Date.parse(window.start) : -Infinity;
+    const end = window.end ? Date.parse(window.end) : Infinity;
+    if (!Number.isFinite(start) && start !== -Infinity || !Number.isFinite(end) && end !== Infinity || start > end) throw new ModelPoolValidationError(`${label}.availability.windows[${index}] contains invalid dates`);
+  }
+}
 
 // OpenCode child dispatch requires a provider/model pair. This validates only
 // configuration syntax; provider availability is intentionally an operator/
@@ -38,6 +57,13 @@ export function validateModelPools(parsed, source = 'model pool file') {
     if (!ROLE_ID.test(role)) throw new ModelPoolValidationError(`Invalid model-pool role name ${JSON.stringify(role)} in ${source}`, source);
     if (!pool || typeof pool !== 'object' || Array.isArray(pool)) throw new ModelPoolValidationError(`Role ${role} must be an object in ${source}`, source);
     if (pool.enabled !== undefined && typeof pool.enabled !== 'boolean') throw new ModelPoolValidationError(`Role ${role}.enabled must be boolean in ${source}`, source);
+    if (pool.selection_mode !== undefined && !['fallback', 'select'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_mode must be fallback or select in ${source}`, source);
+    if (pool.selection_weights !== undefined) {
+      if (!pool.selection_weights || typeof pool.selection_weights !== 'object' || Array.isArray(pool.selection_weights) || !Object.keys(pool.selection_weights).length) throw new ModelPoolValidationError(`Role ${role}.selection_weights must be a non-empty object in ${source}`, source);
+      for (const [key, value] of Object.entries(pool.selection_weights)) {
+        if (!MODEL_SCORE_KEYS.includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 10) throw new ModelPoolValidationError(`Role ${role}.selection_weights.${key} must be a number from 0 to 10 in ${source}`, source);
+      }
+    }
     if (!Array.isArray(pool.models) || pool.models.length === 0) throw new ModelPoolValidationError(`Role ${role} requires a non-empty models array in ${source}`, source);
     const seen = new Set();
     pool.models.forEach((binding, index) => {
@@ -45,6 +71,19 @@ export function validateModelPools(parsed, source = 'model pool file') {
       if (seen.has(parsedBinding.binding)) throw new ModelPoolValidationError(`Role ${role} repeats model binding ${JSON.stringify(parsedBinding.binding)} in ${source}`, source);
       seen.add(parsedBinding.binding);
     });
+    if (pool.model_facts !== undefined || pool.model_metadata !== undefined) {
+      const facts = pool.model_facts || pool.model_metadata;
+      if (!facts || typeof facts !== 'object' || Array.isArray(facts)) throw new ModelPoolValidationError(`Role ${role}.model_facts must be an object in ${source}`, source);
+      for (const [binding, record] of Object.entries(facts)) {
+        if (!seen.has(binding)) throw new ModelPoolValidationError(`Role ${role}.model_facts contains unlisted binding ${JSON.stringify(binding)} in ${source}`, source);
+        if (!record || typeof record !== 'object' || Array.isArray(record)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding} must be an object in ${source}`, source);
+        if (record.id !== undefined && record.id !== binding) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.id must match its binding in ${source}`, source);
+        if (record.context_window !== undefined && (!Number.isInteger(record.context_window) || record.context_window <= 0)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.context_window must be a positive integer in ${source}`, source);
+        for (const key of ['input_cost', 'output_cost']) if (record[key] !== undefined && (typeof record[key] !== 'number' || !Number.isFinite(record[key]) || record[key] < 0)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.${key} must be a non-negative number in ${source}`, source);
+        try { validateAvailability(record.availability, `Role ${role}.model_facts.${binding}`); }
+        catch (error) { throw new ModelPoolValidationError(`${error.message} in ${source}`, source); }
+      }
+    }
   }
   return parsed;
 }
@@ -104,6 +143,7 @@ export function modelPoolSummary(resolved) {
       enabled: coordinator ? null : enabled,
       pooled: !coordinator && enabled,
       status: coordinator ? 'orchestrator' : (enabled ? 'enabled' : 'disabled'),
+      selection_mode: pool?.selection_mode || 'fallback',
       primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
       fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [],
     };
@@ -112,6 +152,6 @@ export function modelPoolSummary(resolved) {
 
 export function formatModelPools(resolved) {
   if (!resolved || typeof resolved !== 'object' || !resolved.roles || typeof resolved.roles !== 'object') return '';
-  const lines = ['Role        Primary                         Fallbacks                         Status', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
+  const lines = ['Role        Mode     Primary                         Fallbacks                         Status', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.selection_mode || 'fallback').padEnd(8)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
   return lines.join('\n');
 }

@@ -206,12 +206,21 @@ never silently replaced by another pool. `nla_task` and the primary-only
 primary and ordered fallbacks, enabled state, source, resolution reason, and
 health without credentials. `nla_models_reload` re-reads that same source,
 validates it before replacing the in-memory snapshot, and leaves the previous
-snapshot active if validation fails. Model attempts are derived from the
-ordered `models` array itself: every listed model is eligible in order, and
-there is no separate `max_failovers` or model-count setting.
+snapshot active if validation fails. In `fallback`, attempts follow the
+ordered `models` array; in `select`, health and suitability determine the
+candidate order. Every attempt is still bounded by the pool's `models` array,
+and there is no separate `max_failovers` or model-count setting.
 Apply the role recommendations above through your operator override, and verify
 the effective bindings with `nla_models_reload` followed by `nla_models` before
 starting a task after a configuration change.
+
+Pools also accept `selection_mode: "select"`. The default `fallback` mode
+keeps the ordered primary-to-fallback behavior. `select` filters unhealthy or
+already attempted bindings and chooses the best remaining model using the
+role's readable weighted scores and operator-supplied facts; a later failure
+still selects another remaining candidate. See
+[`docs/NLA_MODEL_ROUTING_ARCHITECTURE.md`](docs/NLA_MODEL_ROUTING_ARCHITECTURE.md)
+for the generic configuration shape and local evaluation-store contract.
 
 ### Compactor prompt optimization
 
