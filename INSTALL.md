@@ -56,6 +56,25 @@ Open:
 
 Each enabled role must contain at least one model available through the user's OpenCode providers.
 
+Before a long run, validate the complete pool file locally. This check rejects
+malformed bindings, repeated bindings, and bindings whose model component
+incorrectly repeats the provider prefix. It does not contact a provider or
+claim that a syntactically valid model is available:
+
+```bash
+node scripts/nla-model-pools-preflight.mjs --pools /absolute/path/to/model-pools.json
+```
+
+To check availability, supply a JSON inventory collected by the operator from
+the intended OpenCode runtime. Inventory matching is exact; NLA never guesses
+that a similarly named provider/model is equivalent:
+
+```bash
+node scripts/nla-model-pools-preflight.mjs \
+  --pools /absolute/path/to/model-pools.json \
+  --available-models /absolute/path/to/open-code-model-inventory.json
+```
+
 For a machine-local pool assignment without changing repository defaults, point
 NLA at a complete external pool file:
 
@@ -198,3 +217,8 @@ Removing the clone does not remove those state directories.
 - Do not overwrite existing global or project OpenCode configuration.
 - Do not install or modify providers without explicit user approval.
 - Do not expose secrets in commands, logs, configuration, Notebook, or ledger.
+- NLA blocks common full-environment dump commands (`env`, `printenv`,
+  `export -p`, `declare -p`, `set`, and `/proc/*/environ`), nested shell
+  launchers, and direct privilege tools (`sudo`, `doas`, `runuser`, `su`) for
+  NLA-managed sessions. This is a narrow OpenCode hook policy, not a shell
+  sandbox; keep credentials out of the process environment where practical.

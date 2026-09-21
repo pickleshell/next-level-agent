@@ -42,6 +42,14 @@ Browser is disabled in the repository default model pool. Absent or invalid
 configuration returns Browser `BLOCKED`, while ordinary NLA work continues.
 NLA performs no automatic MCP or browser installation.
 
+`browser_config_resolved: configured=false, reason=NOT_CONFIGURED` is an
+acceptance gate, not a warning that a model may waive. Browser-dependent
+acceptance must be reported `BLOCKED` until an operator creates a private
+configuration, enables the Browser role in the complete external model-pool
+file, verifies the resolved profile, and runs the relevant deterministic or
+opt-in browser check. Do not invent a backend, substitute arbitrary MCP tools,
+or treat text-only inspection as Browser acceptance.
+
 SSE and WebSocket transports are passed through the isolated browser context;
 N1/N2 evidence covers the real browser/network boundary and zero-request
 forbidden fixtures. Full traces and specialized XSS checks remain unsupported.
@@ -71,6 +79,10 @@ This direct backend uses isolated browser contexts. **It cannot guarantee that
 forbidden destinations receive zero requests**, particularly during native
 redirects. For preventive network containment, install the Linux broker below.
 Browser stays optional; ordinary NLA work requires none of these dependencies.
+
+Keep `browser.json` and the complete external `model-pools.json` private and
+operator-owned. Do not place tokens in either file, shell command arguments,
+prompts, task bodies, screenshots, Browser evidence, or NLA telemetry.
 
 For a first check, ask NLA: “Use Browser to open https://example.com and verify
 that the page heading is Example Domain.” A successful result includes Browser

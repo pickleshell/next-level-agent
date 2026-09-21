@@ -30,3 +30,23 @@ ledgers, telemetry, benchmark artifacts, or issue reports.
 
 Runtime telemetry and capability caches are ignored by Git, but users remain
 responsible for checking their own target repositories before publication.
+
+NLA-owned telemetry omits command, prompt, request/response, environment and
+header fields and redacts common secret assignments. This does not control
+OpenCode's internal logs, terminal scrollback, shell history, provider logs, or
+other host telemetry. Avoid full environment dumps and keep provider credentials
+out of command lines and task content.
+
+## Privilege and workspace boundaries
+
+Do not give NLA/OpenCode `sudo` for normal development or acceptance runs. A
+role-level tool policy or an external-directory restriction cannot contain a
+process that can invoke `sudo`, switch users, or read the host filesystem with
+another privileged tool. Use an unprivileged dedicated account, a task-owned
+worktree, minimal provider credentials, and a separately reviewed provisioning
+harness for any operation that genuinely requires elevated privileges.
+
+NLA blocks several common environment-dump forms, nested shell launchers and
+direct privilege tools (`sudo`, `doas`, `runuser`, `su`) in NLA-managed
+sessions, but this is defense in depth around OpenCode's coarse `bash`
+capability—not a complete shell parser or a security sandbox.
