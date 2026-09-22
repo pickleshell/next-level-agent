@@ -33,6 +33,7 @@ import { BrowserCapability, loadBrowserConfig, validateBrowserTask, BROWSER_TOOL
 import { beginBrowserRecovery, claimBrowserRecoveryTask, releaseBrowserRecoveryTask, createBrowserRecovery, recoveryEvidence, validateBrowserRecovery } from './nla-browser-recovery.mjs';
 import { sanitizeTelemetry } from './nla-telemetry.mjs';
 import { assertSafeNlaShellCommand } from './nla-shell-policy.mjs';
+import { withNlaToolDisplay } from './nla-tool-display.mjs';
 export { modelCooldownMs };
 
 export { formatModelPools };
@@ -1147,8 +1148,7 @@ ${toolMapping}
     return _bootstrapCache;
   };
 
-  return {
-    tool: {
+  const nlaTools = {
       ...browserTools,
       nla_task: nlaTask,
       nla_state: nlaState,
@@ -1159,7 +1159,10 @@ ${toolMapping}
       nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
       nla_compact: nlaCompact,
-    },
+  };
+
+  return {
+    tool: Object.fromEntries(Object.entries(nlaTools).map(([name, definition]) => [name, withNlaToolDisplay(name, definition)])),
     // Inject skills path into live config so OpenCode discovers NLA skills
     // without requiring manual symlinks or config file edits.
     // This works because Config.get() returns a cached singleton — modifications

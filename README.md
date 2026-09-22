@@ -38,6 +38,10 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 - **Automatic context protection.** OpenCode auto-compaction handles normal context pressure. NLA adds monitoring, a Supervisor audit, a Compactor checkpoint, and state restoration for controlled recovery.
 - **Telemetry.** NLA records session relationships, selected models, failover, context usage, compaction, and restoration without copying the conversation itself.
 
+NLA tools use compact, consistent activity titles such as `Task: Review Gate F`,
+`State: Complete Gate F`, and `Notebook: NLA`. OpenCode keeps the complete tool
+arguments, result, and metadata available in the expandable tool details.
+
 Prompts define role behavior. The NLA plugin provides managed NLA delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
 ## At a Glance
