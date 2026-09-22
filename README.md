@@ -20,12 +20,13 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 **NLA is a managed multi-agent system with one coordinator, specialized roles, explicit architecture, approval, and review stages, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
 > [!IMPORTANT]
-> **NLA is built for real autonomy:** it routes each task by risk, selects the
-> right model with the **Hybrid Risk & Complexity Assessor**, and keeps agents
-> fast with focused context and optimized tools. Memory, review gates, model
-> health, and automatic failover keep long jobs reliable, while local state,
-> redacted telemetry, and optional local models protect privacy. The result is
-> higher quality, fewer wasted tokens, and autonomous work you can still verify.
+> **NLA is built for efficient agentic work:** it routes each task by risk and
+> complexity, selects the right model with the **Hybrid Risk & Complexity
+> Assessor**, and keeps agents focused with optimized context and tools. Memory,
+> review gates, model health checks, and automatic failover improve reliability,
+> while local state, redacted telemetry, and optional local models protect
+> privacy. The result is higher quality, faster execution, fewer wasted tokens,
+> and work you can verify.
 
 - **One coordinator.** NLA owns the goal, user conversation, approvals, sequence, shared memory, and final acceptance.
 - **Risk-based routing.** Small tasks stay with NLA. Larger or riskier tasks receive only the roles and gates they need.
