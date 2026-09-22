@@ -24,7 +24,8 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
-import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { rankModelCandidates, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { assessTask } from './nla-task-assessor.mjs';
 import { initializeEvaluationStore, loadEvaluationStore, recordEvaluation, recordReviewerEvaluation, runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
@@ -374,15 +375,20 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
       }
 
-      const taskProfile = {
-        weights: parseSelectionWeights(args.selection_weights),
-        context_window: parseContextWindow(args.context_window),
-        policy: args.selection_policy,
-        minimum_score: args.minimum_score,
-        cost_weight: args.cost_weight,
-      };
       const maxAttempts = pool.models.length;
       const mode = selectionMode(pool);
+      const taskProfile = mode === 'select' ? assessTask({
+        role: args.role,
+        description: args.description,
+        prompt: args.prompt,
+        refinement: {
+          selection_weights: args.selection_weights,
+          context_window: args.context_window,
+          selection_policy: args.selection_policy,
+          minimum_score: args.minimum_score,
+          cost_weight: args.cost_weight,
+        },
+      }) : {};
       const selection = mode === 'select'
         ? rankModelCandidates({ role: args.role, pool, evaluations: loadEvaluationStore(evaluationPath), healthManager, taskProfile })
         : healthManager.candidates(pool.models, maxAttempts);
@@ -391,6 +397,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (!selection.models.length) {
         throw unavailablePoolError(selection, `NLA pooled task ${args.role}`);
       }
+      if (mode === 'select') appendRunLog({
+        event: 'task_assessed', session_id: context.sessionID, agent: args.role,
+        risk: taskProfile.risk, complexity: taskProfile.complexity,
+        weights: taskProfile.weights, context_window: taskProfile.context_window,
+        policy: selection.policy, confidence: taskProfile.confidence,
+        source: taskProfile.source, reasons: taskProfile.reasons,
+        selected_model: selection.models[0],
+      });
       for (const modelName of pool.models) {
         const entry = healthManager.state(modelName);
         if (!entry.eligible) {
@@ -759,14 +773,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaTask = tool({
-    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select ranks eligible models and retains bounded failover.',
+    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select automatically assesses task risk and complexity, ranks eligible models, and retains bounded failover.',
     args: {
       role: tool.schema.string().describe('Configured NLA subagent role, for example explorer, architect, implementer, or reviewer'),
       description: tool.schema.string().max(120).describe('Short task title'),
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
-      selection_weights: tool.schema.string().optional().describe('Optional strict JSON object with only coding, reasoning, tool_use, reliability, and latency weights from 0 to 10'),
-      context_window: tool.schema.string().optional().describe('Optional required context window as a positive integer; select excludes models without sufficient declared context'),
-      selection_policy: tool.schema.string().optional().describe('Optional select-policy override for this task: quality, balanced, or cost'),
+      selection_weights: tool.schema.string().optional().describe('Optional model-proposed refinement for the runtime task assessor: strict JSON with only coding, reasoning, tool_use, reliability, and latency weights from 0 to 10'),
+      context_window: tool.schema.string().optional().describe('Optional model-proposed minimum context window; runtime may raise it and select excludes models without sufficient declared context'),
+      selection_policy: tool.schema.string().optional().describe('Optional model-proposed select policy: quality, balanced, or cost; runtime forces quality for high-risk tasks'),
       minimum_score: tool.schema.string().optional().describe('Optional cost-policy quality floor from 0 to 10'),
       cost_weight: tool.schema.string().optional().describe('Optional balanced-policy cost weight from 0 to 1'),
       review_target_session_id: tool.schema.string().optional().describe('Reviewer only: exact completed Implementer child session ID from prior nla_task metadata.sessionID. When supplied, the Reviewer must return only strict JSON with verdict (pass, fail, or needs_changes) and coding, reasoning, and tool_use scores from 1 to 10; no target prompt, response, secrets, or other target internals are provided or accepted.'),
