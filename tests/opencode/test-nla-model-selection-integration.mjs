@@ -72,7 +72,21 @@ try {
     },
   });
   assert.equal(inventoryCalls, 0, 'provider discovery must not run during plugin initialization');
-  await instance['chat.message']({ sessionID: 'primary_select', agent: 'nla', directory: root });
+  await instance['chat.message']({ sessionID: 'primary_select', agent: 'nla', directory: root, model: { providerID: 'fixture', modelID: 'b' } });
+  await instance.event({ event: { type: 'message.updated', properties: { info: {
+    id: 'message_usage_primary', sessionID: 'primary_select', role: 'assistant', providerID: 'fixture', modelID: 'b',
+    tokens: { input: 101, output: 23, reasoning: 11, cache: { read: 31, write: 7 }, total: 173 }, cost: 0.0123, finish: 'stop',
+  } } } });
+  await instance.event({ event: { type: 'message.updated', properties: { info: {
+    id: 'message_usage_primary', sessionID: 'primary_select', role: 'assistant', providerID: 'fixture', modelID: 'b',
+    tokens: { input: 101, output: 23, reasoning: 11, cache: { read: 31, write: 7 }, total: 173 }, cost: 0.0123, finish: 'stop',
+  } } } });
+  const usageSummary = await instance.tool.nla_usage.execute({ action: 'summary' }, { sessionID: 'primary_select', directory: root });
+  assert.match(usageSummary.output, /\| nla \| fixture\/b \| 1 \| 101 \| 23 \| 11 \| 31 \| 7 \| 173 \| 0.0123 \|/, 'nla_usage reports durable per-workflow token accounting');
+  const usageEvents = fs.readFileSync(path.join(root, '.opencode', 'agent-run.log'), 'utf8').trim().split('\n').map(JSON.parse).filter((entry) => entry.event === 'model_usage');
+  assert.equal(usageEvents.length, 1, 'the existing tail-able JSONL run log receives one deduplicated model usage event');
+  assert.equal(usageEvents[0].total_tokens, 173);
+  assert.ok(!JSON.stringify(usageEvents[0]).includes('prompt'), 'usage telemetry never includes prompt content');
   const selected = await instance.tool.nla_task.execute({ role: 'architect', description: 'selection fixture', prompt: 'bounded task', context_window: '20000' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(inventoryCalls, 1, 'resolved inventory is cached across chat and task');
   assert.equal(selected.metadata.model, 'fixture/b', 'nla_task select uses the highest-ranked model');

@@ -14,7 +14,7 @@ const SQLiteDatabase = globalThis.Bun
   ? (await import('bun:sqlite')).Database
   : (await import('node:sqlite')).DatabaseSync;
 
-export const SYSTEM_DATABASE_VERSION = 1;
+export const SYSTEM_DATABASE_VERSION = 2;
 
 export class SystemDatabaseError extends Error {
   constructor(message) { super(message); this.name = 'SystemDatabaseError'; }
@@ -185,6 +185,27 @@ function migrate(db) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS model_usage_events (
+      message_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      parent_session_id TEXT,
+      root_session_id TEXT NOT NULL,
+      role TEXT,
+      binding TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+      output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+      reasoning_tokens INTEGER NOT NULL CHECK (reasoning_tokens >= 0),
+      cache_read_tokens INTEGER NOT NULL CHECK (cache_read_tokens >= 0),
+      cache_write_tokens INTEGER NOT NULL CHECK (cache_write_tokens >= 0),
+      total_tokens INTEGER NOT NULL CHECK (total_tokens >= 0),
+      cost REAL NOT NULL CHECK (cost >= 0),
+      finish_reason TEXT,
+      observed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS model_usage_events_root_observed_idx
+      ON model_usage_events (root_session_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS model_usage_events_binding_observed_idx
+      ON model_usage_events (binding, observed_at DESC);
   `);
   const applied = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(SYSTEM_DATABASE_VERSION);
   if (!applied) db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(SYSTEM_DATABASE_VERSION, now());
@@ -368,6 +389,7 @@ export function systemSchema() {
     model_registry: 'Operator facts for known model bindings.',
     model_notes: 'Optional operator annotations for registered models.',
     model_health: 'Persisted temporary cooldown and quarantine state.',
+    model_usage_events: 'Privacy-preserving per-completed-request token, cache, cost, model, role, and finish metadata; never prompt or response text.',
     session_ledgers: 'Authoritative NLA workflow checkpoints used for restore and compaction.',
     restore_blocks: 'Fail-closed markers that deny unsafe continuation after restore failure.',
     database_catalog: 'Named operator databases outside NLA architectural tables.',
@@ -456,10 +478,119 @@ export function systemDatabaseStatus(file) {
       registered_models: Number(db.prepare('SELECT COUNT(*) AS count FROM model_registry').get().count),
       model_notes: Number(db.prepare('SELECT COUNT(*) AS count FROM model_notes').get().count),
       health_records: Number(db.prepare('SELECT COUNT(*) AS count FROM model_health').get().count),
+      model_usage_events: Number(db.prepare('SELECT COUNT(*) AS count FROM model_usage_events').get().count),
       session_ledgers: Number(db.prepare('SELECT COUNT(*) AS count FROM session_ledgers').get().count),
       restore_blocks: Number(db.prepare('SELECT COUNT(*) AS count FROM restore_blocks').get().count),
       databases: db.prepare('SELECT name, purpose, created_at, updated_at FROM database_catalog ORDER BY name').all(),
     };
+  } finally { closeDatabase(db); }
+}
+
+function usageInteger(value, field) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new SystemDatabaseError(`${field} must be a non-negative integer`);
+  return value;
+}
+
+function usageText(value, field, maxLength) {
+  if (typeof value !== 'string' || !value.trim() || value.length > maxLength || SECRET_PATTERN.test(value)) throw new SystemDatabaseError(`Invalid model usage ${field}`);
+  return value;
+}
+
+function validateUsageEvent(event) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) throw new SystemDatabaseError('Model usage event must be an object');
+  const message_id = validSessionID(event.message_id);
+  const session_id = validSessionID(event.session_id);
+  const root_session_id = validSessionID(event.root_session_id);
+  const parent_session_id = event.parent_session_id === null || event.parent_session_id === undefined ? null : validSessionID(event.parent_session_id);
+  const role = event.role === null || event.role === undefined ? null : usageText(event.role, 'role', 64);
+  const binding = validBinding(event.binding);
+  const finish_reason = event.finish_reason === null || event.finish_reason === undefined ? null : usageText(event.finish_reason, 'finish reason', 128);
+  const cost = Number(event.cost ?? 0);
+  if (!Number.isFinite(cost) || cost < 0) throw new SystemDatabaseError('Model usage cost must be a non-negative number');
+  return {
+    message_id, session_id, parent_session_id, root_session_id, role, binding, finish_reason,
+    input_tokens: usageInteger(Number(event.input_tokens ?? 0), 'input_tokens'),
+    output_tokens: usageInteger(Number(event.output_tokens ?? 0), 'output_tokens'),
+    reasoning_tokens: usageInteger(Number(event.reasoning_tokens ?? 0), 'reasoning_tokens'),
+    cache_read_tokens: usageInteger(Number(event.cache_read_tokens ?? 0), 'cache_read_tokens'),
+    cache_write_tokens: usageInteger(Number(event.cache_write_tokens ?? 0), 'cache_write_tokens'),
+    total_tokens: usageInteger(Number(event.total_tokens ?? 0), 'total_tokens'),
+    cost,
+  };
+}
+
+function usageIsMoreComplete(existing, next) {
+  return ['input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_write_tokens', 'total_tokens', 'cost']
+    .some((key) => Number(next[key]) > Number(existing[key]));
+}
+
+// OpenCode can emit more than one update for an assistant message. Keep one
+// row per message and accept only a strictly more complete final accounting.
+export function recordSystemModelUsage(file, event) {
+  const usage = validateUsageEvent(event);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      const existing = db.prepare(`SELECT input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+        cache_write_tokens, total_tokens, cost FROM model_usage_events WHERE message_id = ?`).get(usage.message_id);
+      if (existing && !usageIsMoreComplete(existing, usage)) return { recorded: false, message_id: usage.message_id };
+      const statement = db.prepare(`INSERT INTO model_usage_events
+        (message_id, session_id, parent_session_id, root_session_id, role, binding, input_tokens, output_tokens,
+         reasoning_tokens, cache_read_tokens, cache_write_tokens, total_tokens, cost, finish_reason, observed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(message_id) DO UPDATE SET session_id = excluded.session_id, parent_session_id = excluded.parent_session_id,
+          root_session_id = excluded.root_session_id, role = excluded.role, binding = excluded.binding,
+          input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
+          reasoning_tokens = excluded.reasoning_tokens, cache_read_tokens = excluded.cache_read_tokens,
+          cache_write_tokens = excluded.cache_write_tokens, total_tokens = excluded.total_tokens, cost = excluded.cost,
+          finish_reason = excluded.finish_reason, observed_at = excluded.observed_at`);
+      statement.run(usage.message_id, usage.session_id, usage.parent_session_id, usage.root_session_id, usage.role,
+        usage.binding, usage.input_tokens, usage.output_tokens, usage.reasoning_tokens, usage.cache_read_tokens,
+        usage.cache_write_tokens, usage.total_tokens, usage.cost, usage.finish_reason, now());
+      return { recorded: true, message_id: usage.message_id };
+    });
+  } finally { closeDatabase(db); }
+}
+
+function usageFilters({ rootSessionID, role, binding } = {}) {
+  const filters = [];
+  const params = [];
+  if (rootSessionID) { filters.push('root_session_id = ?'); params.push(validSessionID(rootSessionID)); }
+  if (role) { filters.push('role = ?'); params.push(usageText(role, 'role', 64)); }
+  if (binding) { filters.push('binding = ?'); params.push(validBinding(binding)); }
+  return { where: filters.length ? `WHERE ${filters.join(' AND ')}` : '', params };
+}
+
+function usageLimit(limit) {
+  const parsed = Number(limit ?? 20);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) throw new SystemDatabaseError('Usage limit must be an integer from 1 to 100');
+  return parsed;
+}
+
+export function listSystemModelUsage(file, { rootSessionID, role, binding, limit } = {}) {
+  const db = openDatabase(file);
+  try {
+    migrate(db);
+    const filters = usageFilters({ rootSessionID, role, binding });
+    return db.prepare(`SELECT message_id, session_id, parent_session_id, root_session_id, role, binding,
+      input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+      cost, finish_reason, observed_at FROM model_usage_events ${filters.where}
+      ORDER BY observed_at DESC LIMIT ?`).all(...filters.params, usageLimit(limit));
+  } finally { closeDatabase(db); }
+}
+
+export function summarizeSystemModelUsage(file, { rootSessionID, role, binding } = {}) {
+  const db = openDatabase(file);
+  try {
+    migrate(db);
+    const filters = usageFilters({ rootSessionID, role, binding });
+    return db.prepare(`SELECT role, binding, COUNT(*) AS requests, COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+      COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(SUM(cost), 0) AS cost
+      FROM model_usage_events ${filters.where} GROUP BY role, binding
+      ORDER BY total_tokens DESC, binding ASC`).all(...filters.params);
   } finally { closeDatabase(db); }
 }
 
