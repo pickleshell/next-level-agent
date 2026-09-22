@@ -7,7 +7,7 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
-### Model inventory context fix (in development)
+### Model inventory context fix
 
 - Fill missing SQLite model context limits and prices from resolved OpenCode
   providers on first use and pool reload, preserving operator facts and scores.
@@ -29,7 +29,7 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 - Hardened pool validation and telemetry redaction; corrected Ollama
   message-validation failover and preserved restore failures.
 
-### In development on `feature/nla-system-database` (not merged or released)
+### Persistent system database
 
 - Added a private SQLite system database for typed settings, model facts and
   evaluations, model health, workflow ledgers, restore blocks, and a catalog
