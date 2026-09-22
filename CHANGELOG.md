@@ -14,6 +14,9 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 - Bound discovery time, coalesce concurrent requests, and keep provider payloads
   out of telemetry. Regression coverage reproduces zero-attempt context rejection
   and checks persistence, override priority, timeout, and reload recovery.
+- Align native OpenCode role defaults with the checked-in OpenCode Go pool
+  primaries, and verify that a fresh launcher installation resolves this profile
+  without private overrides.
 
 ### Committed since `nla-v0.1.0-alpha.2` (not tagged as a new NLA release)
 

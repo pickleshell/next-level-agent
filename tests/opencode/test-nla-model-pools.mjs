@@ -8,6 +8,7 @@ import { runUtilityModel, utilityHealthEndpoint } from '../../.opencode/plugins/
 import { NextLevelAgentPlugin, availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
 
 const defaultPath = path.resolve('config/model-pools.json');
+const defaultOpenCodeConfig = JSON.parse(fs.readFileSync('opencode.json', 'utf8'));
 const original = process.env.NLA_MODEL_POOLS_PATH;
 try {
   delete process.env.NLA_MODEL_POOLS_PATH;
@@ -16,6 +17,12 @@ try {
   assert.equal(resolved.resolution, 'repository/package default');
   assert.ok(Object.values(resolved.roles).every((pool) => !pool.models.some((model) => model.startsWith('ollama/'))), 'production pools do not assign local Ollama models');
   assert.ok(Object.values(resolved.roles).every((pool) => pool.models.every((model) => model.startsWith('opencode-go/'))), 'production default contains only OpenCode Go bindings');
+  for (const [role, pool] of Object.entries(resolved.roles)) {
+    const nativeRole = defaultOpenCodeConfig.agent[role];
+    assert.ok(nativeRole, `default OpenCode config defines ${role}`);
+    assert.equal(nativeRole.model, pool.models[0], `default OpenCode ${role} model matches its pool primary`);
+  }
+  for (const role of ['build', 'plan']) assert.equal(defaultOpenCodeConfig.agent[role].model, 'opencode-go/gpt-5.6-luna', `${role} stays inside the ready-to-use OpenCode Go profile`);
   assert.ok(Object.values(resolved.roles).every((pool) => ['fallback', 'select'].includes(pool.selection_mode)), 'every production role declares its pool mode');
   for (const role of ['architect', 'explorer', 'implementer', 'reviewer']) assert.equal(resolved.roles[role].selection_mode, 'select', `${role} uses adaptive selection by default`);
   const seededModels = Object.keys(JSON.parse(fs.readFileSync('config/model-evaluations.json', 'utf8')).models).sort();
