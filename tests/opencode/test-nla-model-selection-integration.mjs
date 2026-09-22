@@ -53,9 +53,14 @@ let instance;
 try {
   const selectedCalls = [];
   let selectedChild = 0;
+  let inventoryCalls = 0;
   instance = await NextLevelAgentPlugin({
     directory: root,
     client: {
+      config: { providers: async () => {
+        inventoryCalls++;
+        return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
+      } },
       session: {
         create: async () => ({ data: { id: `child_select_${++selectedChild}` } }),
         prompt: async (request) => {
@@ -66,8 +71,10 @@ try {
       },
     },
   });
+  assert.equal(inventoryCalls, 0, 'provider discovery must not run during plugin initialization');
   await instance['chat.message']({ sessionID: 'primary_select', agent: 'nla', directory: root });
-  const selected = await instance.tool.nla_task.execute({ role: 'architect', description: 'selection fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  const selected = await instance.tool.nla_task.execute({ role: 'architect', description: 'selection fixture', prompt: 'bounded task', context_window: '20000' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(inventoryCalls, 1, 'resolved inventory is cached across chat and task');
   assert.equal(selected.metadata.model, 'fixture/b', 'nla_task select uses the highest-ranked model');
   const coding = await instance.tool.nla_task.execute({ role: 'router', description: 'coding weights', prompt: 'bounded task', selection_weights: '{"coding":10}' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   const reasoning = await instance.tool.nla_task.execute({ role: 'router', description: 'reasoning weights', prompt: 'bounded task', selection_weights: '{"reasoning":10}' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
@@ -76,7 +83,7 @@ try {
   assert.deepEqual(selectedCalls.map(({ agent, model }) => `${agent}:${model.providerID}/${model.modelID}`), ['architect:fixture/b', 'router:fixture/coding', 'router:fixture/reasoning']);
   const assessmentEvents = fs.readFileSync(path.join(root, '.opencode', 'agent-run.log'), 'utf8').trim().split('\n').map(JSON.parse).filter((entry) => entry.event === 'task_assessed');
   assert.equal(assessmentEvents.length, 3, 'every select delegation runs the mandatory task assessor');
-  assert.equal(assessmentEvents[0].source, 'deterministic');
+  assert.equal(assessmentEvents[0].source, 'hybrid');
   assert.equal(assessmentEvents[1].source, 'hybrid');
   assert.equal(assessmentEvents[1].selected_model, 'fixture/coding');
   assert.ok(assessmentEvents.every((entry) => !Object.hasOwn(entry, 'prompt') && !Object.hasOwn(entry, 'description')), 'assessment telemetry excludes task content');
@@ -89,6 +96,9 @@ try {
   assert.equal(contextSelected.metadata.model, 'fixture/c', 'imported SQLite model facts affect live selection');
   await instance.tool.nla_system.execute({ action: 'setting_set', key: 'routing.selection_policy.architect', value_json: '"balanced"' }, { sessionID: 'primary_select', directory: root });
   assert.equal((await instance.tool.nla_models_reload.execute({}, { sessionID: 'primary_select', directory: root })).metadata.roles.find((row) => row.role === 'architect').selection_policy, 'balanced', 'SQLite policy survives pool reload');
+  assert.equal(inventoryCalls, 2, 'reload refreshes resolved provider inventory');
+  const afterReload = await instance.tool.nla_task.execute({ role: 'architect', description: 'preserve operator context', prompt: 'bounded task', context_window: '100000' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(afterReload.metadata.model, 'fixture/c', 'inventory refresh must preserve operator context overrides');
   const beforeInvalidReviewTarget = evaluationStore();
   const callsBeforeInvalidReviewTarget = selectedCalls.length;
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'invalid review target role', prompt: 'must not dispatch', review_target_session_id: selected.metadata.sessionID }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal }), /review_target_session_id/);
