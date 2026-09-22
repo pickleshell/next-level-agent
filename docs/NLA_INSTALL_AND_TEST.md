@@ -7,18 +7,17 @@ Plugin: `next-level-agent` (`.codex-plugin/plugin.json`)
 
 The authoritative OpenCode profile is the checked-in [`opencode.json`](../opencode.json). It declares the local NLA plugin, the `nla` default agent, primary agents, subagents, model bindings, and `./skills`.
 
-Run it from the repository root:
+Use the launcher from the installed clone; it loads this profile without
+overwriting the user's global OpenCode configuration:
 
 ```bash
-git clone <NLA-repository-url> next-level-agent
-cd next-level-agent
-opencode
+"$HOME/.local/share/nla/next-level-agent/scripts/nla" /absolute/path/to/project
 ```
 
 A healthy new session shows:
 
 ```text
-> nla · hy3-free
+> nla · gpt-5.6-luna
 → Skill "next-level-agent"
 ```
 
@@ -28,9 +27,9 @@ No provider credentials are stored in this repository. Configure authentication 
 
 | Agent | Model | Purpose |
 | --- | --- | --- |
-| `nla` | `opencode/hy3-free` | Default workflow: skills, routing, delegation, acceptance |
-| `build` | `openrouter/thinkingmachines/inkling:free` | Direct implementation |
-| `plan` | `openrouter/thinkingmachines/inkling:free` | Planning without implementation |
+| `nla` | `opencode-go/gpt-5.6-luna` | Default workflow: skills, routing, delegation, acceptance |
+| `build` | `opencode-go/gpt-5.6-luna` | Direct implementation |
+| `plan` | `opencode-go/gpt-5.6-luna` | Planning without implementation |
 
 `router` and all other configured roles are internal subagents. The approved
 implementation route is `explorer → implementer → reviewer`. New or ambiguous
@@ -85,8 +84,8 @@ and the user explicitly approves the resulting written design.
 - Confirm `.checkpoints/` has timestamped `.json` files.
 - Confirm `.logs/compact.log` exists with event types (`compact`, `checkpoint_save`, `checkpoint_restore`, `token_threshold_exceeded`).
 - Confirm eight enabled subagent pools and the deliberately disabled primary
-  `nla` pool in `config/model-pools.json`; every enabled pool has one fallback
-  and the ordered models are tried through the complete fallback chain.
+  `nla` coordinator entry in `config/model-pools.json`; fallback pools try their
+  complete ordered chain, while `select` pools rank eligible configured models.
 
 ## Run log
 
