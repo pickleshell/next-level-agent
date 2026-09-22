@@ -456,13 +456,17 @@ try {
   fs.rmSync(path.join(root, 'sessions', 'parent_123.json'), { force: true });
   fs.rmSync(path.join(root, 'browser-recovery'), { recursive: true, force: true });
   fs.rmSync(path.join(root, '.browser-recovery.required'), { force: true });
+  // A new NLA state is required here: deleting the legacy JSON no longer
+  // deletes the authoritative SQLite ledger for the earlier browser run.
+  const historicalState = path.join(root, 'historical-state');
+  process.env.NLA_MEMORY_DIR = historicalState;
   const historicalEvidence = path.join(root, 'historical-evidence.json'); fs.writeFileSync(historicalEvidence, JSON.stringify({ run_id: 'historical-run', session_id: 'historical-browser', task_id: 'historical-child', revision: { head: null }, result: 'PASS', checks: [{ id: 'A', status: 'PASS' }] }));
   const historicalTask = task({ success_criteria: [{ id: 'A', check: 'text_equals', locator: { test_id: 'result' }, expected: 'Ready', mandatory: true }] });
-  createBrowserRecovery(root, 'parent_123', historicalTask, { run_id: 'historical-run', id: 'historical-browser', child: 'historical-child', revision: { head: null } }, { metadata: { evidence: historicalEvidence, browser_result: 'PASS' } }, [{ id: 'A', status: 'PASS' }]);
+  createBrowserRecovery(historicalState, 'parent_123', historicalTask, { run_id: 'historical-run', id: 'historical-browser', child: 'historical-child', revision: { head: null } }, { metadata: { evidence: historicalEvidence, browser_result: 'PASS' } }, [{ id: 'A', status: 'PASS' }]);
   delete process.env.NLA_BROWSER_CONFIG_PATH;
   plugin = await NextLevelAgentPlugin({ directory: root, client: { session: { prompt: async () => ({ data: true }) } } });
   await plugin['chat.message']({ sessionID: 'parent_123', agent: 'nla', directory: root });
-  await plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ goal: 'retain recovered evidence', workflow_stage: 'verification', verification_evidence: recoveryEvidence(root, 'parent_123') }) }, { sessionID: 'parent_123', directory: root });
+  await plugin.tool.nla_state.execute({ snapshot: JSON.stringify({ goal: 'retain recovered evidence', workflow_stage: 'verification', verification_evidence: recoveryEvidence(historicalState, 'parent_123') }) }, { sessionID: 'parent_123', directory: root });
   const blocked = await plugin.tool.nla_task.execute({ role: 'browser', description: 'Absent browser', prompt: 'Read', browser: JSON.stringify(task()) }, { sessionID: 'parent_123', directory: root, abort: new AbortController().signal });
   assert.equal(JSON.parse(blocked.output).reason, 'NOT_CONFIGURED');
   assert.ok(plugin.tool.nla_models);

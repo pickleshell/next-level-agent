@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { BROWSER_TOOLS } from '../../.opencode/plugins/nla-browser.mjs';
-import { loadLedger } from '../../.opencode/plugins/nla-memory.mjs';
+import { hasSystemRestoreBlock, loadSystemLedger } from '../../.opencode/plugins/nla-system-database.mjs';
 
 // Run serially: plugin configuration is process-global. All state and telemetry
 // live in disposable directories; the MCP fixture never starts a real browser.
@@ -41,6 +42,17 @@ async function fixture(run) {
   const contracts = [];
   let childAction = async () => {};
   const context = (sessionID = owner) => ({ sessionID, directory: root, abort: new AbortController().signal });
+  const loadLedger = (_root, sessionID) => loadSystemLedger(path.join(root, 'system.sqlite'), root, sessionID);
+  const rawLedger = (sessionID = owner) => {
+    const db = new DatabaseSync(path.join(root, 'system.sqlite'));
+    try { return db.prepare('SELECT ledger_json FROM session_ledgers WHERE session_id = ?').get(sessionID)?.ledger_json; }
+    finally { db.close(); }
+  };
+  const writeRawLedger = (sessionID, value) => {
+    const db = new DatabaseSync(path.join(root, 'system.sqlite'));
+    try { db.prepare('UPDATE session_ledgers SET ledger_json = ? WHERE session_id = ?').run(value, sessionID); }
+    finally { db.close(); }
+  };
   const chat = (sessionID = owner) => plugin['chat.message']({ sessionID, agent: 'nla', directory: root });
   const client = {
     tool: { list: async () => ({ data: BROWSER_TOOLS.map(id => ({ id, parameters: { type: 'object' } })) }) },
@@ -121,7 +133,9 @@ async function fixture(run) {
       get children() { return children; },
       get restores() { return restores; },
       ledger: (sessionID = owner) => loadLedger(root, sessionID),
-      ledgerBytes: (sessionID = owner) => fs.readFileSync(path.join(root, 'sessions', `${sessionID}.json`), 'utf8'),
+      ledgerBytes: rawLedger,
+      writeRawLedger,
+      restoreBlocked: (sessionID = owner) => hasSystemRestoreBlock(path.join(root, 'system.sqlite'), root, sessionID),
     });
   } finally {
     try { await plugin?.dispose(); }
@@ -368,7 +382,7 @@ test('Browser ledger ingress adversarial integration', { concurrency: false }, a
     const children = f.children;
     fs.writeFileSync(path.join(f.root, 'browser-recovery', 'index.json'), '{corrupt compaction recovery');
     await f.plugin.event({ event: { type: 'session.compacted', properties: { sessionID: owner } } });
-    assert.ok(fs.existsSync(path.join(f.root, 'restore-blocked', `${owner}.json`)));
+    assert.equal(f.restoreBlocked(), true);
     await f.plugin.event({ event: { type: 'session.created', properties: { info: { id: grandchild, parentID: child, directory: f.root } } } });
     for (const sessionID of [owner, child, grandchild]) {
       for (const tool of Object.keys(toolArgs)) {
@@ -399,10 +413,8 @@ test('Browser ledger ingress adversarial integration', { concurrency: false }, a
     await t.test(`${hook}: malformed startup persists execution block across plugin recreation`, () => fixture(async f => {
       await f.initialize();
       const validLedger = f.ledgerBytes();
-      const ledgerFile = path.join(f.root, 'sessions', `${owner}.json`);
-      const blockFile = path.join(f.root, 'restore-blocked', `${owner}.json`);
       await f.recreate();
-      fs.writeFileSync(ledgerFile, '{malformed startup ledger');
+      f.writeRawLedger(owner, '{malformed startup ledger');
       const restores = f.restores;
       const children = f.children;
       if (hook === 'chat.message') {
@@ -410,14 +422,13 @@ test('Browser ledger ingress adversarial integration', { concurrency: false }, a
       } else {
         await f.plugin.event({ event: { type: hook, properties: { info: { id: owner, directory: f.root } } } });
       }
-      assert.ok(fs.existsSync(blockFile), 'startup failure must persist a restore block');
-      assert.equal(JSON.parse(fs.readFileSync(blockFile, 'utf8')).session_id, owner);
+      assert.equal(f.restoreBlocked(), true, 'startup failure must persist a restore block');
       assert.equal(f.ledgerBytes(), '{malformed startup ledger');
       assert.equal(f.restores, restores);
 
       // Remove the original parse failure without clearing the durable block.
       // Otherwise a second rejection could merely be rediscovering bad JSON.
-      fs.writeFileSync(ledgerFile, validLedger);
+      f.writeRawLedger(owner, validLedger);
       await f.recreate();
       for (let attempt = 0; attempt < 2; attempt++) {
         await assert.rejects(f.chat(), error => error.code === 'NLA_CONTEXT_RESTORE_BLOCKED');
@@ -432,7 +443,7 @@ test('Browser ledger ingress adversarial integration', { concurrency: false }, a
           error => error.code === 'NLA_CONTEXT_RESTORE_BLOCKED',
         );
       }
-      assert.ok(fs.existsSync(blockFile));
+      assert.equal(f.restoreBlocked(), true);
       assert.equal(f.children, children);
       assert.equal(f.restores, restores);
       assert.equal(f.ledgerBytes(), validLedger);

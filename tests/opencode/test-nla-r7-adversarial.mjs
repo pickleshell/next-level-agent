@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { normalizeLedger, saveLedger } from '../../.opencode/plugins/nla-memory.mjs';
+import { hasSystemRestoreBlock } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-r7-test-'));
 const old = Object.fromEntries(['NLA_MODEL_POOLS_PATH', 'NLA_MEMORY_DIR', 'NLA_BROWSER_CONFIG_PATH'].map(key => [key, process.env[key]]));
@@ -12,6 +14,7 @@ try {
   fs.writeFileSync(pool, JSON.stringify({ roles: { explorer: { enabled: true, models: ['fixture/model'] } } }));
   process.env.NLA_MODEL_POOLS_PATH = pool;
   process.env.NLA_MEMORY_DIR = root;
+  const systemDatabase = path.join(root, 'system.sqlite');
 
   // A child created before tool/model preparation must be rolled back.
   let aborts = 0;
@@ -44,7 +47,9 @@ try {
     restorePlugin['chat.message']({ sessionID, agent: 'nla', directory: root }),
     error => error.code === 'NLA_CONTEXT_RESTORE_BLOCKED',
   );
-  const restoreMarker = JSON.parse(fs.readFileSync(path.join(root, 'restore-blocked', `${sessionID}.json`), 'utf8'));
+  const db = new DatabaseSync(systemDatabase);
+  const restoreMarker = db.prepare('SELECT reason, code FROM restore_blocks WHERE session_id = ?').get(sessionID);
+  db.close();
   assert.equal(restoreMarker.reason, 'restore transport failed');
   assert.equal(restoreMarker.code, 'NLA_CONTEXT_RESTORE_BLOCKED');
   await restorePlugin.dispose();
@@ -59,7 +64,7 @@ try {
     await childPlugin['chat.message']({ sessionID: childID, agent: 'implementer', directory: root });
     await childPlugin.event({ event: { type: 'session.compacted', properties: { sessionID: childID } } });
     await childPlugin['tool.execute.before']({ sessionID: childID, tool: 'read' }, { args: {} });
-    assert.equal(fs.existsSync(path.join(root, 'restore-blocked', `${childID}.json`)), false);
+    assert.equal(hasSystemRestoreBlock(systemDatabase, root, childID), false);
   }
   await childPlugin.dispose();
 

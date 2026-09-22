@@ -1,0 +1,22 @@
+{
+  "models": {
+    "opencode-go/example-model": {
+      "facts": {
+        "context_window": 131072,
+        "input_cost": 0.2,
+        "output_cost": 1.2,
+        "availability": "always"
+      },
+      "scores": {
+        "coding": 0,
+        "reasoning": 0,
+        "tool_use": 0,
+        "reliability": 0,
+        "latency": 0
+      },
+      "notes": {
+        "operator": "Replace this example with verified local deployment notes."
+      }
+    }
+  }
+}

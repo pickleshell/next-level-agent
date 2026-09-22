@@ -11,8 +11,8 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { tool } from '@opencode-ai/plugin';
 import {
-  contextTokens, initializeNotebook, loadLedger, memoryRoot, notebookRoot,
-  parseLedgerJSON, readNotebook, restorePacket, saveLedger, atomicWrite, safeSessionID,
+  contextTokens, initializeNotebook, memoryRoot, notebookRoot,
+  parseLedgerJSON, readNotebook, restorePacket,
   thresholdState, writeNotebookPage,
 } from './nla-memory.mjs';
 import { intelligentCheckpoint } from './nla-compaction.mjs';
@@ -26,7 +26,13 @@ import {
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
 import { rankModelCandidates, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
 import { assessTask } from './nla-task-assessor.mjs';
-import { initializeEvaluationStore, loadEvaluationStore, recordEvaluation, recordReviewerEvaluation, runtimeEvaluationScores } from './nla-model-evaluations.mjs';
+import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
+import {
+  configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
+  listModelRegistry, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
+  recordSystemReviewerEvaluation, setSystemSetting, saveSystemHealth, loadSystemHealth, synchronizeConfiguredModelRegistry, systemDatabaseStatus,
+  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, saveSystemLedger, saveSystemRestoreBlock, systemSchema,
+} from './nla-system-database.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
 import { BrowserCapability, loadBrowserConfig, validateBrowserTask, BROWSER_TOOLS, BROWSER_TOOL_GUIDE } from './nla-browser.mjs';
@@ -139,8 +145,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const runLogPath = path.join(directory, '.opencode', 'agent-run.log');
   const capabilityCachePath = path.join(directory, '.opencode', 'nla-role-capabilities.json');
   const stateRoot = memoryRoot(homeDir);
-  const evaluationPath = path.join(stateRoot, 'model-evaluations.json');
-  initializeEvaluationStore(evaluationPath, DEFAULT_MODEL_EVALUATIONS_PATH);
+  const legacyEvaluationPath = path.join(stateRoot, 'model-evaluations.json');
+  const systemDatabase = initializeSystemDatabase({ stateRoot, seedPath: DEFAULT_MODEL_EVALUATIONS_PATH, legacyEvaluationPath });
+  const loadLedger = (_root, sessionID) => loadSystemLedger(systemDatabase, stateRoot, sessionID);
+  const saveLedger = (_root, ledger) => saveSystemLedger(systemDatabase, ledger);
   let browserConfig = null;
   let browserConfigError = null;
   try { browserConfig = loadBrowserConfig(); } catch (error) { browserConfigError = error; }
@@ -150,9 +158,16 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const hardContextTokens = Number(process.env.NLA_CONTEXT_HARD_TOKENS || 70000);
 
   let resolvedPools = effectiveModelPools();
-  let pools = resolvedPools.roles;
+  const applyPersistedPolicies = (roles) => Object.fromEntries(Object.entries(roles).map(([role, pool]) => {
+    const policy = pool.selection_mode === 'select' ? configuredSelectionPolicy(systemDatabase, role) : null;
+    return [role, policy ? { ...pool, selection_policy: policy } : pool];
+  }));
+  synchronizeConfiguredModelRegistry(systemDatabase, resolvedPools.roles);
+  let pools = applyPersistedPolicies(resolvedPools.roles);
+  resolvedPools = { ...resolvedPools, roles: pools };
   const pendingTasks = new Map();
   const healthManager = new ModelHealthManager();
+  healthManager.hydrate(loadSystemHealth(systemDatabase));
   const trackedSessions = new Map();
   const completedResults = new Map();
   const primarySessions = new Map();
@@ -175,10 +190,15 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const recordRuntimeEvaluation = (binding, succeeded, elapsedMs) => {
     try {
-      recordEvaluation(evaluationPath, binding, runtimeEvaluationScores({ succeeded, elapsedMs }));
+      recordSystemEvaluation(systemDatabase, binding, runtimeEvaluationScores({ succeeded, elapsedMs }));
     } catch (error) {
       appendRunLog({ event: 'model_evaluation_write_failed', model: binding, reason: error.code || error.name || 'evaluation_write_failed' });
     }
+  };
+
+  const persistModelHealth = (binding, endpoint = '') => {
+    try { saveSystemHealth(systemDatabase, binding, endpoint, healthManager.state(binding, endpoint)); }
+    catch (error) { appendRunLog({ event: 'model_health_write_failed', model: binding, reason: error.code || error.name || 'health_write_failed' }); }
   };
 
   // Only transient provider execution failures are runtime reliability evidence.
@@ -206,6 +226,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     }
     const previousModel = state.model;
     const failure = healthManager.failure(previousModel, reason, '', modelCooldownMs(state.pool));
+    persistModelHealth(previousModel);
     const runtimeFailure = state.exactModel && runtimeFailureIsModelEvidence(failure);
     if (state.exactModel) state.attemptedModels.add(previousModel);
     state.healthClaim = false;
@@ -216,7 +237,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       // not report the child model, but it must not be dispatched twice.
       : [...state.attemptedModels, state.model];
     const remaining = selectionMode(state.pool) === 'select'
-      ? rankModelCandidates({ role: state.role, pool: state.pool, evaluations: loadEvaluationStore(evaluationPath), healthManager, attempted: attemptedForSelection }).models
+      ? rankModelCandidates({ role: state.role, pool: state.pool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, attempted: attemptedForSelection }).models
       : state.pool.models.slice(state.modelIndex + 1).filter((binding) => healthManager.state(binding).eligible);
     const nextModel = remaining[0];
     const nextIndex = state.pool.models.indexOf(nextModel);
@@ -321,6 +342,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     }
     if (state.healthClaim) {
       healthManager.success(state.model);
+      persistModelHealth(state.model);
       if (state.exactModel) recordRuntimeEvaluation(state.model, true);
     }
     state.healthClaim = false;
@@ -370,7 +392,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const runPooledTask = async (args, context) => {
-      const pool = pools[args.role];
+      const pool = poolWithSystemFacts(systemDatabase, pools[args.role]);
       if (!pool || !pool.enabled || !Array.isArray(pool.models) || pool.models.length === 0) {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
       }
@@ -390,7 +412,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         },
       }) : {};
       const selection = mode === 'select'
-        ? rankModelCandidates({ role: args.role, pool, evaluations: loadEvaluationStore(evaluationPath), healthManager, taskProfile })
+        ? rankModelCandidates({ role: args.role, pool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, taskProfile })
         : healthManager.candidates(pool.models, maxAttempts);
       const attempts = mode === 'select' ? selection.models : pool.models;
       let attempted = 0;
@@ -558,7 +580,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
               appendRunLog({ event: 'review_evaluation_skipped', session_id: childID, agent: args.role, reason: 'invalid_review_target' });
             } else {
               try {
-                recordReviewerEvaluation(evaluationPath, target.model, output);
+                recordSystemReviewerEvaluation(systemDatabase, target.model, output);
                 target.consumed = true;
                 completedResults.delete(args.review_target_session_id);
                 appendRunLog({ event: 'review_evaluation_recorded', session_id: childID, agent: args.role, target_session_id: args.review_target_session_id, target_model: target.model });
@@ -570,6 +592,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           rememberCompletedResult(childID, { ownerSessionID: context.sessionID, role: args.role, model: modelName, completedAt: Date.now(), consumed: false });
           recordRuntimeEvaluation(modelName, true, Date.now() - attemptStartedAt);
           healthManager.success(modelName);
+          persistModelHealth(modelName);
           appendRunLog({ event: 'model_health_available', session_id: childID, agent: args.role, model: modelName });
           return {
             title: `${args.description} (${args.role})`,
@@ -599,6 +622,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             model: modelName, attempt: attempted, reason: reason.slice(0, 180),
           });
           const health = healthManager.failure(modelName, error, '', modelCooldownMs(pool));
+          persistModelHealth(modelName);
           if (health.category === 'transient') {
             const cooldown = modelCooldownMs(pool);
             const until = healthManager.state(modelName).until;
@@ -806,15 +830,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const assertPrimaryNla = (sessionID) => {
     const primary = primarySessions.get(sessionID);
     if (!primary || primary.agent !== 'nla') throw new Error('This NLA memory tool is restricted to the primary nla agent');
-    if (compactionState.get(sessionID)?.blocked || fs.existsSync(restoreBlockPath(sessionID))) throw Object.assign(new Error('NLA context restore is blocked; start a new session after repairing the checkpoint'), { code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
+    if (compactionState.get(sessionID)?.blocked || hasSystemRestoreBlock(systemDatabase, stateRoot, sessionID)) throw Object.assign(new Error('NLA context restore is blocked; start a new session after repairing the checkpoint'), { code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
   };
 
-  const restoreBlockPath = sessionID => path.join(stateRoot, 'restore-blocked', `${safeSessionID(sessionID)}.json`);
   const restoreFailureReason = error => String(error?.message || error?.reason || error?.code || error || 'Unknown NLA restore failure').slice(0, 300);
   const assertExecutionAllowed = sessionID => {
     const owner = sessionRoots.get(sessionID) || browserPrincipals.get(sessionID)?.parent || sessionID;
     for (const id of new Set([sessionID, owner])) {
-      if (compactionState.get(id)?.blocked || fs.existsSync(restoreBlockPath(id))) {
+      if (compactionState.get(id)?.blocked || hasSystemRestoreBlock(systemDatabase, stateRoot, id)) {
         throw Object.assign(new Error('NLA restore is blocked; tool execution is denied'), { code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
       }
     }
@@ -823,7 +846,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     const reason = restoreFailureReason(error);
     const code = typeof error?.code === 'string' ? error.code : undefined;
     compactionState.set(sessionID, { ...compactionState.get(sessionID), blocked: true, level: 'blocked', restoreError: reason });
-    atomicWrite(restoreBlockPath(sessionID), JSON.stringify({ version: 1, session_id: sessionID, reason, code }));
+    saveSystemRestoreBlock(systemDatabase, sessionID, { reason, code });
   };
 
   const validateTrustedBrowserEvidence = (entries, owner) => {
@@ -901,8 +924,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
       const nextResolvedPools = effectiveModelPools();
-      resolvedPools = nextResolvedPools;
-      pools = nextResolvedPools.roles;
+      synchronizeConfiguredModelRegistry(systemDatabase, nextResolvedPools.roles);
+      pools = applyPersistedPolicies(nextResolvedPools.roles);
+      resolvedPools = { ...nextResolvedPools, roles: pools };
       appendRunLog({
         event: 'model_pools_reloaded',
         session_id: context.sessionID,
@@ -919,7 +943,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelPolicy = tool({
-    description: 'Change one select pool policy in the current OpenCode process without restarting or rewriting configuration. Applies to new tasks only; use config plus nla_models_reload for a persistent change. Primary NLA only.',
+    description: 'Change one select pool policy in the current OpenCode process without restarting or rewriting configuration. Applies to new tasks only and is runtime-only; use nla_system setting_set routing.selection_policy.<role> for a persistent default. Primary NLA only.',
     args: {
       role: tool.schema.string().describe('Exact configured role name'),
       policy: tool.schema.string().describe('quality, balanced, or cost'),
@@ -952,8 +976,93 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       const valid = Object.values(pools).some((pool) => (pool.models || []).includes(args.binding) && (pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '') === (args.endpoint || ''));
       if (!valid) throw new Error('Unknown configured model binding; use nla_models for exact binding and endpoint');
       healthManager.reset(args.binding, args.endpoint || '');
+      persistModelHealth(args.binding, args.endpoint || '');
       appendRunLog({ event: 'model_health_reset', session_id: context.sessionID, binding: args.binding });
       return { title: 'Model health reset', output: `Reset health for ${args.binding}.` };
+    },
+  });
+
+  const nlaSystem = tool({
+    description: 'Inspect or safely administer NLA persistent system state. Supports schema, status, setting_list, setting_get, setting_set, database_create, database_list, table_create, and table_list. Critical workflow ledgers and restore blocks are DB-owned; browser recovery remains in its verified artifact store. Primary NLA only. It never executes arbitrary SQL and rejects secrets.',
+    args: {
+      action: tool.schema.enum(['schema', 'status', 'setting_list', 'setting_get', 'setting_set', 'database_create', 'database_list', 'table_create', 'table_list']).describe('Requested system-database action'),
+      key: tool.schema.string().max(128).optional().describe('Setting key for setting_get or setting_set'),
+      value_json: tool.schema.string().max(16384).optional().describe('JSON value for setting_set'),
+      database: tool.schema.string().max(64).optional().describe('Database name for create/list/table actions; system is reserved'),
+      purpose: tool.schema.string().max(500).optional().describe('Short non-secret purpose for database_create'),
+      table: tool.schema.string().max(64).optional().describe('New table name for table_create'),
+      columns_json: tool.schema.string().max(16384).optional().describe('JSON array of columns: name, type (TEXT/INTEGER/REAL/BLOB), optional primary_key and not_null'),
+    },
+    execute: async (args, context) => {
+      assertPrimaryNla(context.sessionID);
+      let result;
+      if (args.action === 'schema') result = systemSchema();
+      else if (args.action === 'status') result = systemDatabaseStatus(systemDatabase);
+      else if (args.action === 'setting_list') result = listSystemSettings(systemDatabase);
+      else if (args.action === 'setting_get') {
+        if (!args.key) throw new Error('setting_get requires key');
+        result = getSystemSetting(systemDatabase, args.key);
+      } else if (args.action === 'setting_set') {
+        if (!args.key || args.value_json === undefined) throw new Error('setting_set requires key and value_json');
+        if (args.key.startsWith('routing.selection_policy.')) {
+          const role = args.key.slice('routing.selection_policy.'.length);
+          if (!pools[role] || selectionMode(pools[role]) !== 'select') throw new Error('Selection policy setting requires a configured select role');
+        }
+        result = setSystemSetting(systemDatabase, args.key, args.value_json);
+        if (args.key.startsWith('routing.selection_policy.')) {
+          const role = args.key.slice('routing.selection_policy.'.length);
+          pools = { ...pools, [role]: { ...pools[role], selection_policy: result.value } };
+          resolvedPools = { ...resolvedPools, roles: pools };
+        }
+      } else if (args.action === 'database_create') {
+        if (!args.database || !args.purpose) throw new Error('database_create requires database and purpose');
+        result = createUserDatabase(systemDatabase, stateRoot, args.database, args.purpose);
+      } else if (args.action === 'database_list') result = systemDatabaseStatus(systemDatabase).databases;
+      else if (args.action === 'table_create') {
+        if (!args.database || !args.table || !args.columns_json) throw new Error('table_create requires database, table, and columns_json');
+        result = createUserTable(systemDatabase, stateRoot, args.database, args.table, args.columns_json);
+      } else if (args.action === 'table_list') {
+        if (!args.database) throw new Error('table_list requires database');
+        result = listUserTables(systemDatabase, stateRoot, args.database);
+      }
+      appendRunLog({ event: 'system_database_action', session_id: context.sessionID, action: args.action, key: args.key, database: args.database, table: args.table });
+      return { title: `System database: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, database: args.database, table: args.table } };
+    },
+  });
+
+  const nlaModelsRegistry = tool({
+    description: 'Inspect or import persistent model registry records in NLA system state. import accepts either json for interactive use or source_path to a JSON file inside the current project directory. Imported models are registered with facts, scores, and optional notes; importing does not alter role-pool membership. Existing empirical scores are preserved unless overwrite_scores is exactly true. Primary NLA only.',
+    args: {
+      action: tool.schema.enum(['list', 'show', 'import']).describe('Requested model-registry action'),
+      binding: tool.schema.string().max(256).optional().describe('Exact provider/model binding for show'),
+      json: tool.schema.string().max(131072).optional().describe('Model import JSON object: {"models":{"provider/model":{"facts":{},"scores":{},"notes":{}}}}'),
+      source_path: tool.schema.string().max(1024).optional().describe('Relative JSON file path within the current project directory'),
+      overwrite_scores: tool.schema.string().optional().describe('For import only: exact string true to replace existing empirical scores; otherwise existing scores are preserved'),
+    },
+    execute: async (args, context) => {
+      assertPrimaryNla(context.sessionID);
+      let result;
+      if (args.action === 'list') result = listModelRegistry(systemDatabase);
+      else if (args.action === 'show') {
+        if (!args.binding) throw new Error('show requires binding');
+        result = listModelRegistry(systemDatabase, args.binding)[0] || null;
+      } else {
+        if (Boolean(args.json) === Boolean(args.source_path)) throw new Error('import requires exactly one of json or source_path');
+        let payload = args.json;
+        if (args.source_path) {
+          const root = path.resolve(context.directory || directory);
+          const source = fs.realpathSync(path.resolve(root, args.source_path));
+          const realRoot = fs.realpathSync(root);
+          if (source !== realRoot && !source.startsWith(`${realRoot}${path.sep}`)) throw new Error('source_path must remain within the current project directory');
+          const stat = fs.statSync(source);
+          if (!stat.isFile() || stat.size > 131072) throw new Error('source_path must be a JSON file no larger than 128 KiB');
+          payload = fs.readFileSync(source, 'utf8');
+        }
+        if (args.overwrite_scores !== undefined && args.overwrite_scores !== 'true' && args.overwrite_scores !== 'false') throw new Error('overwrite_scores must be true or false');
+        result = importModelRegistry(systemDatabase, payload, { overwriteScores: args.overwrite_scores === 'true' });
+      }
+      appendRunLog({ event: 'model_registry_action', session_id: context.sessionID, action: args.action, binding: args.binding, source: args.source_path ? 'project_file' : args.json ? 'interactive_json' : undefined });
+      return { title: `Model registry: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, binding: args.binding } };
     },
   });
 
@@ -995,7 +1104,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const performCompaction = async (sessionID, trigger) => {
     const current = compactionState.get(sessionID) || {};
-    if (current.running || current.blocked || fs.existsSync(restoreBlockPath(sessionID))) return;
+    if (current.running || current.blocked || hasSystemRestoreBlock(systemDatabase, stateRoot, sessionID)) return;
     if ((activeChildren.get(sessionID) || 0) > 0 || [...activeBrowserTasks].some(key => key.startsWith(`${sessionID}:`))) {
       appendRunLog({ event: 'compaction_deferred', session_id: sessionID, reason: 'active_subagents' });
       return;
@@ -1122,6 +1231,9 @@ When skills request actions, substitute OpenCode equivalents:
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
 	- Inspect effective model routing → \`nla_models\`; relay every role separately with distinct Primary and Fallbacks fields, use none for no fallback, and never group roles, omit fallbacks, or call the complete chain a fallback chain; reload it after an approved config change with \`nla_models_reload\`
 	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; use config plus \`nla_models_reload\` when the change must persist
+	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
+	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
+	- Inspect or import model registry records → \`nla_models_registry\`; imports register models but do not silently change role pools
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
@@ -1156,6 +1268,8 @@ ${toolMapping}
       nla_models_reload: nlaModelsReload,
       nla_model_policy: nlaModelPolicy,
       nla_model_health_reset: nlaModelHealthReset,
+      nla_system: nlaSystem,
+      nla_models_registry: nlaModelsRegistry,
       nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
       nla_compact: nlaCompact,
@@ -1209,7 +1323,7 @@ ${toolMapping}
         const role = queue.shift();
         if (queue.length) pendingTasks.set(props.info.parentID, queue);
         else pendingTasks.delete(props.info.parentID);
-        const pool = role && pools[role];
+        const pool = role && poolWithSystemFacts(systemDatabase, pools[role]);
         if (pool && pool.enabled) {
           const observedModel = modelBinding(props.info.model);
           const configuredModel = observedModel && pool.models.includes(observedModel) ? observedModel : pool.models[0];
@@ -1361,7 +1475,7 @@ ${toolMapping}
       const firstObservation = !primarySessions.has(input.sessionID);
       // Register before inserting a noReply packet: that prompt can re-enter this hook.
       primarySessions.set(input.sessionID, { agent, model, directory: input.directory || directory });
-      if (agent === 'nla' && (compactionState.get(input.sessionID)?.blocked || fs.existsSync(restoreBlockPath(input.sessionID)))) {
+      if (agent === 'nla' && (compactionState.get(input.sessionID)?.blocked || hasSystemRestoreBlock(systemDatabase, stateRoot, input.sessionID))) {
         throw Object.assign(new Error('NLA context restore is blocked; execution must stop until a valid checkpoint is restored'), { code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
       }
       if (agent === 'nla' && firstObservation) {
@@ -1398,7 +1512,7 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -1409,7 +1523,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,
