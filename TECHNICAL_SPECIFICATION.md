@@ -1135,6 +1135,15 @@ a conditional profile, prompts do not mention LSP and use `safe_search` + read.
 The Orchestrator contains a short always-on classifier. The full `task-context` skill is loaded
 only for non-trivial delegation.
 
+For every bounded delegation to a `select` model pool, runtime also executes the hybrid Risk &
+Complexity Assessor. A deterministic pass derives role weights and raises safeguards for task
+risk, complexity, tool dependence, latency sensitivity, and demonstrable context requirements.
+The Orchestrator may provide a model-generated refinement, but runtime validates it, retains
+mandatory high-risk reliability/reasoning floors, forces the quality policy for high-risk work,
+and supplies the deterministic profile if refinement is absent. The assessor describes the task;
+it does not select a model. The existing selector remains the sole owner of model ranking and
+bounded failover.
+
 ### Tier 0 — answer or local read
 
 Signs: no changes, known scope, low risk.

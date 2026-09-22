@@ -66,6 +66,12 @@ try {
   assert.equal(coding.metadata.model, 'fixture/coding', 'task-specific coding weights reach the selector');
   assert.equal(reasoning.metadata.model, 'fixture/reasoning', 'task-specific reasoning weights reach the selector');
   assert.deepEqual(selectedCalls.map(({ agent, model }) => `${agent}:${model.providerID}/${model.modelID}`), ['architect:fixture/b', 'router:fixture/coding', 'router:fixture/reasoning']);
+  const assessmentEvents = fs.readFileSync(path.join(root, '.opencode', 'agent-run.log'), 'utf8').trim().split('\n').map(JSON.parse).filter((entry) => entry.event === 'task_assessed');
+  assert.equal(assessmentEvents.length, 3, 'every select delegation runs the mandatory task assessor');
+  assert.equal(assessmentEvents[0].source, 'deterministic');
+  assert.equal(assessmentEvents[1].source, 'hybrid');
+  assert.equal(assessmentEvents[1].selected_model, 'fixture/coding');
+  assert.ok(assessmentEvents.every((entry) => !Object.hasOwn(entry, 'prompt') && !Object.hasOwn(entry, 'description')), 'assessment telemetry excludes task content');
   const beforeInvalidReviewTarget = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
   const callsBeforeInvalidReviewTarget = selectedCalls.length;
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'invalid review target role', prompt: 'must not dispatch', review_target_session_id: selected.metadata.sessionID }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal }), /review_target_session_id/);

@@ -19,6 +19,18 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 **NLA is a managed multi-agent system with one coordinator, specialized roles, explicit architecture, approval, and review stages, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
+> [!IMPORTANT]
+> **Core efficiency and autonomy mechanisms:** risk-based routing and bounded
+> delegation for **speed**; role-specific `fallback` and adaptive `select` model
+> pools for **quality and cost efficiency**; the **Hybrid Risk & Complexity
+> Assessor** for task-aware model choice with mandatory high-risk
+> **reliability and reasoning** safeguards; focused task packets, prompt/tool
+> optimization, structured memory, and controlled compaction for **token
+> efficiency**; independent review, evidence gates, model health, and bounded
+> failover for **reliability**; private local state, redacted telemetry, and
+> optional local models for **privacy**. Together these mechanisms improve
+> autonomy without giving up observable control or verification.
+
 - **One coordinator.** NLA owns the goal, user conversation, approvals, sequence, shared memory, and final acceptance.
 - **Risk-based routing.** Small tasks stay with NLA. Larger or riskier tasks receive only the roles and gates they need.
 - **Architecture before implementation.** Important designs and Tier 3 tasks go through Architect and user approval before code changes begin.
@@ -224,6 +236,16 @@ Every role pool declares one of two modes:
   `cost_weight` (default `0.25`);
 - `cost` first requires `minimum_score` (default `7.5`), then chooses the least
   expensive qualified model.
+
+Before ranking a `select` pool, NLA runs a hybrid Risk & Complexity Assessor.
+Runtime code derives a mandatory baseline from the delegated role, bounded task
+packet, risk indicators, complexity, tool dependence, and context size. The
+coordinator may refine the five selection weights, context requirement, and
+policy, but it never chooses a model directly. Runtime validates the refinement,
+forces `quality` plus reliability and reasoning floors for high-risk work, and
+falls back to the deterministic profile when no refinement is supplied. The
+resulting profile and selected binding are recorded as redacted operational
+telemetry without task or response content.
 
 `nla_models` displays mode and policy for every role. Primary NLA can call
 `nla_model_policy` to change a `select` pool's policy, quality floor, or cost
