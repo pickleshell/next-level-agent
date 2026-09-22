@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { reconcileGitWorkspace, reconcileWorkState } from '../../.opencode/plugins/nla-reconciliation.mjs';
-import { saveLedger, loadLedger, normalizeLedger } from '../../.opencode/plugins/nla-memory.mjs';
+import { saveLedger, normalizeLedger } from '../../.opencode/plugins/nla-memory.mjs';
+import { loadSystemLedger, saveSystemLedger } from '../../.opencode/plugins/nla-system-database.mjs';
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 const run = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 const commit = (repo, name, content) => { fs.writeFileSync(path.join(repo, 'file.txt'), content); run(repo, 'add', 'file.txt'); run(repo, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', name); return run(repo, 'rev-parse', 'HEAD'); };
@@ -44,18 +45,19 @@ try {
   let plugin;
   try {
     process.env.NLA_MEMORY_DIR = memory;
+    const systemDatabase = path.join(memory, 'system.sqlite');
     const sessionID = 'ses_resume_12345678';
     saveLedger(memory, normalizeLedger({ workflow_stage: 'implementation', changed_files: ['stale.txt'], repository_state: { head: first }, verification_evidence: [{ head: first, command: 'tests' }] }, sessionID, repo));
     const packets = [];
     plugin = await NextLevelAgentPlugin({ directory: repo, client: { session: { prompt: async (request) => { packets.push(request.body); } } } });
     await plugin['chat.message']({ sessionID, agent: 'nla', directory: repo });
     assert.match(packets[0].system, new RegExp(second));
-    assert.equal(loadLedger(memory, sessionID).repository_state.head, second);
-    assert.equal(loadLedger(memory, sessionID).verification_status.all_current, false);
-    saveLedger(memory, normalizeLedger({ workflow_stage: 'implementation', repository_state: { head: first } }, sessionID, repo));
+    assert.equal(loadSystemLedger(systemDatabase, memory, sessionID).repository_state.head, second);
+    assert.equal(loadSystemLedger(systemDatabase, memory, sessionID).verification_status.all_current, false);
+    saveSystemLedger(systemDatabase, normalizeLedger({ workflow_stage: 'implementation', repository_state: { head: first } }, sessionID, repo));
     await plugin.event({ event: { type: 'session.compacted', properties: { sessionID } } });
     assert.match(packets[1].system, new RegExp(second));
-    assert.equal(loadLedger(memory, sessionID).repository_state.head, second);
+    assert.equal(loadSystemLedger(systemDatabase, memory, sessionID).repository_state.head, second);
   } finally {
     if (plugin) await plugin.dispose();
     if (oldMemory === undefined) delete process.env.NLA_MEMORY_DIR;

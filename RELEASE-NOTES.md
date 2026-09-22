@@ -1,5 +1,10 @@
 # Release Notes
 
+For ongoing NLA development after the last tagged Alpha, including work that
+has not been merged or released, see the [NLA Changelog](CHANGELOG.md).
+This file retains tagged NLA announcements and the inherited Superpowers
+release history; `Unreleased` entries are not release announcements.
+
 ## NLA v0.1.0-alpha.2 (2026-09-02)
 
 - Establishes [`nla-version.json`](nla-version.json) as the canonical

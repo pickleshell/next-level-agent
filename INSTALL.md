@@ -103,13 +103,50 @@ so inspect `opencode models` before a long run. Ask NLA for `nla_models` to see
 the effective role bindings and source; `opencode debug config` alone does not
 show pool routing.
 
-A fresh NLA state is initialized from `config/model-evaluations.json`. This
-checked-in example seeds `coding`, `reasoning`, and `tool_use` for 27
-`opencode-go` models so a `select` pool can make a useful first choice before
-local evidence exists. Provider-specific `reliability` and `latency` begin at
-zero and are learned at runtime. The seed is copied only when the local state
-file does not exist; upgrades never replace accumulated evaluations in
-`~/.local/share/nla/model-evaluations.json`.
+A fresh NLA state creates a private SQLite system database at
+`~/.local/share/nla/system.sqlite`. On its first use it imports the versioned
+`config/model-evaluations.json` example, which seeds `coding`, `reasoning`, and
+`tool_use` for 27 `opencode-go` models. Existing installations are migrated
+once from `~/.local/share/nla/model-evaluations.json`; neither upgrades nor the
+seed overwrite accumulated observations. Provider-specific `reliability` and
+`latency` begin at zero and are learned at runtime.
+
+Primary NLA can inspect this state with `nla_system` and `nla_models_registry`.
+The former manages safe settings and creates named local databases/tables; the
+latter lists or imports model records from structured JSON. Neither tool
+executes arbitrary SQL or accepts secrets. Importing a model registers its
+facts and scores, but intentionally does not change role-pool membership.
+These are bounded administration tools, not a general row-level database API.
+Call `nla_system` action `schema` for the logical table map. Critical workflow
+ledgers and fail-closed restore blocks are stored in this database and migrated
+lazily from their legacy JSON files. Browser recovery remains in its verified
+filesystem store because its witness and lock are security artifacts.
+[`config/model-registry.example.json`](config/model-registry.example.json)
+shows the accepted import shape. A JSON file must be inside the active project;
+the same object may instead be supplied interactively to NLA.
+
+Role membership and pool mode remain in `model-pools.json`; the pool's facts
+seed new bindings once, then SQLite owns them. Registry imports therefore take
+effect in `select` routing and survive `nla_models_reload`. A malformed legacy
+evaluation JSON stops startup before seeding; repair it and retry rather than
+discarding observations. The supported writable settings are
+`operator_databases.enabled` (boolean) and
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`). The
+latter changes the default policy immediately and persists across restart;
+`nla_model_policy` remains a runtime-only preference. Unknown operational
+settings and secrets are rejected.
+
+After startup, ask the primary NLA to run `nla_system` with `status` and
+`schema` to confirm the database and its tables. To persist a policy without
+editing the pool file, ask it to set `routing.selection_policy.explorer` to
+the JSON string `"cost"`, then inspect `nla_models`; a new task uses the
+updated default. For a model import, place JSON matching
+[`config/model-registry.example.json`](config/model-registry.example.json)
+inside the active project and ask NLA to import that relative file using
+`nla_models_registry`. Importing facts for an existing pool member changes
+subsequent `select` decisions; importing an unassigned model does not add it
+to any pool. Existing empirical scores require an explicit `overwrite_scores`
+request to replace them.
 
 Never place API keys in `opencode.json`, `model-pools.json`, Notebook, ledger, or telemetry.
 
@@ -215,7 +252,7 @@ If NLA was used only through `OPENCODE_CONFIG`, stop exporting that variable or 
 Do not delete the clone until checking whether it contains local changes or whether Notebook and session state should be retained. Durable NLA state is stored separately under:
 
 ```text
-~/.local/share/nla/sessions/
+~/.local/share/nla/system.sqlite
 ~/.local/share/nla/assistant-notebook/
 ```
 

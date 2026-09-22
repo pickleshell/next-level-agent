@@ -96,23 +96,30 @@ are bounded `select` examples. Architect and Reviewer prefer `quality`; Explorer
 and Implementer use `balanced` with a `0.25` cost weight. Deterministic orchestration and utility roles
 remain `fallback` pools.
 
-## Evaluation storage
+## Evaluation and system storage
 
-Empirical model evaluations are stored in a user-local runtime state file,
-not in the repository or the static model configuration:
+NLA keeps runtime relational state in a private user-local SQLite database:
 
 ```text
-~/.local/share/nla/model-evaluations.json
+~/.local/share/nla/system.sqlite
 ```
 
-On first use, if that file does not exist, NLA initializes it from the
-versioned production example at `config/model-evaluations.json`. Initialization
-is atomic and happens only once: repository updates do not overwrite local
-observations. The seed may initialize provider-independent capability estimates,
-while environment-dependent reliability and latency remain `0` until measured.
+Versioned migrations create `system_settings`, `model_evaluations`,
+`model_registry`, `model_notes`, `model_health`, `session_ledgers`,
+`restore_blocks`, and `database_catalog`. This database is the runtime source
+of truth for selector scores, model metadata, persistent health, workflow
+checkpoints, and fail-closed restore state. The repository configuration remains
+portable and does not contain local observations.
 
-The initial format is JSON because it is easy to inspect, back up, and migrate.
-The file contains a schema version and one record per exact model identity:
+On first use, NLA imports a pre-existing
+`~/.local/share/nla/model-evaluations.json` if present; otherwise it imports
+the versioned production seed at `config/model-evaluations.json`. The import is
+one-time: repository updates never overwrite empirical observations. The seed
+may initialize provider-independent capability estimates, while
+environment-dependent reliability and latency remain `0` until measured.
+
+The seed still uses an inspectable JSON schema with one record per exact model
+identity:
 
 ```json
 {
@@ -135,10 +142,43 @@ Records are keyed by model binding. NLA does not run a synthetic benchmark for
 an already evaluated model by default, but safely attributable runtime
 observations and Reviewer results may update the current scores.
 
-Writes must be atomic, using a temporary file followed by rename. Concurrent
-writers require a lock. If evaluation history or write concurrency outgrows
-the JSON implementation, the storage layer may migrate to SQLite without
-changing the router's evaluation interface.
+SQLite transactions provide atomic model-score updates. The router continues to
+receive the same versioned evaluation object, so storage does not change its
+selection interface. Primary NLA may inspect or import registry records with
+`nla_models_registry`; the import may be supplied directly as JSON or as a
+JSON file within the current project. It never changes pool membership.
+
+`nla_system` provides bounded system administration: read/write non-secret JSON
+settings and create named local operator databases and typed tables. It does
+not expose arbitrary SQL, credentials, or prompt/response content. Additional
+databases are catalogued by `system.sqlite` but remain separate from NLA's
+architectural tables. The current tool does not provide row-level CRUD for
+those operator tables.
+
+The pool file defines role membership, mode, and initial model facts. SQLite
+owns model facts after first registration, so operator imports affect the
+selector and are not overwritten by pool reload. Scores and health are also
+persistent. `routing.selection_policy.<select-role>` is a typed, persistent
+default policy (`quality`, `balanced`, or `cost`); `nla_model_policy` remains
+runtime-only. Task-level preferences may override the default, while mandatory
+high-risk quality constraints still apply. `operator_databases.enabled` is a
+typed switch for creating extra operator databases/tables; `operator.*` is
+non-secret metadata, and unsupported operational settings are rejected.
+
+`nla_system` action `schema` exposes the logical table map to the primary NLA.
+NLA must use this API rather than rely on hard-coded SQL or table names. Session
+ledger and restore-block reads first consult SQLite and lazily migrate their
+legacy files only when no DB record exists. Browser recovery is intentionally
+not moved: its durable witness, lock and independently verified evidence live
+in a filesystem security boundary and remain authoritative for Browser work.
+
+The other `nla_system` actions are `status`, `setting_list`, `setting_get`,
+`setting_set`, `database_create`, `database_list`, `table_create`, and
+`table_list`. The separate `nla_models_registry` tool supports `list`, `show`,
+and `import`. A project-local import file must resolve within the current
+project even through symlinks. Existing empirical scores are preserved unless
+the operator explicitly requests `overwrite_scores=true`. A malformed legacy
+evaluation file fails initial migration before the repository seed can mask it.
 
 ## MVP pool selection contract
 

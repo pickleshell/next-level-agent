@@ -70,6 +70,13 @@ export class ModelHealthManager {
     return result;
   }
   reset(binding, endpoint = '') { if (this.entries.get(this.key(binding, endpoint))?.state === 'probe-in-flight') throw new Error('Cannot reset an in-flight binding'); this.entries.delete(this.key(binding, endpoint)); }
+  hydrate(entries = []) {
+    for (const entry of entries) {
+      if (!entry || !['cooling', 'quarantined'].includes(entry.state) || typeof entry.binding !== 'string') continue;
+      if (entry.state === 'cooling' && (!Number.isFinite(entry.until) || entry.until <= this.now())) continue;
+      this.entries.set(this.key(entry.binding, entry.endpoint || ''), { state: entry.state, category: entry.category, reason: entry.reason, since: entry.since, until: entry.until ?? null });
+    }
+  }
   snapshot() { return [...this.entries.entries()].map(([key, entry]) => { const { previous, ...safe } = entry; return { key, ...safe, remainingMs: entry.until ? Math.max(0, entry.until - this.now()) : 0 }; }); }
 }
 

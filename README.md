@@ -5,7 +5,9 @@ Next Level Agent (NLA) is an OpenCode workflow for long or complex software deve
 **Current NLA release:** `0.1.0-alpha.2` (`nla-v0.1.0-alpha.2`). NLA uses its
 own Alpha release namespace; the inherited Superpowers package/manifests retain
 their upstream `6.3.0` metadata. [`nla-version.json`](nla-version.json) is the
-canonical machine-readable NLA version record.
+canonical machine-readable NLA version record. See the [NLA Changelog](CHANGELOG.md)
+for changes since this tag and [Release Notes](RELEASE-NOTES.md) for tagged
+announcements and upstream history.
 
 ## Philosophy
 
@@ -269,7 +271,11 @@ telemetry without task or response content.
 `nla_models` displays mode and policy for every role. Primary NLA can call
 `nla_model_policy` to change a `select` pool's policy, quality floor, or cost
 weight immediately for new tasks without restarting OpenCode. This override is
-runtime-only; edit the pool file and call `nla_models_reload` to persist it.
+runtime-only. To persist a role's default policy in this installation, use
+`nla_system` with `setting_set` and key `routing.selection_policy.<role>`;
+editing the pool file and calling `nla_models_reload` changes the portable
+configuration instead. Task-specific preferences still take precedence, subject
+to high-risk safeguards.
 
 Every attempt is bounded by the pool's `models` array; there is no separate
 `max_failovers` or model-count setting. The checked-in default is ready to use
@@ -280,12 +286,68 @@ default to `balanced`. Other roles retain predictable `fallback` behavior. Opera
 replace the complete configuration with `NLA_MODEL_POOLS_PATH`. After changing
 an active configuration, verify it with `nla_models_reload` and `nla_models`.
 
-Fresh installations seed the local evaluation store from
-[`config/model-evaluations.json`](config/model-evaluations.json). The example
+Fresh installations create a private local system database at
+`~/.local/share/nla/system.sqlite`. Its first migration seeds model evaluations
+from [`config/model-evaluations.json`](config/model-evaluations.json), which
 contains only `opencode-go` bindings and gives the selector initial coding,
 reasoning, and tool-use estimates. Reliability and latency remain zero until
-the installed runtime measures them. Existing local evaluations are never
-replaced by repository updates.
+the installed runtime measures them. If the prior JSON evaluation file exists,
+NLA imports it once instead; repository updates never replace local evidence.
+
+### Persistent system database
+
+`system.sqlite` is NLA's relational state layer. Versioned migrations create
+system settings, empirical model evaluations, model registry facts and notes,
+model health, authoritative workflow ledgers, fail-closed restore blocks, and
+a catalog for additional local operator databases. The database directory and
+files are private to the NLA user. The checked-in JSON files remain portable
+configuration and first-run seed data; they are not a competing live source of
+truth.
+
+Pool JSON remains authoritative for role membership, order, and mode. Its model
+facts seed the database only when a binding is first seen; after that, SQLite
+owns those facts and imports survive `nla_models_reload`. A malformed legacy
+evaluation file stops first-run migration instead of silently replacing learned
+scores with the repository seed. Repair the file and restart to retry.
+
+Primary NLA has two bounded tools for this state:
+
+- `nla_system`: `schema`, `status`, `setting_list`, `setting_get`, `setting_set`,
+  `database_create`, `database_list`, `table_create`, and `table_list`;
+- `nla_models_registry`: `list`, `show`, and `import` model records from
+  interactive JSON or a JSON file inside the active project.
+
+For example, ask NLA: “Show the system database schema and current settings”,
+“Set the Explorer selection policy to `cost` persistently”, or “Import the
+model registry from `models.json` in this project, then show that model”. The
+import must use exact `provider/model` bindings and the shape in the example
+file below. NLA exposes these tools only to its primary coordinator.
+
+Use `nla_system` with action `schema` to see the authoritative logical table
+map before changing persistent state. Workflow checkpoints and restore blocks
+are DB-owned and are restored across restart. Browser recovery deliberately
+stays in its independently verified filesystem store because its lock, witness,
+and evidence artifacts are part of the Browser security boundary.
+
+Writable operational settings are intentionally narrow: `operator_databases.enabled`
+(boolean) controls creation of additional databases and tables, and
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, or `cost`)
+persists a role's default selection policy across restart. `operator.*` holds
+non-secret notes only. `system.database.*` is read-only; unknown routing or
+security settings are rejected. A task-specific policy can still override the
+role default, subject to the high-risk quality safeguard.
+
+Use [`config/model-registry.example.json`](config/model-registry.example.json)
+as the import shape. `0` means a score is unevaluated; imported scores seed a
+new record, while existing empirical scores stay protected unless the operator
+explicitly requests an overwrite.
+
+There is deliberately no arbitrary SQL tool. Imported models gain persistent
+facts, initial scores, and optional notes, but do not silently join a role
+pool. Assign a registered model to a role through the reviewed pool
+configuration and `nla_models_reload`. Operator databases can be created with
+typed tables, but the current NLA tools do not insert, query, update, or delete
+arbitrary table rows.
 
 `select` uses the role's readable weighted scores and operator-supplied facts;
 the default production configuration is also a complete working example. See

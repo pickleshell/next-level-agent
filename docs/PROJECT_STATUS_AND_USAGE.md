@@ -60,6 +60,13 @@ reload to verify the effective role ordering and health. New tasks use the new
 snapshot; active tasks retain the snapshot already assigned to them.
 `nla_work_state` reports a reconciled ledger.
 
+The pool file owns role membership, order, and mode. Its facts seed new model
+bindings once; SQLite then owns model facts and empirical scores. Registry
+imports therefore affect subsequent `select` choices without changing pool
+membership and survive `nla_models_reload`. The typed setting
+`routing.selection_policy.<select-role>` persists a role's default policy;
+`nla_model_policy` changes only the current process.
+
 The ordered `models` array is the complete attempt budget. Runtime attempt count
 is always `models.length`; there is no separate `max_failovers` or model-count
 field in the architecture or configuration.
@@ -498,13 +505,35 @@ deliberately broken live default. Provider health is still installation-specific
 
 ## Local Data and Privacy
 
-### Session ledger
+### System database and session ledger
 
 ```text
-~/.local/share/nla/sessions/<session-id>.json
+~/.local/share/nla/system.sqlite
 ```
 
-The ledger stores the goal, Tier, stage, acceptance criteria, approved decisions, completed and active work, changed files, verification, blockers, pending gate, and exact next step.
+The private database stores system settings, model facts and scores, temporary
+model-health state, workflow ledgers, and fail-closed restore blocks. The
+ledger stores the goal, Tier, stage, acceptance criteria, approved decisions,
+completed and active work, changed files, verification, blockers, pending gate,
+and exact next step. Existing `sessions/<session-id>.json` and
+`restore-blocked/<session-id>.json` files are legacy migration inputs, not the
+live source of truth after migration. A malformed legacy evaluation JSON stops
+initial migration; NLA does not silently replace accumulated observations with
+seed scores.
+
+Primary NLA can inspect the table map and status with `nla_system` (`schema`,
+`status`), list or set supported non-secret settings, and create or list named
+operator databases and typed tables. The writable operational settings are
+`operator_databases.enabled` (boolean) and
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`);
+`operator.*` is non-secret metadata. Unsupported operational settings are
+rejected. `nla_models_registry` lists, shows, and imports exact model bindings
+with facts, initial scores, and notes from interactive JSON or a project-local
+file. Importing an unassigned model does not put it into a role pool. Neither
+tool exposes arbitrary SQL or row-level CRUD for operator tables.
+
+Browser recovery retains its separate verified filesystem artifacts, witness,
+and lock; it was not moved into SQLite.
 
 ### Assistant Notebook
 
@@ -527,7 +556,7 @@ response, environment and header fields are omitted, and common secret
 assignments are redacted. This does not alter OpenCode's own `opencode.log` or
 other host-level logging outside this repository's control.
 
-NLA creates private state directories with mode `0700` and state files with mode `0600`. Writes use atomic replacement. Obvious secret assignments are rejected, but this is not a complete secret scanner. Users remain responsible for keeping credentials out of memory and logs.
+NLA creates private state directories with mode `0700` and state files with mode `0600`. SQLite provides transactional updates for system data; filesystem artifacts use atomic replacement where applicable. Obvious secret assignments are rejected, but this is not a complete secret scanner. Users remain responsible for keeping credentials out of memory and logs.
 
 ## Reading Telemetry
 

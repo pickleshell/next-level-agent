@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
-import { recordEvaluation, writeEvaluationStoreAtomic } from '../../.opencode/plugins/nla-model-evaluations.mjs';
+import { writeEvaluationStoreAtomic } from '../../.opencode/plugins/nla-model-evaluations.mjs';
+import { initializeSystemDatabase, loadSystemEvaluations } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const oldPool = process.env.NLA_MODEL_POOLS_PATH;
 const oldMemory = process.env.NLA_MEMORY_DIR;
@@ -39,6 +40,13 @@ writeEvaluationStoreAtomic(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluati
     'fixture/reviewer': { scores: { coding: 0, reasoning: 0, tool_use: 0, reliability: 0, latency: 0 } },
   },
 });
+const evaluationStore = () => loadSystemEvaluations(path.join(process.env.NLA_MEMORY_DIR, 'system.sqlite'));
+const initializeStore = () => initializeSystemDatabase({
+  stateRoot: process.env.NLA_MEMORY_DIR,
+  seedPath: path.resolve('config/model-evaluations.json'),
+  legacyEvaluationPath: path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'),
+});
+initializeStore();
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 let instance;
@@ -72,11 +80,20 @@ try {
   assert.equal(assessmentEvents[1].source, 'hybrid');
   assert.equal(assessmentEvents[1].selected_model, 'fixture/coding');
   assert.ok(assessmentEvents.every((entry) => !Object.hasOwn(entry, 'prompt') && !Object.hasOwn(entry, 'description')), 'assessment telemetry excludes task content');
-  const beforeInvalidReviewTarget = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
+  await instance.tool.nla_models_registry.execute({ action: 'import', json: JSON.stringify({ models: {
+    'fixture/a': { facts: { context_window: 131072 } },
+    'fixture/b': { facts: { context_window: 32768 } },
+    'fixture/c': { facts: { context_window: 131072 } },
+  } }) }, { sessionID: 'primary_select', directory: root });
+  const contextSelected = await instance.tool.nla_task.execute({ role: 'architect', description: 'imported context fixture', prompt: 'bounded task', context_window: '100000' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(contextSelected.metadata.model, 'fixture/c', 'imported SQLite model facts affect live selection');
+  await instance.tool.nla_system.execute({ action: 'setting_set', key: 'routing.selection_policy.architect', value_json: '"balanced"' }, { sessionID: 'primary_select', directory: root });
+  assert.equal((await instance.tool.nla_models_reload.execute({}, { sessionID: 'primary_select', directory: root })).metadata.roles.find((row) => row.role === 'architect').selection_policy, 'balanced', 'SQLite policy survives pool reload');
+  const beforeInvalidReviewTarget = evaluationStore();
   const callsBeforeInvalidReviewTarget = selectedCalls.length;
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'invalid review target role', prompt: 'must not dispatch', review_target_session_id: selected.metadata.sessionID }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal }), /review_target_session_id/);
   assert.equal(selectedCalls.length, callsBeforeInvalidReviewTarget, 'non-reviewer review target is rejected before model dispatch');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8')), beforeInvalidReviewTarget, 'invalid review target role does not mutate evaluation state');
+  assert.deepEqual(evaluationStore(), beforeInvalidReviewTarget, 'invalid review target role does not mutate evaluation state');
   await instance.dispose();
   instance = null;
 
@@ -128,55 +145,58 @@ try {
   const implementation = await instance.tool.nla_task.execute({ role: 'implementer', description: 'implementation fixture', prompt: 'bounded implementation' }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
   const targetID = implementation.metadata.sessionID;
   await instance.tool.nla_task.execute({ role: 'reviewer', description: 'review fixture', prompt: 'return strict review JSON', review_target_session_id: targetID }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
-  const reviewed = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
+  const reviewed = evaluationStore();
   assert.deepEqual({ coding: reviewed.models['fixture/impl'].scores.coding, reasoning: reviewed.models['fixture/impl'].scores.reasoning, tool_use: reviewed.models['fixture/impl'].scores.tool_use }, { coding: 8, reasoning: 7, tool_use: 9 }, 'review scores are attributed to the exact Implementer model');
   assert.deepEqual({ coding: reviewed.models['fixture/reviewer'].scores.coding, reasoning: reviewed.models['fixture/reviewer'].scores.reasoning, tool_use: reviewed.models['fixture/reviewer'].scores.tool_use }, { coding: 0, reasoning: 0, tool_use: 0 }, 'reviewer model does not receive Implementer review scores');
 
   const unchangedTargetScores = { ...reviewed.models['fixture/impl'].scores };
   await instance.tool.nla_task.execute({ role: 'reviewer', description: 'missing target fixture', prompt: 'not JSON', review_target_session_id: 'missing-session' }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
-  const afterMissing = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
+  const afterMissing = evaluationStore();
   assert.deepEqual(afterMissing.models['fixture/impl'].scores, unchangedTargetScores, 'missing review target does not mutate target evaluation');
 
   const secondImplementation = await instance.tool.nla_task.execute({ role: 'implementer', description: 'second implementation fixture', prompt: 'bounded implementation' }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
-  const beforeMalformed = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8')).models['fixture/impl'].scores;
+  const beforeMalformed = evaluationStore().models['fixture/impl'].scores;
   await instance.tool.nla_task.execute({ role: 'reviewer', description: 'malformed review fixture', prompt: 'return malformed review JSON', review_target_session_id: secondImplementation.metadata.sessionID }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8')).models['fixture/impl'].scores, beforeMalformed, 'malformed reviewer output does not mutate target evaluation');
+  assert.deepEqual(evaluationStore().models['fixture/impl'].scores, beforeMalformed, 'malformed reviewer output does not mutate target evaluation');
   await instance.dispose();
   instance = null;
 
-  const beforeCallerAbort = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
+  const beforeCallerAbort = evaluationStore();
   instance = await NextLevelAgentPlugin({ directory: root, client: { session: {
     create: async () => ({ data: { id: 'child_caller_abort' } }),
     prompt: async () => { throw new Error('caller cancelled'); },
     abort: async () => ({ data: true }),
   } } });
   await instance['chat.message']({ sessionID: 'primary_caller_abort', agent: 'nla', directory: root });
+  for (const binding of ['fixture/a', 'fixture/b', 'fixture/c']) await instance.tool.nla_model_health_reset.execute({ binding }, { sessionID: 'primary_caller_abort', directory: root });
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'caller abort fixture', prompt: 'bounded task' }, { sessionID: 'primary_caller_abort', directory: root, abort: new AbortController().signal }), /failed/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8')), beforeCallerAbort, 'caller abort does not record reliability failure');
+  assert.deepEqual(evaluationStore(), beforeCallerAbort, 'caller abort does not record reliability failure');
   await instance.dispose();
   instance = null;
 
-  const beforeAuthFailure = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
+  const beforeAuthFailure = evaluationStore();
   instance = await NextLevelAgentPlugin({ directory: root, client: { session: {
     create: async () => ({ data: { id: 'child_auth_failure' } }),
     prompt: async () => { throw new Error('401 unauthorized'); },
     abort: async () => ({ data: true }),
   } } });
   await instance['chat.message']({ sessionID: 'primary_auth_failure', agent: 'nla', directory: root });
+  for (const binding of ['fixture/a', 'fixture/b', 'fixture/c']) await instance.tool.nla_model_health_reset.execute({ binding }, { sessionID: 'primary_auth_failure', directory: root });
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'auth failure fixture', prompt: 'bounded task' }, { sessionID: 'primary_auth_failure', directory: root, abort: new AbortController().signal }), /failed/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8')), beforeAuthFailure, 'provider authorization failure does not record reliability failure');
+  assert.deepEqual(evaluationStore(), beforeAuthFailure, 'provider authorization failure does not record reliability failure');
   await instance.dispose();
   instance = null;
 
-  const beforeProtocolFailure = JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8'));
+  const beforeProtocolFailure = evaluationStore();
   instance = await NextLevelAgentPlugin({ directory: root, client: { session: {
     create: async () => ({ data: { id: 'child_protocol_failure' } }),
     prompt: async () => { throw Object.assign(new Error('no user query found in messages'), { data: { statusCode: 500, message: 'no user query found in messages' } }); },
     abort: async () => ({ data: true }),
   } } });
   await instance['chat.message']({ sessionID: 'primary_protocol_failure', agent: 'nla', directory: root });
+  for (const binding of ['fixture/a', 'fixture/b', 'fixture/c']) await instance.tool.nla_model_health_reset.execute({ binding }, { sessionID: 'primary_protocol_failure', directory: root });
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'protocol failure fixture', prompt: 'bounded task' }, { sessionID: 'primary_protocol_failure', directory: root, abort: new AbortController().signal }), /failed/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.NLA_MEMORY_DIR, 'model-evaluations.json'), 'utf8')), beforeProtocolFailure, 'deterministic message-validation failure does not record model reliability');
+  assert.deepEqual(evaluationStore(), beforeProtocolFailure, 'deterministic message-validation failure does not record model reliability');
 } finally {
   await instance?.dispose();
   if (oldPool === undefined) delete process.env.NLA_MODEL_POOLS_PATH; else process.env.NLA_MODEL_POOLS_PATH = oldPool;
