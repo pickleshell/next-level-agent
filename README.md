@@ -21,7 +21,6 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 
 **NLA is a managed multi-agent system with one coordinator, specialized roles, explicit architecture, approval, and review stages, role-specific model pools, and state recovery. It is not a collection of prompts.**
 
-> [!IMPORTANT]
 > **NLA is built for efficient agentic work:** it routes each task by risk and
 > complexity, selects the right model with the **Hybrid Risk & Complexity
 > Assessor**, and keeps agents focused with optimized context and tools. Memory,
