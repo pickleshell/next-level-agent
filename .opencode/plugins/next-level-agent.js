@@ -30,9 +30,9 @@ import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
-  listModelRegistry, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
+  listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   recordSystemReviewerEvaluation, setSystemSetting, saveSystemHealth, loadSystemHealth, synchronizeConfiguredModelRegistry, systemDatabaseStatus,
-  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, saveSystemLedger, saveSystemRestoreBlock, systemSchema,
+  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, summarizeSystemModelUsage, systemSchema,
 } from './nla-system-database.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
@@ -175,6 +175,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const activeChildren = new Map();
   const compactionState = new Map();
   const sessionRoots = new Map();
+  const sessionParents = new Map();
   // Browser access is a runtime principal, not a prompt convention.
   const browserPrincipals = new Map();
   const trustedBrowserEvidence = new Map();
@@ -377,6 +378,43 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       fs.appendFileSync(runLogPath, line, { mode: 0o600 });
     } catch (error) {
       console.error('[Next Level Agent] could not append run log: ' + error.message);
+    }
+  };
+
+  const usageEventFromMessage = (info) => {
+    if (!info || info.role !== 'assistant' || !info.id || !info.sessionID || !info.tokens) return null;
+    const binding = modelBinding({ providerID: info.providerID, modelID: info.modelID }) || modelBinding(info.model);
+    const finishReason = typeof info.finish === 'string' ? info.finish : info.finish?.reason;
+    if (!binding || typeof finishReason !== 'string' || !finishReason) return null;
+    const token = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    const primary = primarySessions.get(info.sessionID);
+    const tracked = trackedSessions.get(info.sessionID);
+    return {
+      message_id: info.id,
+      session_id: info.sessionID,
+      parent_session_id: sessionParents.get(info.sessionID) || null,
+      root_session_id: sessionRoots.get(info.sessionID) || info.sessionID,
+      role: tracked?.role || primary?.agent || null,
+      binding,
+      input_tokens: token(info.tokens.input),
+      output_tokens: token(info.tokens.output),
+      reasoning_tokens: token(info.tokens.reasoning),
+      cache_read_tokens: token(info.tokens.cache?.read),
+      cache_write_tokens: token(info.tokens.cache?.write),
+      total_tokens: token(info.tokens.total),
+      cost: Number.isFinite(info.cost) && info.cost >= 0 ? info.cost : 0,
+      finish_reason: finishReason,
+    };
+  };
+
+  const recordMessageUsage = (info) => {
+    const usage = usageEventFromMessage(info);
+    if (!usage) return;
+    try {
+      const result = recordSystemModelUsage(systemDatabase, usage);
+      if (result.recorded) appendRunLog({ event: 'model_usage', ...usage });
+    } catch (error) {
+      appendRunLog({ event: 'model_usage_write_failed', session_id: info.sessionID, reason: error.code || error.name || 'usage_write_failed' });
     }
   };
 
@@ -948,6 +986,39 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     },
   });
 
+  const nlaUsage = tool({
+    description: 'Report privacy-preserving token and cost accounting for completed model requests in the current NLA workflow tree. summary groups requests by role and exact model; recent lists individual completed requests. It never returns prompt text, model response text, credentials, or arbitrary historical sessions. Primary NLA only.',
+    args: {
+      action: tool.schema.enum(['summary', 'recent']).describe('summary groups usage by role/model; recent lists completed requests'),
+      role: tool.schema.string().max(64).optional().describe('Optional exact role filter'),
+      binding: tool.schema.string().max(256).optional().describe('Optional exact provider/model binding filter'),
+      limit: tool.schema.string().optional().describe('For recent only: integer from 1 to 100; default 20'),
+    },
+    execute: async (args, context) => {
+      assertPrimaryNla(context.sessionID);
+      const rootSessionID = sessionRoots.get(context.sessionID) || context.sessionID;
+      const filter = { rootSessionID, role: args.role, binding: args.binding };
+      const result = args.action === 'summary'
+        ? summarizeSystemModelUsage(systemDatabase, filter)
+        : listSystemModelUsage(systemDatabase, { ...filter, limit: args.limit });
+      const columns = args.action === 'summary'
+        ? ['Role', 'Model', 'Requests', 'Input', 'Output', 'Reasoning', 'Cache read', 'Cache write', 'Total', 'Cost']
+        : ['Observed', 'Role', 'Model', 'Input', 'Output', 'Reasoning', 'Cache read', 'Cache write', 'Total', 'Cost', 'Finish'];
+      const rows = args.action === 'summary'
+        ? result.map((row) => [row.role || 'unknown', row.binding, row.requests, row.input_tokens, row.output_tokens, row.reasoning_tokens, row.cache_read_tokens, row.cache_write_tokens, row.total_tokens, row.cost])
+        : result.map((row) => [row.observed_at, row.role || 'unknown', row.binding, row.input_tokens, row.output_tokens, row.reasoning_tokens, row.cache_read_tokens, row.cache_write_tokens, row.total_tokens, row.cost, row.finish_reason || 'unknown']);
+      const output = rows.length
+        ? [`Workflow root: ${rootSessionID}`, '', `| ${columns.join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...rows.map((row) => `| ${row.join(' | ')} |`)].join('\n')
+        : `Workflow root: ${rootSessionID}\n\nNo completed model requests with provider usage accounting have been recorded yet.`;
+      appendRunLog({ event: 'model_usage_introspected', session_id: context.sessionID, action: args.action, role: args.role, binding: args.binding });
+      return {
+        title: `NLA model usage: ${args.action}`,
+        output,
+        metadata: { root_session_id: rootSessionID, action: args.action, records: result.length },
+      };
+    },
+  });
+
   const nlaModelPolicy = tool({
     description: 'Change one select pool policy in the current OpenCode process without restarting or rewriting configuration. Applies to new tasks only and is runtime-only; use nla_system setting_set routing.selection_policy.<role> for a persistent default. Primary NLA only.',
     args: {
@@ -1236,6 +1307,7 @@ When skills request actions, substitute OpenCode equivalents:
 	- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
 	- Inspect effective model routing → \`nla_models\`; relay every role separately with distinct Primary and Fallbacks fields, use none for no fallback, and never group roles, omit fallbacks, or call the complete chain a fallback chain; reload it after an approved config change with \`nla_models_reload\`
+	- Inspect completed model token/cache/cost usage for this workflow → \`nla_usage\` with \`summary\` or \`recent\`; never infer missing provider accounting
 	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; use config plus \`nla_models_reload\` when the change must persist
 	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
@@ -1272,6 +1344,7 @@ ${toolMapping}
       nla_state: nlaState,
       nla_models: nlaModels,
       nla_models_reload: nlaModelsReload,
+      nla_usage: nlaUsage,
       nla_model_policy: nlaModelPolicy,
       nla_model_health_reset: nlaModelHealthReset,
       nla_system: nlaSystem,
@@ -1304,6 +1377,7 @@ ${toolMapping}
         const parentID = props.info.parentID || null;
         const rootID = parentID ? (sessionRoots.get(parentID) || parentID) : props.info.id;
         sessionRoots.set(props.info.id, rootID);
+        if (parentID) sessionParents.set(props.info.id, parentID);
         appendRunLog({
           event: 'session_created', session_id: props.info.id,
           parent_session_id: parentID, root_session_id: rootID,
@@ -1359,6 +1433,7 @@ ${toolMapping}
         }
       }
       if (event.type === 'message.part.updated' && props.part && props.part.sessionID) touch(props.part.sessionID);
+      if (event.type === 'message.updated' && props.info) recordMessageUsage(props.info);
       if (event.type === 'message.updated' && props.info && primarySessions.get(props.info.sessionID)?.agent === 'nla') {
         const sessionID = props.info.sessionID;
         const tokens = contextTokens(props.info);
@@ -1519,7 +1594,7 @@ ${toolMapping}
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -1530,7 +1605,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,
@@ -1579,6 +1654,7 @@ ${toolMapping}
       watchdog = null;
       trackedSessions.clear();
       completedResults.clear();
+      sessionParents.clear();
       pendingTasks.clear();
       primarySessions.clear();
       activeChildren.clear();

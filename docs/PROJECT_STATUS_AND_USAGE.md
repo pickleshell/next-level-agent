@@ -524,7 +524,7 @@ deliberately broken live default. Provider health is still installation-specific
 ```
 
 The private database stores system settings, model facts and scores, temporary
-model-health state, workflow ledgers, and fail-closed restore blocks. The
+model-health state, privacy-preserving model usage accounting, workflow ledgers, and fail-closed restore blocks. The
 ledger stores the goal, Tier, stage, acceptance criteria, approved decisions,
 completed and active work, changed files, verification, blockers, pending gate,
 and exact next step. Existing `sessions/<session-id>.json` and
@@ -544,6 +544,13 @@ with facts, initial scores, and notes from interactive JSON or a project-local
 file. Importing an unassigned model does not put it into a role pool. Neither
 tool exposes arbitrary SQL or row-level CRUD for operator tables.
 
+`model_usage_events` stores one row per completed OpenCode assistant message
+when OpenCode provides token accounting: exact model binding, role and session
+lineage, input/output/reasoning/cache token counts, total, cost, and finish
+reason. It intentionally stores neither prompt text nor model output. The
+primary coordinator reads only its current workflow tree through `nla_usage`:
+`summary` groups totals by role/model and `recent` lists completed requests.
+
 Browser recovery retains its separate verified filesystem artifacts, witness,
 and lock; it was not moved into SQLite.
 
@@ -561,7 +568,7 @@ Notebook contains compact durable knowledge and retrieval cues. It must not cont
 <project>/.opencode/agent-run.log
 ```
 
-Telemetry records lifecycle metadata such as sessions, models, tool events, failover, context usage, and compaction. It does not intentionally copy prompts, model replies, or tool output.
+Telemetry records lifecycle metadata such as sessions, models, per-request token/cache/cost accounting, tool events, failover, context usage, and compaction. It does not intentionally copy prompts, model replies, or tool output.
 
 NLA sanitizes its telemetry at the write boundary: command, prompt, request,
 response, environment and header fields are omitted, and common secret
@@ -589,6 +596,12 @@ Find compaction and restoration:
 ```bash
 rg '"event":"(compaction_started|context_compacted|context_restored|context_after_compaction)"' \
   .opencode/agent-run.log
+```
+
+Follow completed model usage live (the same records are durable in SQLite):
+
+```bash
+tail -f .opencode/agent-run.log | jq -c 'select(.event == "model_usage")'
 ```
 
 Trace a complete task tree:

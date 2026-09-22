@@ -37,7 +37,7 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 - **Efficient context use.** Child agents receive focused task packets instead of the full conversation. Completed state is kept in structured memory rather than repeatedly copied into prompts.
 - **Coordinator memory.** A private ledger and Assistant Notebook preserve decisions, verified facts, blockers, and the next step across a long task.
 - **Automatic context protection.** OpenCode auto-compaction handles normal context pressure. NLA adds monitoring, a Supervisor audit, a Compactor checkpoint, and state restoration for controlled recovery.
-- **Telemetry.** NLA records session relationships, selected models, failover, context usage, compaction, and restoration without copying the conversation itself.
+- **Telemetry.** NLA records session relationships, selected models, per-request token/cache/cost accounting, failover, context usage, compaction, and restoration without copying the conversation itself.
 
 Prompts define role behavior. The NLA plugin provides managed NLA delegation, model failover, child-session relationships, workflow memory, compaction, restoration, and telemetry.
 
@@ -297,7 +297,7 @@ NLA imports it once instead; repository updates never replace local evidence.
 
 `system.sqlite` is NLA's relational state layer. Versioned migrations create
 system settings, empirical model evaluations, model registry facts and notes,
-model health, authoritative workflow ledgers, fail-closed restore blocks, and
+model health, privacy-preserving per-request usage accounting, authoritative workflow ledgers, fail-closed restore blocks, and
 a catalog for additional local operator databases. The database directory and
 files are private to the NLA user. The checked-in JSON files remain portable
 configuration and first-run seed data; they are not a competing live source of
@@ -328,6 +328,8 @@ Primary NLA has two bounded tools for this state:
   `database_create`, `database_list`, `table_create`, and `table_list`;
 - `nla_models_registry`: `list`, `show`, and `import` model records from
   interactive JSON or a JSON file inside the active project.
+- `nla_usage`: `summary` or `recent` token, cache, and cost accounting for the
+  current NLA workflow tree.
 
 For example, ask NLA: “Show the system database schema and current settings”,
 “Set the Explorer selection policy to `cost` persistently”, or “Import the
@@ -340,6 +342,15 @@ map before changing persistent state. Workflow checkpoints and restore blocks
 are DB-owned and are restored across restart. Browser recovery deliberately
 stays in its independently verified filesystem store because its lock, witness,
 and evidence artifacts are part of the Browser security boundary.
+
+Every completed OpenCode assistant request with provider accounting gets one
+durable `model_usage_events` row and a matching `model_usage` JSONL event in
+the project run log. A later, more complete accounting update replaces that
+row rather than duplicating it. Both contain only session/role/model
+identifiers, token/cache counts, cost, and finish reason — never prompt or
+response text. Ask NLA for
+`nla_usage summary` during a workflow, or inspect the live stream with
+`tail -f .opencode/agent-run.log | jq -c 'select(.event == "model_usage")'`.
 
 Writable operational settings are intentionally narrow: `operator_databases.enabled`
 (boolean) controls creation of additional databases and tables, and

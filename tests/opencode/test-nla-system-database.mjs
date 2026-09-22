@@ -9,9 +9,9 @@ import { createModelInventorySync } from '../../.opencode/plugins/nla-model-inve
 
 import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
-  listModelRegistry, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
+  listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   hasSystemRestoreBlock, loadSystemLedger, saveSystemHealth, loadSystemHealth, saveSystemLedger, saveSystemRestoreBlock,
-  poolWithSystemFacts, setSystemSetting, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema,
+  poolWithSystemFacts, recordSystemModelUsage, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-system-database-'));
@@ -123,6 +123,7 @@ try {
   assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'system database is private');
   assert.equal(listSystemSettings(file).find((entry) => entry.key === 'operator_databases.enabled').value, true, 'typed operational defaults are visible as system settings');
   assert.equal(systemSchema().session_ledgers.includes('workflow checkpoints'), true, 'the logical system-data map documents critical ledger storage');
+  assert.equal(systemSchema().model_usage_events.includes('never prompt or response text'), true, 'the logical system-data map documents privacy-safe usage storage');
   assert.deepEqual(Object.keys(loadSystemEvaluations(file).models), ['fixture/legacy'], 'legacy observations migrate before the seed');
   fs.writeFileSync(legacy, JSON.stringify({ version: 1, models: {} }));
   initializeSystemDatabase({ stateRoot: root, seedPath: seed, legacyEvaluationPath: legacy });
@@ -176,6 +177,22 @@ try {
   fs.mkdirSync(path.join(root, 'restore-blocked'), { recursive: true });
   fs.writeFileSync(path.join(root, 'restore-blocked', `${legacyBlockID}.json`), JSON.stringify({ reason: 'legacy failure', code: 'NLA_CONTEXT_RESTORE_BLOCKED' }));
   assert.equal(hasSystemRestoreBlock(file, root, legacyBlockID), true, 'legacy restore block is migrated lazily and remains fail-closed');
+  const usage = {
+    message_id: 'message_usage_1234', session_id: 'session_usage_1234', parent_session_id: null,
+    root_session_id: 'session_usage_1234', role: 'implementer', binding: 'fixture/imported',
+    input_tokens: 100, output_tokens: 20, reasoning_tokens: 30, cache_read_tokens: 40,
+    cache_write_tokens: 5, total_tokens: 195, cost: 0.0125, finish_reason: 'stop',
+  };
+  assert.equal(recordSystemModelUsage(file, usage).recorded, true, 'completed model usage is persisted');
+  assert.equal(recordSystemModelUsage(file, usage).recorded, false, 'duplicate OpenCode message updates do not duplicate usage');
+  assert.equal(recordSystemModelUsage(file, { ...usage, output_tokens: 25, total_tokens: 200 }).recorded, true, 'a more complete final message accounting updates the one usage row');
+  assert.equal(listSystemModelUsage(file, { rootSessionID: usage.root_session_id })[0].total_tokens, 200, 'usage can be read per workflow tree');
+  assert.deepEqual({ ...summarizeSystemModelUsage(file, { rootSessionID: usage.root_session_id })[0] }, {
+    role: 'implementer', binding: 'fixture/imported', requests: 1, input_tokens: 100,
+    output_tokens: 25, reasoning_tokens: 30, cache_read_tokens: 40, cache_write_tokens: 5,
+    total_tokens: 200, cost: 0.0125,
+  }, 'usage summary groups privacy-safe token and cost totals by role/model');
+  assert.throws(() => recordSystemModelUsage(file, { ...usage, message_id: 'message_usage_5678', cost: -1 }), /cost/);
   synchronizeConfiguredModelRegistry(file, { implementer: { models: ['fixture/pool'], model_facts: { 'fixture/pool': { context_window: 65536, input_cost: 0.5 } } } });
   assert.deepEqual(listModelRegistry(file, 'fixture/pool')[0].facts, { context_window: 65536, input_cost: 0.5 }, 'active pool facts populate the registry');
   importModelRegistry(file, JSON.stringify({ models: { 'fixture/pool': { facts: { context_window: 131072, input_cost: 0.2, availability: 'always' } } } }));
@@ -207,7 +224,8 @@ try {
   assert.throws(() => createUserDatabase(file, root, 'disabled', 'disabled fixture'), /disabled/);
   assert.throws(() => createUserTable(file, root, 'research', 'blocked', '[{"name":"x","type":"TEXT"}]'), /disabled/);
   const status = systemDatabaseStatus(file);
-  assert.equal(status.version, 1);
+  assert.equal(status.version, 2);
+  assert.equal(status.model_usage_events, 1);
   assert.equal(status.databases[0].name, 'research');
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
