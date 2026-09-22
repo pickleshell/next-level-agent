@@ -45,10 +45,12 @@ Prompts define role behavior. The NLA plugin provides managed NLA delegation, mo
 ```mermaid
 flowchart TB
     U[User] --> N[NLA<br/>one coordinator]
-    N --> T{Risk tier}
+    N --> H{Hybrid Risk &amp;<br/>Complexity Assessor}
+    H --> T{Workflow tier<br/>and gates}
+    H --> S[Model selector]
 
     T -->|Tier 0 or 1| D[Direct work<br/>and verification]
-    T -->|Tier 2 or 3| E[Explore and research]
+    T -->|Tier 2 or 3| E[Explorer and Scout]
     E --> AG{Architecture required?}
     AG -->|No| I[Implement]
     AG -->|Yes| A[Architect]
@@ -56,32 +58,52 @@ flowchart TB
     G -->|Approved| I
     I --> V[Verify]
     V --> RG{Independent review required?}
-    RG -->|No| X
+    RG -->|No| SA[Supervisor audit]
     RG -->|Yes| R[Reviewer]
-    N -. optional browser tasks .-> B[Browser]
-    D --> X[Acceptance]
-    R --> X
-    B --> X
+    R --> RF{Changes needed?}
+    RF -->|Yes| I
+    RF -->|No| SA
+    D --> SA
+    SA --> X[NLA acceptance]
 
-    P[Role-specific model pools<br/>preferred model to fallback] -. models .-> E
-    P -. models .-> A
-    P -. models .-> I
-    P -. models .-> R
-    P -. models .-> C
+    N -. optional browser tasks .-> B[Browser]
+    B -. evidence .-> N
+
+    F[Operator model facts] --> S
+    Q[(Local empirical<br/>evaluations)] --> S
+    MH[Model health<br/>availability and cooldown] --> S
+    S --> P{Role pool mode}
+    P -->|select| MS[Rank by quality,<br/>balance, or cost]
+    P -->|fallback| MF[Ordered bounded<br/>failover]
+    MS --> RT{Execution runtime}
+    MF --> RT
+    RT -->|agent roles| OC[OpenCode runtime]
+    RT -->|bounded utility work| UR[Utility-model runtime]
+    OC -. powers .-> E
+    OC -. powers .-> A
+    OC -. powers .-> I
+    OC -. powers .-> R
+    OC -. powers .-> B
+    OC -. powers .-> SA
+    OC -. powers .-> C
+    UR -. powers .-> C
 
     N <--> M[(Ledger and<br/>Assistant Notebook)]
-    N -. context pressure .-> C[Supervisor audit<br/>and Compactor checkpoint]
+    N -. context pressure .-> SA
+    SA -. checkpoint required .-> C[Compactor checkpoint]
     C --> O[OpenCode compaction]
-    O --> N
+    O --> RS[Restore state]
+    RS --> N
 
-    L[Telemetry<br/>sessions, models, context, failover] -. observes .-> N
+    L[Redacted telemetry<br/>routing, sessions, models,<br/>failover, and compaction] -. observes .-> N
+    L -. observes .-> S
 
     classDef primary fill:#5b5bd6,color:#fff,stroke:#333,stroke-width:2px;
     classDef gate fill:#f5c451,color:#111,stroke:#333;
     classDef memory fill:#78c6a3,color:#111,stroke:#333;
     class N primary;
-    class T,AG,G,RG gate;
-    class M memory;
+    class H,T,AG,G,RG,RF,P,RT gate;
+    class M,Q memory;
 ```
 
 ## What NLA Can Do
