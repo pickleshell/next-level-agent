@@ -26,6 +26,7 @@ import {
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
 import { rankModelCandidates, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
 import { assessTask } from './nla-task-assessor.mjs';
+import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
@@ -391,7 +392,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     return detail;
   };
 
+  const syncModelInventory = createModelInventorySync({ client, directory, database: systemDatabase, roles: () => pools, report: appendRunLog });
+
   const runPooledTask = async (args, context) => {
+    await syncModelInventory();
       const pool = poolWithSystemFacts(systemDatabase, pools[args.role]);
       if (!pool || !pool.enabled || !Array.isArray(pool.models) || pool.models.length === 0) {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
@@ -910,6 +914,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
       appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
+      await syncModelInventory();
       const health = Object.values(pools).flatMap((pool) => (pool.models || []).map((binding) => {
         const endpoint = pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '';
         return { ...healthManager.state(binding, endpoint), endpoint };
@@ -927,6 +932,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       synchronizeConfiguredModelRegistry(systemDatabase, nextResolvedPools.roles);
       pools = applyPersistedPolicies(nextResolvedPools.roles);
       resolvedPools = { ...nextResolvedPools, roles: pools };
+      await syncModelInventory({ force: true });
       appendRunLog({
         event: 'model_pools_reloaded',
         session_id: context.sessionID,
@@ -1467,6 +1473,7 @@ ${toolMapping}
     // Record role and workflow-tool activity directly from OpenCode hooks.
     'chat.message': async (input) => {
       const agent = input.agent || defaultAgent;
+      if (agent === 'nla') await syncModelInventory();
       const model = input.model || defaultModel;
       if (!sessionRoots.has(input.sessionID)) {
         sessionRoots.set(input.sessionID, input.sessionID);

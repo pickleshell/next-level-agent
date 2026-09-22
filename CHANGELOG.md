@@ -7,6 +7,14 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Model inventory context fix (in development)
+
+- Fill missing SQLite model context limits and prices from resolved OpenCode
+  providers on first use and pool reload, preserving operator facts and scores.
+- Bound discovery time, coalesce concurrent requests, and keep provider payloads
+  out of telemetry. Regression coverage reproduces zero-attempt context rejection
+  and checks persistence, override priority, timeout, and reload recovery.
+
 ### Committed since `nla-v0.1.0-alpha.2` (not tagged as a new NLA release)
 
 - Added optional Browser tasks with bounded permissions, isolated sessions,

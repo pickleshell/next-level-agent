@@ -310,6 +310,19 @@ owns those facts and imports survive `nla_models_reload`. A malformed legacy
 evaluation file stops first-run migration instead of silently replacing learned
 scores with the repository seed. Repair the file and restart to retry.
 
+Missing model context limits and input/output prices are automatically filled
+from OpenCode's resolved provider inventory on the first NLA message or pooled
+task. Discovery also runs on `nla_models` and refreshes on `nla_models_reload`;
+it persists only missing fields in SQLite and never replaces configured or
+operator-imported values (including zero prices), scores, or notes. This prevents
+`select` pools from rejecting all models solely because their context limits
+were absent from the seed. Discovery is bounded to five seconds; on failure,
+existing facts remain usable and `nla_models_reload` retries discovery. Unknown
+context limits still fail context requirements safely. Inventory metadata is
+not a live model availability test, and utility endpoints are not inferred from
+OpenCode providers. These first-use/reload operations may therefore update the
+local registry even when no model is invoked.
+
 Primary NLA has two bounded tools for this state:
 
 - `nla_system`: `schema`, `status`, `setting_list`, `setting_get`, `setting_set`,

@@ -598,6 +598,46 @@ export function synchronizeConfiguredModelRegistry(file, roles = {}) {
   } finally { closeDatabase(db); }
 }
 
+// Runtime metadata fills holes only: operator facts and configured prices win.
+export function synchronizeRuntimeModelFacts(file, roles, providers) {
+  const candidates = new Map();
+  for (const pool of Object.values(roles)) {
+    if (pool?.runtime === 'utility') continue;
+    for (const binding of pool?.models || []) {
+      const slash = binding.indexOf('/');
+      const provider = providers.find((item) => item?.id === binding.slice(0, slash));
+      const model = provider?.models?.[binding.slice(slash + 1)];
+      if (!model) continue;
+      const facts = {};
+      if (Number.isSafeInteger(model.limit?.context) && model.limit.context > 0) facts.context_window = model.limit.context;
+      for (const [field, key] of [['input_cost', 'input'], ['output_cost', 'output']]) {
+        if (typeof model.cost?.[key] === 'number' && Number.isFinite(model.cost[key]) && model.cost[key] >= 0) facts[field] = model.cost[key];
+      }
+      candidates.set(binding, facts);
+    }
+  }
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      const query = db.prepare('SELECT facts_json FROM model_registry WHERE binding = ?');
+      const update = db.prepare('UPDATE model_registry SET facts_json = ?, updated_at = ? WHERE binding = ?');
+      let models_updated = 0;
+      let fields_added = 0;
+      for (const [binding, discovered] of candidates) {
+        const row = query.get(binding);
+        if (!row) continue;
+        const facts = JSON.parse(row.facts_json);
+        const missing = Object.entries(discovered).filter(([key]) => !Object.hasOwn(facts, key));
+        if (!missing.length) continue;
+        update.run(jsonText({ ...facts, ...Object.fromEntries(missing) }), now(), binding);
+        models_updated++;
+        fields_added += missing.length;
+      }
+      return { models_updated, fields_added };
+    });
+  } finally { closeDatabase(db); }
+}
+
 export function poolWithSystemFacts(file, pool) {
   if (!pool || !Array.isArray(pool.models)) return pool;
   const db = openDatabase(file);

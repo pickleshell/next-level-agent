@@ -5,12 +5,13 @@ import path from 'node:path';
 
 import { ModelHealthManager } from '../../.opencode/plugins/nla-model-health.mjs';
 import { rankModelCandidates } from '../../.opencode/plugins/nla-model-selection.mjs';
+import { createModelInventorySync } from '../../.opencode/plugins/nla-model-inventory.mjs';
 
 import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
   listModelRegistry, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   hasSystemRestoreBlock, loadSystemLedger, saveSystemHealth, loadSystemHealth, saveSystemLedger, saveSystemRestoreBlock,
-  poolWithSystemFacts, setSystemSetting, synchronizeConfiguredModelRegistry, systemDatabasePath, systemDatabaseStatus, systemSchema,
+  poolWithSystemFacts, setSystemSetting, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-system-database-'));
@@ -20,6 +21,61 @@ fs.writeFileSync(seed, JSON.stringify({ version: 1, models: { 'fixture/seed': { 
 fs.writeFileSync(legacy, JSON.stringify({ version: 1, models: { 'fixture/legacy': { scores: { coding: 7, reasoning: 8, tool_use: 7, reliability: 6, latency: 5 } } } }));
 
 try {
+  const inventoryFile = initializeSystemDatabase({ stateRoot: path.join(root, 'inventory'), seedPath: seed });
+  const inventoryRoles = {
+    explorer: { selection_mode: 'select', models: ['fixture/seed', 'fixture/invalid'], model_facts: { 'fixture/seed': { input_cost: 0 } } },
+    compactor: { runtime: 'utility', models: ['fixture/utility'] },
+  };
+  synchronizeConfiguredModelRegistry(inventoryFile, inventoryRoles);
+  const providers = [{ id: 'fixture', models: {
+    seed: { limit: { context: 131072 }, cost: { input: 2, output: 3 }, apiKey: 'never-persist-this' },
+    invalid: { limit: { context: -1 }, cost: { input: '2', output: Infinity } },
+    utility: { limit: { context: 131072 } },
+    unassigned: { limit: { context: 131072 } },
+  } }];
+  const scoresBefore = loadSystemEvaluations(inventoryFile);
+  let calls = 0;
+  const events = [];
+  const sync = createModelInventorySync({ database: inventoryFile, directory: root, roles: () => inventoryRoles, report: (event) => events.push(event), client: { config: { providers: async () => {
+    calls++;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return { data: { providers } };
+  } } } });
+  await Promise.all([sync(), sync(), sync()]);
+  assert.equal(calls, 1, 'concurrent discovery is coalesced');
+  const discovered = poolWithSystemFacts(inventoryFile, inventoryRoles.explorer);
+  assert.deepEqual(discovered.model_facts['fixture/seed'], { input_cost: 0, context_window: 131072, output_cost: 3 });
+  assert.deepEqual(discovered.model_facts['fixture/invalid'], {}, 'invalid runtime metadata is ignored');
+  assert.deepEqual(poolWithSystemFacts(inventoryFile, inventoryRoles.compactor).model_facts['fixture/utility'], {}, 'utility endpoint metadata is not inferred from OpenCode');
+  assert.deepEqual(loadSystemEvaluations(inventoryFile), scoresBefore, 'discovery does not alter evaluations');
+  assert.equal(listModelRegistry(inventoryFile).length, 3, 'unassigned catalogue entries are not registered');
+  assert.deepEqual(rankModelCandidates({ role: 'explorer', pool: discovered, evaluations: scoresBefore, taskProfile: { context_window: 20000 } }).models, ['fixture/seed']);
+  initializeSystemDatabase({ stateRoot: path.join(root, 'inventory'), seedPath: seed });
+  assert.equal(poolWithSystemFacts(inventoryFile, inventoryRoles.explorer).model_facts['fixture/seed'].context_window, 131072, 'facts survive restart');
+  importModelRegistry(inventoryFile, JSON.stringify({ models: { 'fixture/seed': { facts: { context_window: 32768, input_cost: 0 } } } }));
+  await sync({ force: true });
+  assert.equal(calls, 2);
+  assert.deepEqual(poolWithSystemFacts(inventoryFile, inventoryRoles.explorer).model_facts['fixture/seed'], { context_window: 32768, input_cost: 0, output_cost: 3 });
+  assert.equal(listModelRegistry(inventoryFile).find((row) => row.binding === 'fixture/seed').source, 'operator-import');
+  assert.deepEqual(synchronizeRuntimeModelFacts(inventoryFile, inventoryRoles, providers), { models_updated: 0, fields_added: 0 });
+  let finishLate;
+  const timeoutSync = createModelInventorySync({ database: inventoryFile, roles: () => inventoryRoles, timeoutMs: 5, report: (event) => events.push(event), client: { config: { providers: () => new Promise((resolve) => { finishLate = resolve; }) } } });
+  await timeoutSync();
+  finishLate({ data: { providers: [{ id: 'fixture', models: { invalid: { limit: { context: 8192 } } } }] } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(poolWithSystemFacts(inventoryFile, inventoryRoles.explorer).model_facts['fixture/invalid'], {}, 'timed-out inventory cannot write late');
+  assert.equal(events.at(-1).event, 'model_inventory_unavailable');
+  assert.ok(!JSON.stringify(events).includes('never-persist-this'));
+  let fail = true;
+  const retrySync = createModelInventorySync({ database: inventoryFile, roles: () => inventoryRoles, client: { config: { providers: async () => {
+    if (fail) throw new Error('provider secret');
+    return { data: { providers: [{ id: 'fixture', models: { invalid: { limit: { context: 8192 } } } }] } };
+  } } } });
+  await retrySync();
+  fail = false;
+  await retrySync({ force: true });
+  assert.equal(poolWithSystemFacts(inventoryFile, inventoryRoles.explorer).model_facts['fixture/invalid'].context_window, 8192, 'explicit reload retries failed discovery');
+
   // Reproduce first startup ordering: score seed registers bindings before
   // model-pool synchronization provides facts. The selector must see facts
   // after synchronization, and later operator facts must remain authoritative.

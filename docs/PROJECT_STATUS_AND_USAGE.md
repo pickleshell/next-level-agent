@@ -67,6 +67,18 @@ membership and survive `nla_models_reload`. The typed setting
 `routing.selection_policy.<select-role>` persists a role's default policy;
 `nla_model_policy` changes only the current process.
 
+On first NLA use, missing context limits and input/output prices are filled from
+OpenCode's resolved `/config/providers` inventory and persisted in SQLite.
+`nla_models_reload` refreshes this discovery, including after a failed request.
+Discovery runs after plugin initialization, is bounded to five seconds, and
+coalesces concurrent requests. It only fills absent fields for configured
+non-utility bindings: existing facts (including zero prices), operator imports,
+evaluations, and notes remain authoritative. No provider credentials are stored.
+Inventory presence is not proof of live model availability. When discovery is
+unavailable, existing facts remain intact and unknown context still fails the
+selector's context requirement; inspect `model_inventory_unavailable` in the
+run log, correct provider configuration, and run `nla_models_reload`.
+
 The ordered `models` array is the complete attempt budget. Runtime attempt count
 is always `models.length`; there is no separate `max_failovers` or model-count
 field in the architecture or configuration.
