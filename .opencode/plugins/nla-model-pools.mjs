@@ -81,6 +81,7 @@ export function validateModelPools(parsed, source = 'model pool file') {
         if (!seen.has(binding)) throw new ModelPoolValidationError(`Role ${role}.model_facts contains unlisted binding ${JSON.stringify(binding)} in ${source}`, source);
         if (!record || typeof record !== 'object' || Array.isArray(record)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding} must be an object in ${source}`, source);
         if (record.id !== undefined && record.id !== binding) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.id must match its binding in ${source}`, source);
+        if (record.status !== undefined && !['enabled', 'disabled'].includes(record.status)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.status must be enabled or disabled in ${source}`, source);
         if (record.context_window !== undefined && (!Number.isInteger(record.context_window) || record.context_window <= 0)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.context_window must be a positive integer in ${source}`, source);
         for (const key of ['input_cost', 'output_cost']) if (record[key] !== undefined && (typeof record[key] !== 'number' || !Number.isFinite(record[key]) || record[key] < 0)) throw new ModelPoolValidationError(`Role ${role}.model_facts.${binding}.${key} must be a non-negative number in ${source}`, source);
         try { validateAvailability(record.availability, `Role ${role}.model_facts.${binding}`); }
@@ -101,7 +102,7 @@ export function preflightModelPools(parsed, availableBindings, source = 'model p
   const unavailable = [];
   for (const [role, pool] of Object.entries(parsed.roles)) {
     if (!pool.enabled) continue;
-    for (const binding of pool.models) if (!available.has(binding)) unavailable.push(`${role}:${binding}`);
+    for (const binding of pool.models) if (pool.model_facts?.[binding]?.status !== 'disabled' && !available.has(binding)) unavailable.push(`${role}:${binding}`);
   }
   if (unavailable.length) throw new ModelPoolValidationError(`Enabled model-pool bindings absent from supplied runtime inventory: ${unavailable.join(', ')}`, source);
   return { roles: Object.keys(parsed.roles).length, checkedAvailability: true };

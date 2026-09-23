@@ -24,7 +24,7 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
-import { rankModelCandidates, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
 import { assessTask } from './nla-task-assessor.mjs';
 import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
@@ -32,7 +32,7 @@ import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
   listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   recordSystemReviewerEvaluation, setSystemSetting, saveSystemHealth, loadSystemHealth, synchronizeConfiguredModelRegistry, systemDatabaseStatus,
-  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, summarizeSystemModelUsage, systemSchema,
+  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, setModelStatus, summarizeSystemModelUsage, systemSchema,
 } from './nla-system-database.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
@@ -434,7 +434,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const runPooledTask = async (args, context) => {
     await syncModelInventory();
-      const pool = poolWithSystemFacts(systemDatabase, pools[args.role]);
+      const pool = routableModelPool(poolWithSystemFacts(systemDatabase, pools[args.role]));
       if (!pool || !pool.enabled || !Array.isArray(pool.models) || pool.models.length === 0) {
         throw new Error(`No enabled NLA model pool for role: ${args.role}`);
       }
@@ -539,7 +539,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
               persistCapabilityCache();
             }
           }
-          const compactorPool = pools.compactor;
+          const compactorPool = routableModelPool(poolWithSystemFacts(systemDatabase, pools.compactor));
           const optimized = await optimizeInvocation({
             role: args.role,
             prompt: args.prompt,
@@ -822,7 +822,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         if (executionClaim && !allocationStarted) releaseBrowserRecoveryTask(stateRoot, context.sessionID, recoveryRecord.task_id, executionClaim);
       }
     }
-    const pool = pools[args.role];
+    const pool = routableModelPool(poolWithSystemFacts(systemDatabase, pools[args.role]));
     if (pool && pool.runtime === 'utility') {
       if (!configuredUtilityPool(pool)) throw new Error(`Invalid utility-model configuration for role: ${args.role}`);
       appendRunLog({ event: 'utility_model_attempt_started', session_id: context.sessionID, agent: args.role, backend: pool.backend, models: pool.models });
@@ -947,17 +947,21 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModels = tool({
-    description: 'Report the effective NLA model pools consumed by nla_task, including primary model, ordered fallbacks, status, source, resolution reason, and health. When presenting this result, preserve one separate row per role with distinct Primary and Fallbacks fields; never call the complete model chain a fallback chain, group roles, or omit fallbacks. Use none when a role has no fallback. Never includes credentials.',
+    description: 'Report the effective NLA model pools consumed by nla_task, including primary model, ordered fallbacks, per-model operator status, source, resolution reason, and health. When presenting this result, preserve one separate row per role with distinct Primary and Fallbacks fields; never call the complete model chain a fallback chain, group roles, or omit fallbacks. Use none when a role has no fallback. Never includes credentials.',
     args: {},
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
       appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
       await syncModelInventory();
+      const registered = new Map(listModelRegistry(systemDatabase).map((record) => [record.binding, record.status]));
       const health = Object.values(pools).flatMap((pool) => (pool.models || []).map((binding) => {
         const endpoint = pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '';
-        return { ...healthManager.state(binding, endpoint), endpoint };
+        const state = healthManager.state(binding, endpoint);
+        const status = registered.get(binding) || 'enabled';
+        return { ...state, status, eligible: state.eligible && status === 'enabled', endpoint };
       }));
-      return { title: 'Effective NLA model pools', output: `${formatModelPools(resolvedPools)}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), health } };
+      const disabled = [...new Set(health.filter((entry) => entry.status === 'disabled').map((entry) => entry.binding))];
+      return { title: 'Effective NLA model pools', output: `${formatModelPools(resolvedPools)}\n\nDisabled models: ${disabled.join(', ') || 'none'}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), health, disabled } };
     },
   });
 
@@ -1108,10 +1112,11 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelsRegistry = tool({
-    description: 'Inspect or import persistent model registry records in NLA system state. import accepts either json for interactive use or source_path to a JSON file inside the current project directory. Imported models are registered with facts, scores, and optional notes; importing does not alter role-pool membership. Existing empirical scores are preserved unless overwrite_scores is exactly true. Primary NLA only.',
+    description: 'Inspect or import persistent model registry records, or set one model status to enabled/disabled for new tasks. Status is per exact binding, not per provider; scores, facts, health, and pool membership are retained. import accepts either json or a project-local source_path. Existing empirical scores are preserved unless overwrite_scores is exactly true. Primary NLA only.',
     args: {
-      action: tool.schema.enum(['list', 'show', 'import']).describe('Requested model-registry action'),
+      action: tool.schema.enum(['list', 'show', 'import', 'status_set']).describe('Requested model-registry action'),
       binding: tool.schema.string().max(256).optional().describe('Exact provider/model binding for show'),
+      status: tool.schema.enum(['enabled', 'disabled']).optional().describe('For status_set: enabled or disabled for this exact model binding'),
       json: tool.schema.string().max(131072).optional().describe('Model import JSON object: {"models":{"provider/model":{"facts":{},"scores":{},"notes":{}}}}'),
       source_path: tool.schema.string().max(1024).optional().describe('Relative JSON file path within the current project directory'),
       overwrite_scores: tool.schema.string().optional().describe('For import only: exact string true to replace existing empirical scores; otherwise existing scores are preserved'),
@@ -1123,6 +1128,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       else if (args.action === 'show') {
         if (!args.binding) throw new Error('show requires binding');
         result = listModelRegistry(systemDatabase, args.binding)[0] || null;
+      } else if (args.action === 'status_set') {
+        if (!args.binding || !args.status) throw new Error('status_set requires binding and status');
+        result = setModelStatus(systemDatabase, args.binding, args.status);
       } else {
         if (Boolean(args.json) === Boolean(args.source_path)) throw new Error('import requires exactly one of json or source_path');
         let payload = args.json;
@@ -1138,7 +1146,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         if (args.overwrite_scores !== undefined && args.overwrite_scores !== 'true' && args.overwrite_scores !== 'false') throw new Error('overwrite_scores must be true or false');
         result = importModelRegistry(systemDatabase, payload, { overwriteScores: args.overwrite_scores === 'true' });
       }
-      appendRunLog({ event: 'model_registry_action', session_id: context.sessionID, action: args.action, binding: args.binding, source: args.source_path ? 'project_file' : args.json ? 'interactive_json' : undefined });
+      appendRunLog({ event: 'model_registry_action', session_id: context.sessionID, action: args.action, binding: args.binding, status: args.status, source: args.source_path ? 'project_file' : args.json ? 'interactive_json' : undefined });
       return { title: `Model registry: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, binding: args.binding } };
     },
   });
@@ -1311,7 +1319,7 @@ When skills request actions, substitute OpenCode equivalents:
 	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; use config plus \`nla_models_reload\` when the change must persist
 	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
-	- Inspect or import model registry records → \`nla_models_registry\`; imports register models but do not silently change role pools
+	- Inspect or import model registry records, or enable/disable one exact model for new tasks → \`nla_models_registry\` (action \`status_set\`); imports register models but do not silently change role pools or erase evaluations
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)

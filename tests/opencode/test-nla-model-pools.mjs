@@ -65,6 +65,8 @@ try {
       'availability is exact and never guessed from a similarly named model',
     );
     assert.deepEqual(preflightModelPools(preflightPool, ['provider-a/model-x']), { roles: 1, checkedAvailability: true });
+    preflightPool.roles.explorer.model_facts = { 'provider-a/model-x': { status: 'disabled' } };
+    assert.deepEqual(preflightModelPools(preflightPool, []), { roles: 1, checkedAvailability: true }, 'disabled binding needs no live runtime inventory entry');
   } finally { fs.rmSync(tempDir, { recursive: true }); }
 } finally {
   if (original === undefined) delete process.env.NLA_MODEL_POOLS_PATH;
@@ -200,6 +202,10 @@ try {
   assert.ok(cooling.until - cooling.since === 123456, 'pool cooldown used by routing manager');
   assert.equal(inspection.metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
   actual.length = 0;
+  await plugin.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/c', status: 'disabled' }, context);
+  await assert.rejects(plugin.tool.nla_task.execute({ role: 'router', description: 'disabled fallback', prompt: 'next' }, context), (error) => error.code === 'NLA_MODEL_POOL_UNAVAILABLE' && error.attempted === 0);
+  assert.deepEqual(actual, [], 'fallback never dispatches an operator-disabled model');
+  await plugin.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/c', status: 'enabled' }, context);
   await plugin.tool.nla_task.execute({ role: 'router', description: 'next', prompt: 'next' }, context);
   assert.deepEqual(actual, ['c'], 'health shared across roles');
   await assert.rejects(plugin.tool.nla_model_health_reset.execute({ binding: 'unknown/secret' }, context), /Unknown configured/);

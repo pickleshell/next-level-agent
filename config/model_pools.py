@@ -102,6 +102,8 @@ def validate_pools(parsed, source="model pool file"):
                     raise ValueError(f"role {role}.model_facts.{binding} must be an object in {source}")
                 if record.get("id", binding) != binding:
                     raise ValueError(f"role {role}.model_facts.{binding}.id must match its binding in {source}")
+                if "status" in record and record["status"] not in ("enabled", "disabled"):
+                    raise ValueError(f"role {role}.model_facts.{binding}.status must be enabled or disabled in {source}")
                 if "context_window" in record and (not isinstance(record["context_window"], int) or isinstance(record["context_window"], bool) or record["context_window"] <= 0):
                     raise ValueError(f"role {role}.model_facts.{binding}.context_window must be a positive integer in {source}")
                 for key in ("input_cost", "output_cost"):
@@ -118,7 +120,7 @@ def preflight_pools(parsed, available_bindings=None, source="model pool file"):
     if not isinstance(available_bindings, list):
         raise ValueError("available model inventory must be an array of provider/model identifiers")
     available = {validate_model_binding(binding, f"available model inventory[{index}]") for index, binding in enumerate(available_bindings)}
-    unavailable = [f"{role}:{binding}" for role, pool in parsed["roles"].items() if pool.get("enabled") for binding in pool["models"] if binding not in available]
+    unavailable = [f"{role}:{binding}" for role, pool in parsed["roles"].items() if pool.get("enabled") for binding in pool["models"] if (pool.get("model_facts") or {}).get(binding, {}).get("status") != "disabled" and binding not in available]
     if unavailable:
         raise ValueError("enabled model-pool bindings absent from supplied runtime inventory: " + ", ".join(unavailable))
     return {"roles": len(parsed["roles"]), "checked_availability": True}

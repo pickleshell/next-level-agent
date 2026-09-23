@@ -5,6 +5,7 @@
         "context_window": 131072,
         "input_cost": 0.2,
         "output_cost": 1.2,
+        "status": "enabled",
         "availability": "always"
       },
       "scores": {

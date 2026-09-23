@@ -141,6 +141,17 @@ restarting OpenCode; a subsequent `nla_models` call confirms the effective
 role-to-model ordering. New tasks use the reloaded snapshot, while active tasks
 continue with the pool snapshot they already received.
 
+Model availability is controlled per exact binding, not by disabling an entire
+provider. Primary NLA can call `nla_models_registry` with `action=status_set`,
+`binding=provider/model`, and `status=enabled` or `disabled`. The status is
+durable in the private system database and takes effect for new tasks without
+a pool reload; active tasks are not interrupted. An absent status means enabled.
+Disabling a model removes it from both `fallback` and `select` dispatch while
+retaining its pool membership, facts, evaluations, health history, and usage.
+Use `nla_models_registry` (`show` or `list`) or `nla_models` to inspect status.
+This controls NLA pool dispatch only; it cannot switch the model of an already
+running OpenCode coordinator or a direct OpenCode session.
+
 ### Recommended models by role
 
 > [!WARNING]

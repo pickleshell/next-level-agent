@@ -5,7 +5,7 @@ import {
   EVALUATION_SCORE_KEYS, emptyEvaluationStore,
   parseReviewerEvaluation, updateEvaluationScores, validateEvaluationStore,
 } from './nla-model-evaluations.mjs';
-import { validateModelPools } from './nla-model-pools.mjs';
+import { parseModelBinding, validateModelPools } from './nla-model-pools.mjs';
 
 // OpenCode CLI loads local plugins in Bun, while some Desktop builds use
 // Node/Electron. Both runtimes have a built-in SQLite implementation, but
@@ -81,10 +81,8 @@ function closeDatabase(db) {
 }
 
 function validBinding(binding) {
-  if (typeof binding !== 'string' || !binding.trim() || binding !== binding.trim() || binding.length > 256 || binding.indexOf('/') <= 0 || binding.indexOf('/') === binding.length - 1 || binding.indexOf('/') !== binding.lastIndexOf('/')) {
-    throw new SystemDatabaseError('Model binding must be an exact provider/model identifier');
-  }
-  return binding;
+  try { return parseModelBinding(binding).binding; }
+  catch { throw new SystemDatabaseError('Model binding must be an exact provider/model identifier'); }
 }
 
 function validSessionID(sessionID) {
@@ -386,7 +384,7 @@ export function systemSchema() {
   return {
     system_settings: 'Typed settings: operator_databases.enabled and routing.selection_policy.<role>. system.database.* is read-only; operator.* is metadata.',
     model_evaluations: 'Empirical selector scores for each exact model binding.',
-    model_registry: 'Operator facts for known model bindings.',
+    model_registry: 'Operator facts and durable enabled/disabled status for each exact model binding.',
     model_notes: 'Optional operator annotations for registered models.',
     model_health: 'Persisted temporary cooldown and quarantine state.',
     model_usage_events: 'Privacy-preserving per-completed-request token, cache, cost, model, role, and finish metadata; never prompt or response text.',
@@ -637,7 +635,8 @@ function validateImport(value) {
       scores = validateEvaluationStore(candidate).models[binding].scores;
     }
     const facts = record.facts === undefined ? undefined : record.facts;
-    if (facts !== undefined && (!facts || typeof facts !== 'object' || Array.isArray(facts) || Object.keys(facts).some((key) => !['context_window', 'input_cost', 'output_cost', 'availability'].includes(key)))) throw new SystemDatabaseError(`Invalid facts for ${binding}`);
+    if (facts !== undefined && (!facts || typeof facts !== 'object' || Array.isArray(facts) || Object.keys(facts).some((key) => !['context_window', 'input_cost', 'output_cost', 'availability', 'status'].includes(key)))) throw new SystemDatabaseError(`Invalid facts for ${binding}`);
+    if (facts?.status !== undefined && !['enabled', 'disabled'].includes(facts.status)) throw new SystemDatabaseError(`status must be enabled or disabled for ${binding}`);
     if (facts?.context_window !== undefined && (!Number.isInteger(facts.context_window) || facts.context_window <= 0)) throw new SystemDatabaseError(`context_window must be a positive integer for ${binding}`);
     for (const key of ['input_cost', 'output_cost']) if (facts?.[key] !== undefined && (!Number.isFinite(facts[key]) || facts[key] < 0)) throw new SystemDatabaseError(`${key} must be a non-negative number for ${binding}`);
     if (facts?.availability !== undefined && typeof facts.availability !== 'string' && typeof facts.availability !== 'boolean' && (typeof facts.availability !== 'object' || facts.availability === null || Array.isArray(facts.availability))) throw new SystemDatabaseError(`availability must be a string, boolean, or object for ${binding}`);
@@ -664,7 +663,11 @@ export function importModelRegistry(file, payloadJSON, { overwriteScores = false
         const existing = db.prepare('SELECT binding FROM model_registry WHERE binding = ?').get(model.binding);
         const oldEvaluation = db.prepare('SELECT binding FROM model_evaluations WHERE binding = ?').get(model.binding);
         const oldFacts = db.prepare('SELECT facts_json FROM model_registry WHERE binding = ?').get(model.binding);
-        const facts = model.facts === undefined ? (oldFacts ? JSON.parse(oldFacts.facts_json) : {}) : model.facts;
+        const previousFacts = oldFacts ? JSON.parse(oldFacts.facts_json) : {};
+        const facts = model.facts === undefined ? previousFacts : {
+          ...model.facts,
+          ...(Object.hasOwn(previousFacts, 'status') && !Object.hasOwn(model.facts, 'status') ? { status: previousFacts.status } : {}),
+        };
         db.prepare(`INSERT INTO model_registry (binding, facts_json, source, updated_at) VALUES (?, ?, 'operator-import', ?)
           ON CONFLICT(binding) DO UPDATE SET facts_json = excluded.facts_json, source = excluded.source, updated_at = excluded.updated_at`)
           .run(model.binding, jsonText(facts), now());
@@ -695,11 +698,30 @@ export function listModelRegistry(file, binding = null) {
     const where = binding ? 'WHERE r.binding = ?' : '';
     const rows = db.prepare(`SELECT r.binding, r.facts_json, r.source, r.updated_at, e.coding, e.reasoning, e.tool_use, e.reliability, e.latency
       FROM model_registry r LEFT JOIN model_evaluations e ON e.binding = r.binding ${where} ORDER BY r.binding`).all(...(binding ? [validBinding(binding)] : []));
-    return rows.map((row) => ({
-      binding: row.binding, facts: JSON.parse(row.facts_json), source: row.source, updated_at: row.updated_at,
-      scores: row.coding === null ? null : Object.fromEntries(EVALUATION_SCORE_KEYS.map((key) => [key, row[key]])),
-      notes: Object.fromEntries(db.prepare('SELECT note_key, note_text FROM model_notes WHERE binding = ? ORDER BY note_key').all(row.binding).map((note) => [note.note_key, note.note_text])),
-    }));
+    return rows.map((row) => {
+      const facts = JSON.parse(row.facts_json);
+      return {
+        binding: row.binding, status: facts.status || 'enabled', facts, source: row.source, updated_at: row.updated_at,
+        scores: row.coding === null ? null : Object.fromEntries(EVALUATION_SCORE_KEYS.map((key) => [key, row[key]])),
+        notes: Object.fromEntries(db.prepare('SELECT note_key, note_text FROM model_notes WHERE binding = ? ORDER BY note_key').all(row.binding).map((note) => [note.note_key, note.note_text])),
+      };
+    });
+  } finally { closeDatabase(db); }
+}
+
+export function setModelStatus(file, binding, status) {
+  validBinding(binding);
+  if (!['enabled', 'disabled'].includes(status)) throw new SystemDatabaseError('Model status must be enabled or disabled');
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      const row = db.prepare('SELECT facts_json FROM model_registry WHERE binding = ?').get(binding);
+      if (!row) throw new SystemDatabaseError(`Model binding is not registered: ${binding}`);
+      const facts = { ...JSON.parse(row.facts_json), status };
+      db.prepare('UPDATE model_registry SET facts_json = ?, updated_at = ? WHERE binding = ?').run(jsonText(facts), now(), binding);
+      return { binding, status };
+    });
   } finally { closeDatabase(db); }
 }
 
