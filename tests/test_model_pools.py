@@ -64,6 +64,9 @@ def test_selection_mode_weights_and_model_facts_are_strict():
         },
     }
     validate_pools(pool(model_facts=valid_facts))
+    validate_pools(pool(model_facts={"provider/model": {"status": "disabled"}}))
+    with pytest.raises(ValueError, match="status must be enabled or disabled"):
+        validate_pools(pool(model_facts={"provider/model": {"status": "paused"}}))
     for context_window in (0, -1, True, 1.5):
         facts = {"provider/model": {"context_window": context_window}}
         with pytest.raises(ValueError, match="context_window"):
@@ -86,6 +89,8 @@ def test_preflight_uses_exact_operator_supplied_inventory():
     with pytest.raises(ValueError, match="absent from supplied runtime inventory"):
         preflight_pools(pools, ["provider-b/model-x"])
     assert preflight_pools(pools, ["provider-a/model-x"]) == {"roles": 1, "checked_availability": True}
+    pools["roles"]["explorer"]["model_facts"] = {"provider-a/model-x": {"status": "disabled"}}
+    assert preflight_pools(pools, []) == {"roles": 1, "checked_availability": True}
 
 def test_profile_and_bounded_defaults(monkeypatch):
     monkeypatch.delenv("NLA_MODEL_POOLS_PATH", raising=False)

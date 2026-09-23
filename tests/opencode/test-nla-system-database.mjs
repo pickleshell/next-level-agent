@@ -11,7 +11,7 @@ import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
   listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   hasSystemRestoreBlock, loadSystemLedger, saveSystemHealth, loadSystemHealth, saveSystemLedger, saveSystemRestoreBlock,
-  poolWithSystemFacts, recordSystemModelUsage, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema,
+  poolWithSystemFacts, recordSystemModelUsage, setModelStatus, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-system-database-'));
@@ -150,13 +150,40 @@ try {
   assert.equal(record.facts.context_window, 131072);
   assert.equal(record.scores.reasoning, 9);
   assert.equal(record.notes.operator, 'initial registry import');
+  assert.equal(listModelRegistry(file, 'fixture/imported')[0].status, 'enabled', 'unmarked models default to enabled');
+  assert.deepEqual(setModelStatus(file, 'fixture/imported', 'disabled'), { binding: 'fixture/imported', status: 'disabled' });
+  assert.equal(listModelRegistry(file, 'fixture/imported')[0].status, 'disabled');
+  assert.equal(poolWithSystemFacts(file, { models: ['fixture/imported'] }).model_facts['fixture/imported'].status, 'disabled');
+  importModelRegistry(file, JSON.stringify({ models: { 'fixture/imported': { facts: { context_window: 65536 } } } }));
+  assert.equal(listModelRegistry(file, 'fixture/imported')[0].status, 'disabled', 'ordinary facts import does not re-enable a disabled model');
+  synchronizeConfiguredModelRegistry(file, { implementer: { models: ['fixture/imported'], model_facts: { 'fixture/imported': { context_window: 32768 } } } });
+  assert.equal(listModelRegistry(file, 'fixture/imported')[0].status, 'disabled', 'pool reload does not re-enable a disabled model');
+  assert.deepEqual(setModelStatus(file, 'fixture/imported', 'enabled'), { binding: 'fixture/imported', status: 'enabled' });
+  assert.equal(listModelRegistry(file, 'fixture/imported')[0].scores.reasoning, 9, 'status changes retain evaluations');
+  assert.throws(() => setModelStatus(file, 'fixture/missing', 'disabled'), /not registered/);
+  assert.throws(() => setModelStatus(file, 'fixture/imported', 'paused'), /enabled or disabled/);
+  const nestedBinding = 'command-code/xiaomi/mimo-v2.6-pro';
+  importModelRegistry(file, JSON.stringify({ models: {
+    [nestedBinding]: {
+      facts: { context_window: 262144, input_cost: 0.1, output_cost: 0.2 },
+      scores: { coding: 9, reasoning: 9, tool_use: 8, reliability: 0, latency: 0 },
+    },
+  } }));
+  assert.equal(listModelRegistry(file, nestedBinding)[0].scores.coding, 9, 'registry accepts exact provider/model paths used by GOAT');
+  assert.equal(loadSystemEvaluations(file).models[nestedBinding].scores.tool_use, 8);
+  assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: poolWithSystemFacts(file, {
+    selection_mode: 'select', selection_policy: 'quality', models: [nestedBinding],
+  }), evaluations: loadSystemEvaluations(file) }).models, [nestedBinding], 'nested binding remains selectable');
+  recordSystemEvaluation(file, nestedBinding, { coding: 7, reliability: 8 });
+  assert.equal(listModelRegistry(file, nestedBinding)[0].scores.coding, 8, 'nested GOAT binding accepts runtime score updates');
   recordSystemEvaluation(file, 'fixture/imported', { coding: 6, reliability: 10 });
   assert.equal(loadSystemEvaluations(file).models['fixture/imported'].scores.coding, 7, 'runtime evaluation keeps half-average semantics');
   importModelRegistry(file, JSON.stringify({ models: { 'fixture/imported': { scores: { coding: 1, reasoning: 1, tool_use: 1, reliability: 1, latency: 1 } } } }));
   assert.equal(loadSystemEvaluations(file).models['fixture/imported'].scores.coding, 7, 'ordinary imports preserve empirical scores');
   importModelRegistry(file, JSON.stringify({ models: { 'fixture/imported': { scores: { coding: 1, reasoning: 1, tool_use: 1, reliability: 1, latency: 1 } } } }), { overwriteScores: true });
   assert.equal(loadSystemEvaluations(file).models['fixture/imported'].scores.coding, 1, 'explicit overwrite replaces empirical scores');
-  assert.throws(() => importModelRegistry(file, JSON.stringify({ models: { 'bad/model/extra': {} } })), /provider\/model/);
+  assert.throws(() => importModelRegistry(file, JSON.stringify({ models: { 'bad//model': {} } })), /provider\/model/);
+  assert.throws(() => importModelRegistry(file, JSON.stringify({ models: { 'bad/bad/model': {} } })), /provider\/model/);
   saveSystemHealth(file, 'fixture/imported', '', { state: 'cooling', category: 'transient', reason: 'provider_http_429', since: Date.now(), until: Date.now() + 60000 });
   assert.equal(loadSystemHealth(file).length, 1, 'cooldown health persists across a process restart');
   const hydratedHealth = new ModelHealthManager();

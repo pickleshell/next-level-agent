@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
-import { parseContextWindow, parseSelectionWeights, rankModelCandidates, selectionMode, selectionPreferences } from '../../.opencode/plugins/nla-model-selection.mjs';
+import { parseContextWindow, parseSelectionWeights, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from '../../.opencode/plugins/nla-model-selection.mjs';
 import {
   averageScore,
   emptyEvaluationStore,
@@ -50,6 +50,7 @@ assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, sel
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'select', selection_policy: 'balanced', cost_weight: 2, models: ['fixture/a'] } } }), /cost_weight/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_weights: { coding: 11 }, models: ['fixture/a'] } } }), /selection_weights/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, model_facts: { 'fixture/b': {} }, models: ['fixture/a'] } } }), /unlisted binding/);
+assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, models: ['fixture/a'], model_facts: { 'fixture/a': { status: 'paused' } } } } }), /status must be enabled or disabled/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, models: ['fixture/a'], model_facts: { 'fixture/a': { availability: { schedule: 'windows', windows: [{ start: 'not-a-date', end: '2030-01-01T00:00:00Z' }] } } } } } }), /invalid dates/);
 
 const evaluations = {
@@ -63,6 +64,9 @@ const evaluations = {
 };
 const ranked = rankModelCandidates({ role: 'implementer', pool, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
 assert.deepEqual(ranked.models, ['fixture/best', 'fixture/cheap', 'fixture/slow'], 'select ranks suitability and filters quarantined models');
+const disabledPool = { ...pool, model_facts: { ...pool.model_facts, 'fixture/best': { ...pool.model_facts['fixture/best'], status: 'disabled' } } };
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: disabledPool, evaluations, healthManager: health() }).models.includes('fixture/best'), false, 'select excludes operator-disabled model');
+assert.deepEqual(routableModelPool(disabledPool).models, ['fixture/slow', 'fixture/cheap', 'fixture/down'], 'fallback retains order while removing disabled models');
 assert.ok(Math.abs(ranked.candidates[0].score - 8.619047619) < 0.000001, 'weighted suitability is explainable');
 assert.equal(selectionPreferences(pool).policy, 'quality');
 const balanced = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'balanced', cost_weight: 0.5 }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });

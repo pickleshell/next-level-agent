@@ -93,6 +93,14 @@ function modelFacts(pool, binding) {
   return pool?.model_facts?.[binding] || pool?.model_metadata?.[binding] || {};
 }
 
+export function routableModelPool(pool) {
+  if (!pool || !Array.isArray(pool.models)) return pool;
+  return { ...pool, models: pool.models.filter((binding) => {
+    const status = modelFacts(pool, binding).status;
+    return status === undefined || status === 'enabled';
+  }) };
+}
+
 function healthFor(healthManager, binding, endpoint, now) {
   if (healthManager?.state) return healthManager.state(binding, endpoint);
   const entry = healthManager?.get?.(binding);
@@ -176,6 +184,7 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     const reasons = [];
     if (attemptedSet.has(binding)) reasons.push('attempted');
     if (!health.eligible) reasons.push(health.state || 'unavailable');
+    if (facts.status !== undefined && facts.status !== 'enabled') reasons.push('disabled');
     if (!staticAvailability(facts, now)) reasons.push('static_unavailable');
     if (taskProfile.context_window && (!Number.isFinite(Number(facts.context_window)) || facts.context_window < Number(taskProfile.context_window))) reasons.push('insufficient_context');
     const scores = evaluatedScores(evaluations, binding);

@@ -101,6 +101,17 @@ try {
   assert.equal(assessmentEvents[1].source, 'hybrid');
   assert.equal(assessmentEvents[1].selected_model, 'fixture/coding');
   assert.ok(assessmentEvents.every((entry) => !Object.hasOwn(entry, 'prompt') && !Object.hasOwn(entry, 'description')), 'assessment telemetry excludes task content');
+  await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'disabled' }, { sessionID: 'primary_select', directory: root });
+  const disabledRegistry = await instance.tool.nla_models_registry.execute({ action: 'show', binding: 'fixture/b' }, { sessionID: 'primary_select', directory: root });
+  assert.equal(JSON.parse(disabledRegistry.output).status, 'disabled', 'model status is visible through NLA');
+  const disabledView = await instance.tool.nla_models.execute({}, { sessionID: 'primary_select', directory: root });
+  assert.equal(disabledView.metadata.health.find((entry) => entry.binding === 'fixture/b').eligible, false, 'nla_models reports operator-disabled binding as ineligible');
+  assert.match(disabledView.output, /Disabled models: fixture\/b/, 'nla_models makes disabled models visible without inspecting health JSON');
+  const afterDisable = await instance.tool.nla_task.execute({ role: 'architect', description: 'disabled binding fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(afterDisable.metadata.model, 'fixture/c', 'new select task skips disabled highest-ranked model');
+  await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'enabled' }, { sessionID: 'primary_select', directory: root });
+  const afterEnable = await instance.tool.nla_task.execute({ role: 'architect', description: 're-enabled binding fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(afterEnable.metadata.model, 'fixture/b', 'model is selectable again without pool reload');
   await instance.tool.nla_models_registry.execute({ action: 'import', json: JSON.stringify({ models: {
     'fixture/a': { facts: { context_window: 131072 } },
     'fixture/b': { facts: { context_window: 32768 } },

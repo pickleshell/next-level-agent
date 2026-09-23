@@ -79,6 +79,17 @@ scores the remaining candidates using the task's role and requirements. The
 choice should be explainable and record the contributing facts, empirical
 scores, and runtime state.
 
+Operator model status is an exact-binding control, separate from provider
+availability and temporary health. `status: disabled` in registered model facts
+excludes that binding from new `fallback` and `select` dispatches without
+erasing evaluations or removing pool membership. Missing status defaults to
+`enabled`. The private SQLite registry owns the durable operator override;
+`nla_models_registry` action `status_set` updates one model at a time. A pool
+file may seed `model_facts.<binding>.status`, but later operator status changes
+remain authoritative. There is no provider-wide enable/disable switch.
+This gate applies to NLA role-pool dispatch; the OpenCode coordinator's own
+session model is selected by OpenCode and is not switched by registry status.
+
 This architecture supports both sequential `fallback` pools and `select` pools
 where healthy candidates compete by deterministic suitability ranking.
 
