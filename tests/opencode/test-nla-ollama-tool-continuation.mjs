@@ -16,11 +16,19 @@ try {
   process.env.NLA_MEMORY_DIR = path.join(fixture, 'memory');
   fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({
     roles: {
+      nla: { enabled: false, models: ['fixture/fallback'] },
+      router: { enabled: true, models: ['fixture/fallback'] },
+      supervisor: { enabled: true, models: ['fixture/fallback'] },
+      scout: { enabled: true, models: ['fixture/fallback'] },
       explorer: {
         enabled: true,
         models: ['ollama/qwen3.8:latest', 'fixture/fallback'],
         idle_timeout_ms: 0,
       },
+      architect: { enabled: true, models: ['fixture/fallback'] },
+      implementer: { enabled: true, models: ['fixture/fallback'] },
+      reviewer: { enabled: true, models: ['fixture/fallback'] },
+      compactor: { enabled: true, models: ['fixture/fallback'] },
     },
   }));
 

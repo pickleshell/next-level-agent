@@ -11,7 +11,9 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-r7-test-'));
 const old = Object.fromEntries(['NLA_MODEL_POOLS_PATH', 'NLA_MEMORY_DIR', 'NLA_BROWSER_CONFIG_PATH'].map(key => [key, process.env[key]]));
 try {
   const pool = path.join(root, 'models.json');
-  fs.writeFileSync(pool, JSON.stringify({ roles: { explorer: { enabled: true, models: ['fixture/model'] } } }));
+  const roles = Object.fromEntries(['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']
+    .map((role) => [role, { enabled: role !== 'nla', models: ['fixture/model'] }]));
+  fs.writeFileSync(pool, JSON.stringify({ roles }));
   process.env.NLA_MODEL_POOLS_PATH = pool;
   process.env.NLA_MEMORY_DIR = root;
   const systemDatabase = path.join(root, 'system.sqlite');

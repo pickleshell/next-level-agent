@@ -7,6 +7,11 @@ import { ModelHealthManager, classifyProviderError, retryAfterMs } from '../../.
 import { runUtilityModel, utilityHealthEndpoint } from '../../.opencode/plugins/nla-utility-runtime.mjs';
 import { NextLevelAgentPlugin, availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
 
+const completeFixtureRoles = (roles, primary) => Object.fromEntries(
+  ['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']
+    .map((role) => [role, roles[role] || { enabled: role !== 'nla', selection_mode: 'fallback', models: [primary] }]),
+);
+
 const defaultPath = path.resolve('config/model-pools.json');
 const defaultOpenCodeConfig = JSON.parse(fs.readFileSync('opencode.json', 'utf8'));
 const original = process.env.NLA_MODEL_POOLS_PATH;
@@ -161,13 +166,30 @@ const savedEnv = { pool: process.env.NLA_MODEL_POOLS_PATH, memory: process.env.N
 let plugin;
 try {
     const fixturePool = path.join(fixture, 'pools.json');
-    fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, selection_mode: 'select', models: ['fixture/a', 'fixture/b', 'fixture/c'], cooldown_ms: 123456, idle_timeout_ms: 0 }, router: { enabled: true, selection_mode: 'fallback', models: ['fixture/a', 'fixture/b', 'fixture/c'], idle_timeout_ms: 0 } } }));
+    const fixtureRoles = {
+      nla: { enabled: false, selection_mode: 'fallback', models: ['fixture/a'] },
+      router: { enabled: true, selection_mode: 'fallback', models: ['fixture/a', 'fixture/b', 'fixture/c'], idle_timeout_ms: 0 },
+      supervisor: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+      scout: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+      explorer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+      architect: { enabled: true, selection_mode: 'select', models: ['fixture/a', 'fixture/b', 'fixture/c'], cooldown_ms: 123456, idle_timeout_ms: 0 },
+      implementer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+      reviewer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+      compactor: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+    };
+    fs.writeFileSync(fixturePool, JSON.stringify({ roles: fixtureRoles }));
   process.env.NLA_MODEL_POOLS_PATH = fixturePool;
   process.env.NLA_MEMORY_DIR = path.join(fixture, 'memory');
   const actual = [];
   const continued = [];
   let serial = 0;
-  plugin = await NextLevelAgentPlugin({ directory: fixture, client: { session: {
+  let inventoryFails = false;
+  plugin = await NextLevelAgentPlugin({ directory: fixture, client: { config: {
+    providers: async () => {
+      if (inventoryFails) throw new Error('fixture inventory unavailable');
+      return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c', 'reloaded'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
+    },
+  }, session: {
     create: async () => ({ data: { id: `child-${++serial}` } }),
     abort: async () => {},
     prompt: async (request) => {
@@ -197,6 +219,10 @@ try {
   assert.equal(changedPolicy.metadata.policy, 'balanced');
   assert.equal(changedPolicy.metadata.cost_weight, 0.4);
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').selection_policy, 'balanced');
+  const savedPolicy = await plugin.tool.nla_system.execute({ action: 'setting_get', key: 'routing.selection_preferences.architect' }, context);
+  assert.deepEqual(JSON.parse(savedPolicy.output).value, { selection_policy: 'balanced', minimum_score: 7.5, cost_weight: 0.4 });
+  await plugin.tool.nla_models_reload.execute({}, context);
+  assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').selection_policy, 'balanced', 'saved policy survives reload');
   await assert.rejects(plugin.tool.nla_model_policy.execute({ role: 'router', policy: 'cost' }, context), /uses fallback/);
   const cooling = inspection.metadata.health.find((item) => item.binding === 'fixture/a');
   assert.ok(cooling.until - cooling.since === 123456, 'pool cooldown used by routing manager');
@@ -224,7 +250,7 @@ try {
   assert.deepEqual(actual, [], 'no early probe when cooling or in-flight');
   await plugin.event({ event: { type: 'session.idle', properties: { sessionID: 'native' } } });
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
-  fs.writeFileSync(fixturePool, JSON.stringify({ roles: {
+  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { ...fixtureRoles,
     architect: { enabled: true, models: ['fixture/reloaded'], idle_timeout_ms: 0 },
     router: { enabled: true, models: ['fixture/reloaded'], idle_timeout_ms: 0 },
   } }));
@@ -232,6 +258,17 @@ try {
   assert.deepEqual(reloaded.metadata.roles.find((item) => item.role === 'architect').fallbacks, []);
   assert.equal(reloaded.metadata.roles.find((item) => item.role === 'architect').primary, 'fixture/reloaded');
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').primary, 'fixture/reloaded');
+  const persistedGo = await plugin.tool.nla_orchestra.execute({ action: 'show', name: 'go' }, context);
+  assert.equal(JSON.parse(persistedGo.output).config.roles.architect.models[0], 'fixture/reloaded');
+  inventoryFails = true;
+  await assert.rejects(plugin.tool.nla_models_reload.execute({}, context), /Cannot activate orchestra without the OpenCode provider inventory/);
+  inventoryFails = false;
+  assert.equal(JSON.parse((await plugin.tool.nla_orchestra.execute({ action: 'show', name: 'go' }, context)).output).config.roles.architect.models[0], 'fixture/reloaded', 'failed inventory cannot overwrite SQLite');
+  fs.writeFileSync(fixturePool, JSON.stringify({ roles: { ...fixtureRoles,
+    architect: { enabled: true, models: ['fixture/missing'] },
+  } }));
+  await assert.rejects(plugin.tool.nla_models_reload.execute({}, context), /no enabled available models for architect/);
+  assert.equal(JSON.parse((await plugin.tool.nla_orchestra.execute({ action: 'show', name: 'go' }, context)).output).config.roles.architect.models[0], 'fixture/reloaded', 'unavailable reload cannot overwrite SQLite');
   fs.writeFileSync(fixturePool, JSON.stringify({ roles: { architect: { enabled: true, models: ['fixture/reloaded', 'fixture/reloaded'] } } }));
   await assert.rejects(plugin.tool.nla_models_reload.execute({}, context), /repeats model binding/);
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.roles.find((item) => item.role === 'architect').primary, 'fixture/reloaded', 'failed reload preserves current snapshot');
@@ -253,7 +290,7 @@ for (const mode of ['reject', 'response-error', 'early-idle', 'early-status-idle
   try {
     process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
     process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
-    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b', 'p/c'], idle_timeout_ms: 0 } } }));
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: completeFixtureRoles({ architect: { enabled: true, models: ['p/a', 'p/b', 'p/c'], idle_timeout_ms: 0 } }, 'p/a') }));
     const calls = [];
     let finish;
     let aborts = 0;
@@ -329,7 +366,7 @@ for (const outcome of ['reject', 'error-result', 'false-result', 'confirmed']) {
   try {
     process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
     process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
-    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { architect: { enabled: true, models: ['p/a', 'p/b'], idle_timeout_ms: 5 } } }));
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: completeFixtureRoles({ architect: { enabled: true, models: ['p/a', 'p/b'], idle_timeout_ms: 5 } }, 'p/a') }));
     const calls = [];
     let stopped = false;
     let releaseStop;
@@ -401,7 +438,7 @@ for (const validCatalog of [true, false]) {
   try {
     process.env.NLA_MODEL_POOLS_PATH = path.join(dir, 'pools.json');
     process.env.NLA_MEMORY_DIR = path.join(dir, 'memory');
-    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { implementer: { enabled: true, models: ['opencode-go/gpt-5.6-luna'] } } }));
+    fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: completeFixtureRoles({ implementer: { enabled: true, models: ['opencode-go/gpt-5.6-luna'] } }, 'opencode-go/gpt-5.6-luna') }));
     let requests = 0;
     instance = await NextLevelAgentPlugin({ directory: dir, client: {
       tool: { list: async () => ({ data: ['read', 'grep', 'bash', ...(validCatalog ? ['apply_patch'] : [])].map(id => ({ id, parameters: { type: 'object' } })) }) },

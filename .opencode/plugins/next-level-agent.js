@@ -29,11 +29,11 @@ import { assessTask } from './nla-task-assessor.mjs';
 import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import {
-  configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
+  configuredSelectionPreferences, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
   listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   recordSystemReviewerEvaluation, setSystemSetting, saveSystemHealth, loadSystemHealth, synchronizeConfiguredModelRegistry, systemDatabaseStatus,
   hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, setModelStatus, summarizeSystemModelUsage, systemSchema,
-  initializeOrchestras, listOrchestras, getOrchestra, saveOrchestra, updateOrchestra, activateOrchestra, reloadGoOrchestra,
+  initializeOrchestras, listOrchestras, getOrchestra, saveOrchestra, updateOrchestra, activateOrchestra, reloadGoOrchestra, saveSelectionPreferences,
 } from './nla-system-database.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
@@ -165,8 +165,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   if (!activeOrchestra) throw new Error('Active NLA orchestra is missing');
   let resolvedPools = { ...activeOrchestra.config, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra' };
   const applyPersistedPolicies = (roles, orchestraName = activeOrchestra.name) => Object.fromEntries(Object.entries(roles).map(([role, pool]) => {
-    const policy = pool.selection_mode === 'select' ? configuredSelectionPolicy(systemDatabase, role, orchestraName) : null;
-    return [role, policy ? { ...pool, selection_policy: policy } : pool];
+    const preferences = pool.selection_mode === 'select' ? configuredSelectionPreferences(systemDatabase, role, orchestraName) : null;
+    return [role, preferences ? { ...pool, ...preferences } : pool];
   }));
   synchronizeConfiguredModelRegistry(systemDatabase, resolvedPools.roles);
   let pools = applyPersistedPolicies(resolvedPools.roles);
@@ -174,6 +174,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const applyCoordinatorModel = () => {
     const primary = pools.nla?.models?.[0];
     if (liveConfig?.agent?.nla && primary && splitModel(primary)) liveConfig.agent.nla.model = primary;
+  };
+  const applyOrchestraSnapshot = (next, resolution) => {
+    const nextPools = applyPersistedPolicies(next.config.roles, next.name);
+    const nextResolved = { ...next.config, roles: nextPools, source: `system.sqlite:orchestra:${next.name}`, resolution };
+    activeOrchestra = next;
+    pools = nextPools;
+    resolvedPools = nextResolved;
+    applyCoordinatorModel();
   };
   const pendingTasks = new Map();
   const healthManager = new ModelHealthManager();
@@ -987,14 +995,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     args: {},
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
-      if (activeOrchestra.name === 'go') reloadGoOrchestra(systemDatabase, effectiveModelPools());
-      activeOrchestra = getOrchestra(systemDatabase);
-      const nextResolvedPools = { ...activeOrchestra.config, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra reload' };
-      synchronizeConfiguredModelRegistry(systemDatabase, nextResolvedPools.roles);
-      pools = applyPersistedPolicies(nextResolvedPools.roles);
-      resolvedPools = { ...nextResolvedPools, roles: pools };
-      applyCoordinatorModel();
-      await syncModelInventory({ force: true });
+      const selected = getOrchestra(systemDatabase);
+      if (!selected) throw new Error('Active NLA orchestra is missing');
+      const candidate = selected.name === 'go' ? effectiveModelPools() : selected.config;
+      await ensureOrchestraReady(candidate, selected.name);
+      if (selected.name === 'go') reloadGoOrchestra(systemDatabase, candidate);
+      const saved = getOrchestra(systemDatabase);
+      synchronizeConfiguredModelRegistry(systemDatabase, saved.config.roles);
+      applyOrchestraSnapshot(saved, 'active orchestra reload');
       appendRunLog({
         event: 'model_pools_reloaded',
         session_id: context.sessionID,
@@ -1044,7 +1052,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelPolicy = tool({
-    description: 'Change one select pool policy in the current OpenCode process. Applies to new tasks only; for a persistent default use nla_system setting_set routing.selection_policy.<role> for go, or routing.selection_policy.<orchestra>.<role> for a named orchestra. Primary NLA only.',
+    description: 'Persist one select pool policy, quality floor, and cost weight in the private system database. Applies to new tasks immediately and survives OpenCode restart. Primary NLA only.',
     args: {
       role: tool.schema.string().describe('Exact configured role name'),
       policy: tool.schema.string().describe('quality, balanced, or cost'),
@@ -1057,13 +1065,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (!pool) throw new Error(`Unknown configured role: ${args.role}`);
       if (selectionMode(pool) !== 'select') throw new Error(`Role ${args.role} uses fallback; runtime selection policy applies only to select pools`);
       const preferences = selectionPreferences(pool, { policy: args.policy, minimum_score: args.minimum_score, cost_weight: args.cost_weight });
-      const updated = { ...pool, selection_policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight };
-      pools = { ...pools, [args.role]: updated };
-      resolvedPools = { ...resolvedPools, roles: pools, resolution: `${resolvedPools.resolution}; runtime policy override` };
+      saveSelectionPreferences(systemDatabase, args.role, activeOrchestra.name, {
+        selection_policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight,
+      });
+      applyOrchestraSnapshot(activeOrchestra, 'active orchestra with saved policy');
       appendRunLog({ event: 'model_policy_changed', session_id: context.sessionID, role: args.role, policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight });
       return {
         title: `NLA model policy changed for ${args.role}`,
-        output: `${formatModelPools(resolvedPools)}\n\nRuntime-only policy change applied to new tasks. Active tasks retain their snapshot; reload restores file-backed values.`,
+        output: `${formatModelPools(resolvedPools)}\n\nSaved in SQLite. New tasks use this policy; active tasks retain their snapshot. The setting survives reload and restart.`,
         metadata: { role: args.role, ...preferences, roles: modelPoolSummary(resolvedPools) },
       };
     },
@@ -1106,18 +1115,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         result = getSystemSetting(systemDatabase, args.key);
       } else if (args.action === 'setting_set') {
         if (!args.key || args.value_json === undefined) throw new Error('setting_set requires key and value_json');
-        if (args.key.startsWith('routing.selection_policy.')) {
-          const scope = args.key.slice('routing.selection_policy.'.length);
+        const routingPrefix = ['routing.selection_policy.', 'routing.selection_preferences.'].find((prefix) => args.key.startsWith(prefix));
+        if (routingPrefix) {
+          const scope = args.key.slice(routingPrefix.length);
           const role = activeOrchestra.name === 'go' ? scope : scope.startsWith(`${activeOrchestra.name}.`) ? scope.slice(activeOrchestra.name.length + 1) : '';
           if (!pools[role] || selectionMode(pools[role]) !== 'select') throw new Error('Selection policy setting requires a configured select role');
         }
         result = setSystemSetting(systemDatabase, args.key, args.value_json);
-        if (args.key.startsWith('routing.selection_policy.')) {
-          const scope = args.key.slice('routing.selection_policy.'.length);
-          const role = activeOrchestra.name === 'go' ? scope : scope.slice(activeOrchestra.name.length + 1);
-          pools = { ...pools, [role]: { ...pools[role], selection_policy: result.value } };
-          resolvedPools = { ...resolvedPools, roles: pools };
-        }
+        if (routingPrefix) applyOrchestraSnapshot(activeOrchestra, 'active orchestra with saved policy');
       } else if (args.action === 'database_create') {
         if (!args.database || !args.purpose) throw new Error('database_create requires database and purpose');
         result = createUserDatabase(systemDatabase, stateRoot, args.database, args.purpose);
@@ -1238,22 +1243,15 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         result = args.action === 'create' ? saveOrchestra(systemDatabase, args.name, config) : updateOrchestra(systemDatabase, args.name, config);
         synchronizeConfiguredModelRegistry(systemDatabase, config.roles);
         if (args.action !== 'create' && args.name === activeOrchestra.name) {
-          activeOrchestra = getOrchestra(systemDatabase);
-          pools = applyPersistedPolicies(activeOrchestra.config.roles);
-          resolvedPools = { ...activeOrchestra.config, roles: pools, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra update' };
-          applyCoordinatorModel();
+          applyOrchestraSnapshot(getOrchestra(systemDatabase), 'active orchestra update');
         }
       } else {
         if (!args.name) throw new Error('activate requires name');
         const next = getOrchestra(systemDatabase, args.name);
         if (!next) throw new Error(`Unknown orchestra: ${args.name}`);
         await ensureOrchestraReady(next.config, args.name);
-        const nextPools = applyPersistedPolicies(next.config.roles, next.name);
         result = { ...activateOrchestra(systemDatabase, args.name), new_tasks_use_active_orchestra: true, current_coordinator_response_unchanged: true };
-        activeOrchestra = next;
-        pools = nextPools;
-        resolvedPools = { ...next.config, roles: pools, source: `system.sqlite:orchestra:${next.name}`, resolution: 'active orchestra' };
-        applyCoordinatorModel();
+        applyOrchestraSnapshot(next, 'active orchestra');
       }
       appendRunLog({ event: 'orchestra_action', session_id: context.sessionID, action: args.action, name: args.name || activeOrchestra.name });
       return { title: `NLA orchestra: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, active: activeOrchestra.name } };
