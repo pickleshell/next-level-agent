@@ -134,6 +134,15 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Supervisor** | Audits alignment, approvals, blockers, loops, context pressure, and completion evidence | Tier 3 gates, anomalies, compaction, completion |
 | **Compactor** | Optimizes model input: compresses structured state, shapes prompts, and prunes tool schemas to a small relevant shortlist | Before controlled compaction and before model invocation when prompt optimization is enabled |
 
+### Terminology
+
+- **Orchestrator / coordinator:** the primary NLA agent. It owns the user task and delegates bounded work; it is not an orchestra.
+- **Orchestra:** a named, durable configuration of roles and their model pools and policies. `go` is the original orchestra; one orchestra is active at a time.
+- **Role:** a responsibility such as Explorer, Implementer, or Reviewer. Each child role has its own pool in the active orchestra.
+- **Model pool:** the models available to one role, plus its selection mode and policy. `fallback` tries an ordered list; `select` ranks eligible models for the task and can fail over if a choice fails.
+- **`auto` pool:** a `select` pool whose candidate list is built for each new task from enabled registry models present in OpenCode's provider inventory. `auto` is not a model name.
+- **Model binding:** an exact `provider/model` identifier. Registry status, model facts, learned scores, and runtime health apply to that binding, not automatically to every model from its provider.
+
 The primary NLA coordinator can inspect the currently loaded model pool for
 every role with `nla_models`. For the original `go` orchestra, an operator can
 edit the resolved pool file and call `nla_models_reload` to load it without

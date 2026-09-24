@@ -46,6 +46,21 @@ If you need another coding-agent CLI, you are welcome to implement and test the 
 
 API keys and provider credentials do not belong in this repository, model-pool configuration, ledger, Notebook, or telemetry.
 
+## Terminology
+
+| Term | Meaning |
+| --- | --- |
+| Orchestrator / coordinator | The primary NLA agent: owns the user goal, approvals, delegation, shared state, and final acceptance. It is not a model pool or an orchestra. |
+| Orchestra | A named, durable set of role pools and policies. Exactly one is active for new NLA tasks. `go` is seeded from the pool file; other named orchestras live in the private system database. |
+| Role | A bounded responsibility such as Explorer, Architect, Implementer, or Reviewer. A child role receives a task packet and uses its own model pool. |
+| Model pool | The candidate models and routing rules assigned to one role in an orchestra. A pool has a `selection_mode` and, for `select`, a selection policy. |
+| `fallback` | Tries the pool's fixed `models` array in order after a retryable failure. |
+| `select` | Filters and ranks candidates using role/task requirements, model facts, scores, policy, and health; a failed choice can be followed by another eligible candidate. |
+| `auto` | The `models` value for a dynamic agent `select` pool. At task start, enabled registry bindings are intersected with the OpenCode provider inventory and frozen as that task's candidate list. It is not a model binding. |
+| Model binding | An exact `provider/model` ID, such as `openai/gpt-5.6-luna`. Provider names alone are not pool entries or health identities. |
+| Registry, inventory, facts, evaluations | The registry stores bindings and operator/runtime facts (for example context and price); the OpenCode inventory says which bindings the runtime exposes; evaluations store quality observations. Inventory presence is not a live endpoint check. |
+| Model health | Temporary runtime eligibility such as cooldown or quarantine after an attempt. It is separate from durable registry status (`enabled`/`disabled`) and quality scores. |
+
 ## Runtime truth
 
 On first startup, the model-pool resolver seeds the `go` orchestra using a
