@@ -53,11 +53,12 @@ API keys and provider credentials do not belong in this repository, model-pool c
 | Orchestrator / coordinator | The primary NLA agent: owns the user goal, approvals, delegation, shared state, and final acceptance. It is not a model pool or an orchestra. |
 | Orchestra | A named, durable set of role pools and policies. Exactly one is active for new NLA tasks. `go` is seeded from the pool file; other named orchestras live in the private system database. |
 | Role | A bounded responsibility such as Explorer, Architect, Implementer, or Reviewer. A child role receives a task packet and uses its own model pool. |
-| Model pool | The candidate models and routing rules assigned to one role in an orchestra. A pool has a `selection_mode` and, for `select`, a selection policy. |
+| Model pool | The candidate models and routing rules assigned to one role in an orchestra. A pool has a `selection_mode` and, for `select` or `auto`, a selection policy. |
 | `fallback` | Tries the pool's fixed `models` array in order after a retryable failure. |
-| `select` | Filters and ranks candidates using role/task requirements, model facts, scores, policy, and health; a failed choice can be followed by another eligible candidate. |
-| `auto` | The `models` value for a dynamic agent `select` pool. At task start, enabled registry bindings are intersected with the OpenCode provider inventory and frozen as that task's candidate list. It is not a model binding. |
+| `select` | Filters and ranks only the pool's listed models using role/task requirements, model facts, scores, policy, and health; a failed choice can be followed by another eligible candidate. |
+| `auto` | A separate agent pool mode. At task start, enabled registry bindings in the OpenCode provider inventory become the task's candidate list. The optional `models` array gives listed bindings a small, nonexclusive preference; `[]` means no preferences. |
 | Model binding | An exact `provider/model` ID, such as `openai/gpt-5.6-luna`. Provider names alone are not pool entries or health identities. |
+| Provider status | An independent switch displayed as `on`/`off` by NLA. An off provider is excluded from new NLA tasks without changing its models' individual statuses or evaluations; SQLite retains legacy values. |
 | Registry, inventory, facts, evaluations | The registry stores bindings and operator/runtime facts (for example context and price); the OpenCode inventory says which bindings the runtime exposes; evaluations store quality observations. Inventory presence is not a live endpoint check. |
 | Model health | Temporary runtime eligibility such as cooldown or quarantine after an attempt. It is separate from durable registry status (`enabled`/`disabled`) and quality scores. |
 
@@ -95,7 +96,7 @@ imports therefore affect subsequent `select` choices without changing pool
 membership and survive `nla_models_reload`. The typed setting
 `routing.selection_policy.<select-role>` persists a `go` role's default policy;
 `routing.selection_policy.<orchestra>.<select-role>` does so for another orchestra;
-`nla_model_policy` saves policy, minimum score, and cost weight as one persistent
+`nla_model_policy` saves policy and minimum score as one persistent
 preference set. NLA loads that set on startup and applies it to new tasks
 immediately; active child tasks keep their existing snapshots. `nla_models_reload`
 validates a candidate against the current provider inventory before changing
@@ -575,13 +576,15 @@ Primary NLA can inspect the table map and status with `nla_system` (`schema`,
 `status`), list or set supported non-secret settings, and create or list named
 operator databases and typed tables. The writable operational settings are
 `operator_databases.enabled` (boolean) and
-`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`), plus
-`routing.selection_preferences.<select-role>` with policy, minimum score, and
-cost weight (prefix the role with a named orchestra when not using `go`);
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`), plus
+`routing.selection_preferences.<select-role>` with policy and minimum score
+(prefix the role with a named orchestra when not using `go`);
 `operator.*` is non-secret metadata. Unsupported operational settings are
 rejected. `nla_models_registry` lists, shows, and imports exact model bindings
 with facts, initial scores, and notes from interactive JSON or a project-local
-file. Importing an unassigned model does not put it into a role pool. Neither
+file. It separately lists, shows, and changes provider status with
+`provider_list`, `provider_show`, and `provider_status_set`; `status_set` remains
+the per-model control. Importing an unassigned model does not put it into a role pool. Neither
 tool exposes arbitrary SQL or row-level CRUD for operator tables.
 
 `model_usage_events` stores one row per completed OpenCode assistant message

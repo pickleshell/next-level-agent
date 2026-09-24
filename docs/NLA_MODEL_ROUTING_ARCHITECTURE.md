@@ -79,32 +79,43 @@ scores the remaining candidates using the task's role and requirements. The
 choice should be explainable and record the contributing facts, empirical
 scores, and runtime state.
 
-Operator model status is an exact-binding control, separate from provider
-availability and temporary health. `status: disabled` in registered model facts
-excludes that binding from new `fallback` and `select` dispatches without
-erasing evaluations or removing pool membership. Missing status defaults to
-`enabled`. The private SQLite registry owns the durable operator override;
-`nla_models_registry` action `status_set` updates one model at a time. A pool
-file may seed `model_facts.<binding>.status`, but later operator status changes
-remain authoritative. There is no provider-wide enable/disable switch.
-This gate applies to NLA role-pool dispatch; the OpenCode coordinator's own
-session model is selected by OpenCode and is not switched by registry status.
+Operator model status is an exact-binding control, independent from provider
+status and temporary health. `status: disabled` in registered model facts
+excludes that binding from new `fallback`, `select`, and `auto` dispatches
+without erasing evaluations or removing pool membership. Missing status
+defaults to `enabled`. The private SQLite model registry owns this override;
+`nla_models_registry status_set` updates one model. A pool file may seed
+`model_facts.<binding>.status`, but later operator changes remain authoritative.
+The separate `provider_registry` stores each provider's `status` as `enabled`
+or `disabled`. `provider_status_set` changes only that record; no model status,
+facts, scores, or pool configuration is rewritten. A model is eligible only
+when both statuses are enabled. The active coordinator's provider cannot be
+disabled until another orchestra is activated. These gates affect NLA routing,
+not direct OpenCode calls or an already running coordinator response.
+Operator tools accept and display `on`/`off` for both switches. Existing
+`enabled`/`disabled` values remain the storage and pool-file representation
+for compatibility; the tool boundary translates them without migrating or
+resetting model records.
 
-This architecture supports both sequential `fallback` pools and `select` pools
-where healthy candidates compete by deterministic suitability ranking.
+This architecture supports sequential `fallback`, fixed-candidate `select`, and
+inventory-wide `auto` pools. The assessor/coordinator selects the task policy;
+ranked pools then apply it to eligible candidates.
 
-Select ranking has three operator-visible policies. `quality` maximizes the
-weighted empirical score. `balanced` combines that score with a pool-relative
-normalized cost score using `cost_weight`. `cost` excludes models below
+Ranked pools have four operator-visible policies. `quality` maximizes the
+weighted empirical score. `balanced` selects the cheaper model among candidates
+with comparable task suitability, keeping other candidates for failover.
+There is no operator-set cost/quality weight. `cost` excludes models below
 `minimum_score`, then minimizes declared input-plus-output cost. Unknown costs
-never beat known costs in the cost-first policy. Policy is independent from
+never beat known costs in the cost-first policy. `local` considers only
+`ollama/*` bindings, ranks them by quality, and never falls back to a cloud
+model. Policy is independent from
 pool mode and may be overridden for one task or changed in the in-memory pool
 snapshot by the primary NLA orchestrator.
 
-The production default makes both modes explicit for every role and contains
+The production default specifies `fallback` or `select` for every role and contains
 only `opencode-go/*` bindings. Architect, Explorer, Implementer, and Reviewer
 are bounded `select` examples. Architect and Reviewer prefer `quality`; Explorer
-and Implementer use `balanced` with a `0.25` cost weight. Deterministic orchestration and utility roles
+and Implementer use `balanced`. Deterministic orchestration and utility roles
 remain `fallback` pools.
 
 ## Evaluation and system storage
@@ -170,9 +181,14 @@ The pool file defines role membership, mode, and initial model facts. SQLite
 owns model facts after first registration, so operator imports affect the
 selector and are not overwritten by pool reload. Scores and health are also
 persistent. `routing.selection_policy.<select-role>` is a typed, persistent
-default policy (`quality`, `balanced`, or `cost`); `nla_model_policy` remains
-runtime-only. Task-level preferences may override the default, while mandatory
-high-risk quality constraints still apply. `operator_databases.enabled` is a
+default policy (`quality`, `balanced`, `cost`, or `local`). `local` is a hard
+`ollama/*`-only filter for `select`/`auto` pools, with quality ranking inside
+the local set and no cloud fallback; the operator must ensure Ollama is
+self-hosted. `nla_model_policy` saves a
+policy and cost-policy quality floor in SQLite for new tasks. Task-level
+preferences may override the default; mandatory high-risk
+reasoning/reliability constraints and any `local` boundary remain in force.
+`operator_databases.enabled` is a
 typed switch for creating extra operator databases/tables; `operator.*` is
 non-secret metadata, and unsupported operational settings are rejected.
 
@@ -203,10 +219,13 @@ Each role pool accepts an optional `selection_mode`:
 ```
 
 The default is `fallback`. It preserves the existing ordered behavior. In
-`select` mode NLA removes models that are unavailable, cooling, quarantined, or
-already attempted, then ranks the remaining candidates. A failure can select
-the next remaining candidate; attempts are bounded by the length of the pool.
-There is no separate failover-count setting.
+`select` mode NLA removes listed models that are unavailable, cooling,
+quarantined, or already attempted, then ranks the remaining candidates. In
+`auto` mode the same ranking applies to every enabled model present in the
+current OpenCode provider inventory. Its `models` array is an optional soft
+preference list; `[]` means no model preferences. A failure reselects from
+the task's remaining candidates. Attempts are bounded by the fixed pool length
+or the auto candidate snapshot length. There is no separate failover-count setting.
 
 Role weights are explicit 0..10 requirements, with conservative built-in
 defaults per role. A pool may override them with `selection_weights`:
@@ -236,8 +255,12 @@ defaults per role. A pool may override them with `selection_weights`:
 
 Model facts are operator-supplied and are not quality claims. Scores use the
 same 0..10 scale, where zero means unevaluated. Unknown dimensions are omitted
-from the weighted denominator. The ranking tie-break is higher reliability,
-lower known static cost, higher latency score, then original pool order.
+from the weighted denominator. For `auto`, listed models receive a small 0.25
+ranking bonus on the 0..10 quality scale for `quality` and `balanced`; this
+does not change stored scores, eligibility, or hard context/risk safeguards.
+Under `cost`, the lowest-priced qualified model still wins, with preference
+affecting ties. Other ranking tie-breaks include reliability, provider
+preference, known static cost, latency score, then candidate order.
 
 The reviewer API accepts only a strict payload with `verdict` and the three
 review dimensions `coding`, `reasoning`, and `tool_use`, each from 1 to 10.
@@ -265,7 +288,7 @@ provides it, tracks every attempted binding, and never retries a binding that
 has already been dispatched even if its cooldown expires. If OpenCode does not
 provide the initial model, NLA avoids attributing runtime quality to that
 unknown binding and still excludes the configured current binding from a
-select-mode retry.
+ranked-pool retry.
 
 `nla_task` may provide strict JSON `selection_weights` containing only the five
 score dimensions, each from 0 to 10. These task weights override role defaults
@@ -291,12 +314,16 @@ process. New tasks use the active orchestra; in-flight tasks keep a concrete
 snapshot. The current coordinator response retains its OpenCode model, while
 new sessions pick up the active orchestra's coordinator binding.
 
-An agent `select` pool may set `models` to `"auto"`. At task start NLA gets the
-OpenCode provider inventory, syncs missing model facts into the registry, and
-intersects exact inventory bindings with `enabled` registry records. The normal
-assessor, role weights, context requirements, selection policy, and health
-filter rank this concrete candidate set. It is retained for the child task's
-failover; the saved orchestra continues to say `auto`. A missing inventory
+An agent pool may use `selection_mode: "auto"` with `models: []` or an array of
+preferred bindings. At task start NLA gets the OpenCode provider inventory,
+syncs missing model facts into the registry, and intersects exact inventory
+bindings with `enabled` registry records. The normal assessor, role weights,
+context requirements, selection policy, and health filter rank this concrete
+candidate set. A listed preference can win a close decision, but a better
+unlisted model remains eligible. The resolved list is retained for the child
+task's failover; the saved orchestra retains its original preference list.
+Older persisted `selection_mode: "select", models: "auto"` configurations load
+as `auto` with an empty preference list. A missing inventory
 fails closed. Runtime discovery only adds models and missing facts; it does not
 replace operator facts, statuses, or empirical evaluations. A provider quota
 is not presently enforced by this routing scheme.

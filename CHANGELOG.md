@@ -18,6 +18,23 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
   models against the OpenCode provider inventory at task start. Keep per-model
   status and empirical scores across orchestra changes; support provider
   preference tie-breakers and stored coordinator guidance.
+- Add explicit `selection_mode: "auto"`: an empty `models` array considers the
+  full enabled inventory, while listed bindings are soft preferences rather
+  than an exclusive pool. Keep older saved `select`/`models: "auto"` orchestras
+  readable as empty-preference auto pools; `select` remains fixed-membership.
+- Remove the operator-facing `cost_weight` setting and fixed 75/25 `balanced`
+  formula. The assessor/coordinator chooses policy; `balanced` favors lower
+  cost among similarly suitable models. Legacy pool and SQLite values are
+  ignored on load without losing the saved policy or model evaluations.
+- Add a durable provider registry with independent `enabled`/`disabled` status
+  and NLA tools to list, inspect, and toggle providers. New tasks require both
+  provider and model to be enabled; model settings and evaluations are retained.
+- Show model, provider, and role switches as `on`/`off` in NLA tools. Accept
+  `on`/`off` for model/provider changes while retaining legacy input and SQLite
+  values for compatibility.
+- Add `local` policy for `select`/`auto` roles: rank only self-hosted Ollama
+  bindings, fail closed without cloud fallback, and retain high-risk score
+  safeguards within the local candidate set.
 
 ### Model inventory context fix
 
@@ -53,8 +70,8 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
   bounded inspection, settings, schema creation, and model-registry import.
   Neither tool exposes arbitrary SQL or row-level CRUD for operator tables.
 - Made imported model facts affect `select` routing and persist across pool
-  reload; added persistent per-role default selection policy while retaining
-  the runtime-only `nla_model_policy` override.
+  reload; added persistent per-role default selection policy and the
+  `nla_model_policy` operator tool.
 - Added one-time legacy evaluation migration that fails on malformed input
   rather than silently replacing observations with seed scores; legacy
   workflow ledgers and restore blocks migrate on first access.

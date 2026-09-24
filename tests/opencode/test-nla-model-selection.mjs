@@ -73,7 +73,9 @@ assert.equal(parseContextWindow('131072'), 131072);
 assert.throws(() => parseContextWindow('0'), /context_window/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'parallel', models: ['fixture/a'] } } }), /selection_mode/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'select', selection_policy: 'random', models: ['fixture/a'] } } }), /selection_policy/);
-assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'select', selection_policy: 'balanced', cost_weight: 2, models: ['fixture/a'] } } }), /cost_weight/);
+validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'auto', selection_policy: 'local', models: [] } } });
+assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'fallback', selection_policy: 'local', models: ['ollama/qwen'] } } }), /requires select or auto/);
+assert.equal(selectionPreferences({ selection_policy: 'balanced', cost_weight: 1 }).cost_weight, undefined, 'legacy cost weight does not affect routing');
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_weights: { coding: 11 }, models: ['fixture/a'] } } }), /selection_weights/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, model_facts: { 'fixture/b': {} }, models: ['fixture/a'] } } }), /unlisted binding/);
 assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, models: ['fixture/a'], model_facts: { 'fixture/a': { status: 'paused' } } } } }), /status must be enabled or disabled/);
@@ -95,10 +97,33 @@ assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: disabledPool, 
 assert.deepEqual(routableModelPool(disabledPool).models, ['fixture/slow', 'fixture/cheap', 'fixture/down'], 'fallback retains order while removing disabled models');
 assert.ok(Math.abs(ranked.candidates[0].score - 8.619047619) < 0.000001, 'weighted suitability is explainable');
 assert.equal(selectionPreferences(pool).policy, 'quality');
-const balanced = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'balanced', cost_weight: 0.5 }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
-assert.equal(balanced.models[0], 'fixture/cheap', 'balanced policy combines normalized price and quality');
+const balanced = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'balanced' }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
+assert.equal(balanced.models[0], 'fixture/cheap', 'balanced favors lower cost among similarly suitable models');
+assert.ok(balanced.models.includes('fixture/slow'), 'balanced retains lower-ranked candidates for failover');
+const qualityGap = structuredClone(evaluations);
+qualityGap.models['fixture/cheap'].scores = { coding: 6, reasoning: 6, tool_use: 6, reliability: 6, latency: 6 };
+assert.equal(rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'balanced' }, evaluations: qualityGap, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) }).models[0], 'fixture/best', 'balanced does not trade away a clear suitability advantage for price');
 const costFirst = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'cost', minimum_score: 7.5 }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
 assert.deepEqual(costFirst.models, ['fixture/cheap', 'fixture/best'], 'cost policy enforces quality floor before sorting by price');
+const localPool = { selection_mode: 'select', selection_policy: 'local', models: ['fixture/strong', 'ollama/qwen', 'ollama/backup'], model_facts: {
+  'fixture/strong': { context_window: 131072, input_cost: 0 },
+  'ollama/qwen': { context_window: 131072, input_cost: 0 },
+  'ollama/backup': { context_window: 131072, input_cost: 0 },
+} };
+const localEvaluations = { models: {
+  'fixture/strong': { scores: { coding: 10, reasoning: 10, tool_use: 10 } },
+  'ollama/qwen': { scores: { coding: 8, reasoning: 8, tool_use: 8 } },
+  'ollama/backup': { scores: { coding: 7, reasoning: 7, tool_use: 7 } },
+} };
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: localPool, evaluations: localEvaluations, taskProfile: { policy: 'quality' } }).models, ['ollama/qwen', 'ollama/backup'], 'saved local boundary cannot be overridden by a task policy');
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: localPool, evaluations: localEvaluations, attempted: ['ollama/qwen'] }).models, ['ollama/backup'], 'local failover stays local');
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: localPool, evaluations: localEvaluations, healthManager: health({ 'ollama/qwen': { state: 'cooling', eligible: false }, 'ollama/backup': { state: 'cooling', eligible: false } }) }).models, [], 'unavailable local models never fall back to cloud');
+const autoLocalPool = materializeAutoPool({ selection_mode: 'auto', selection_policy: 'local', models: ['fixture/strong'] }, [
+  { binding: 'fixture/strong', status: 'enabled', facts: {} },
+  { binding: 'ollama/qwen', status: 'enabled', facts: {} },
+], new Set(['fixture/strong', 'ollama/qwen']));
+assert.deepEqual(autoLocalPool.models, ['ollama/qwen'], 'local auto pool materializes no cloud bindings');
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: autoLocalPool, evaluations: localEvaluations }).models, ['ollama/qwen'], 'auto local ignores remote preferred bindings');
 assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'cost', minimum_score: 9.5 }, evaluations, healthManager: health() }).models, ['fixture/down'], 'cost policy keeps only candidates meeting the quality floor');
 
 const unknown = rankModelCandidates({

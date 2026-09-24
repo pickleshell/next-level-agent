@@ -97,14 +97,15 @@ export function assessTask({ role, description, prompt, refinement = {} } = {}) 
     const proposedWeights = parseSelectionWeights(refinement.selection_weights);
     const proposedContext = parseContextWindow(refinement.context_window);
     const supplied = (key) => refinement[key] !== undefined && refinement[key] !== null && refinement[key] !== '';
-    const hasRefinement = Boolean(proposedWeights || proposedContext || supplied('selection_policy') || supplied('minimum_score') || supplied('cost_weight'));
+    const hasRefinement = Boolean(proposedWeights || proposedContext || supplied('selection_policy') || supplied('minimum_score'));
     const preferences = hasRefinement ? selectionPreferences({}, {
       policy: refinement.selection_policy,
       minimum_score: refinement.minimum_score,
-      cost_weight: refinement.cost_weight,
     }) : {};
     let policy = refinement.selection_policy || baseline.policy;
-    if (LEVEL[baseline.risk] >= LEVEL.high) policy = 'quality';
+    // Local remains a hard provider boundary even for high-risk work; the
+    // high-risk reasoning/reliability floors still apply within that boundary.
+    if (LEVEL[baseline.risk] >= LEVEL.high && policy !== 'local') policy = 'quality';
     const contextWindow = Math.max(baseline.context_window || 0, proposedContext || 0) || null;
 
     return {
@@ -114,7 +115,6 @@ export function assessTask({ role, description, prompt, refinement = {} } = {}) 
       context_window: contextWindow,
       policy,
       minimum_score: supplied('minimum_score') ? preferences.minimum_score : undefined,
-      cost_weight: supplied('cost_weight') ? preferences.cost_weight : undefined,
       confidence: baseline.confidence,
       source: hasRefinement ? 'hybrid' : 'deterministic',
       reasons: baseline.reasons,

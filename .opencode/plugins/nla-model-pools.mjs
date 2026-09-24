@@ -58,10 +58,10 @@ export function validateModelPools(parsed, source = 'model pool file') {
     if (!pool || typeof pool !== 'object' || Array.isArray(pool)) throw new ModelPoolValidationError(`Role ${role} must be an object in ${source}`, source);
     if (pool.enabled !== undefined && typeof pool.enabled !== 'boolean') throw new ModelPoolValidationError(`Role ${role}.enabled must be boolean in ${source}`, source);
     if (pool.selection_mode !== undefined && !['fallback', 'select', 'auto'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_mode must be fallback, select, or auto in ${source}`, source);
-    if (pool.selection_policy !== undefined && !['quality', 'balanced', 'cost'].includes(pool.selection_policy)) throw new ModelPoolValidationError(`Role ${role}.selection_policy must be quality, balanced, or cost in ${source}`, source);
+    if (pool.selection_policy !== undefined && !['quality', 'balanced', 'cost', 'local'].includes(pool.selection_policy)) throw new ModelPoolValidationError(`Role ${role}.selection_policy must be quality, balanced, cost, or local in ${source}`, source);
+    if (pool.selection_policy === 'local' && !['select', 'auto'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_policy local requires select or auto in ${source}`, source);
     if (pool.preferred_providers !== undefined && (!Array.isArray(pool.preferred_providers) || !pool.preferred_providers.length || new Set(pool.preferred_providers).size !== pool.preferred_providers.length || pool.preferred_providers.some((provider) => typeof provider !== 'string' || !BINDING_PART.test(provider)))) throw new ModelPoolValidationError(`Role ${role}.preferred_providers must be a non-empty unique provider list in ${source}`, source);
     if (pool.minimum_score !== undefined && (typeof pool.minimum_score !== 'number' || !Number.isFinite(pool.minimum_score) || pool.minimum_score < 0 || pool.minimum_score > 10)) throw new ModelPoolValidationError(`Role ${role}.minimum_score must be a number from 0 to 10 in ${source}`, source);
-    if (pool.cost_weight !== undefined && (typeof pool.cost_weight !== 'number' || !Number.isFinite(pool.cost_weight) || pool.cost_weight < 0 || pool.cost_weight > 1)) throw new ModelPoolValidationError(`Role ${role}.cost_weight must be a number from 0 to 1 in ${source}`, source);
     if (pool.selection_weights !== undefined) {
       if (!pool.selection_weights || typeof pool.selection_weights !== 'object' || Array.isArray(pool.selection_weights) || !Object.keys(pool.selection_weights).length) throw new ModelPoolValidationError(`Role ${role}.selection_weights must be a non-empty object in ${source}`, source);
       for (const [key, value] of Object.entries(pool.selection_weights)) {
@@ -142,11 +142,13 @@ function readPoolFile(configPath, resolution) {
   return { version: parsed.version ?? 1, roles, source: configPath, resolution };
 }
 
-// Accept old persisted models: "auto" orchestras without perpetuating that shape.
+// Accept old persisted settings without perpetuating deprecated routing fields.
 export function normalizeAutoPool(pool) {
-  return pool?.models === 'auto' && pool.selection_mode === 'select'
-    ? { ...pool, selection_mode: 'auto', models: [] }
-    : pool;
+  if (!pool || typeof pool !== 'object' || Array.isArray(pool)) return pool;
+  const { cost_weight: _deprecatedCostWeight, ...rest } = pool;
+  return rest.models === 'auto' && rest.selection_mode === 'select'
+    ? { ...rest, selection_mode: 'auto', models: [] }
+    : rest;
 }
 
 export function resolveModelPools({ explicitPath = null, env = process.env, homeDir = os.homedir(), defaultPath } = {}) {
@@ -168,11 +170,10 @@ export function modelPoolSummary(resolved) {
       role,
       enabled: coordinator ? null : enabled,
       pooled: !coordinator && enabled,
-      status: coordinator ? 'orchestrator' : (enabled ? 'enabled' : 'disabled'),
+      status: coordinator ? 'orchestrator' : (enabled ? 'on' : 'off'),
       selection_mode: auto ? 'auto' : pool?.selection_mode || 'fallback',
       selection_policy: pool?.selection_policy || 'quality',
       minimum_score: pool?.minimum_score ?? 7.5,
-      cost_weight: pool?.cost_weight ?? 0.25,
       primary: auto ? 'auto' : Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
       fallbacks: auto ? [] : Array.isArray(pool?.models) ? pool.models.slice(1) : [],
       preferences: auto && Array.isArray(pool?.models) ? pool.models : [],

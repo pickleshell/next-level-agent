@@ -118,6 +118,16 @@ show pool routing. After upgrading an existing installation, restart OpenCode
 once to load the new `nla_orchestra` tool; switching saved orchestras thereafter
 needs no restart.
 
+To temporarily pause Go without editing model pools or losing learned scores,
+activate an orchestra whose coordinator does not use `opencode-go`, then ask NLA
+to run `nla_models_registry` with `action=provider_status_set`,
+`provider=opencode-go`, `status=off`. Keep each Go model's individual
+status `on`; if any were previously `off`, turn on those exact
+bindings separately with `action=status_set`. Verify with `provider_show` and
+`nla_models`. To resume Go, change only the provider to `status=on`.
+The provider gate applies to new NLA tasks, not direct OpenCode requests or
+already running child tasks.
+
 A fresh NLA state creates a private SQLite system database at
 `~/.local/share/nla/system.sqlite`. On its first use it imports the versioned
 `config/model-evaluations.json` example, which seeds `coding`, `reasoning`, and
@@ -128,10 +138,14 @@ seed overwrite accumulated observations. Provider-specific `reliability` and
 
 Primary NLA can inspect this state with `nla_system` and `nla_models_registry`.
 The former manages safe settings and creates named local databases/tables; the
-latter lists or imports model records from structured JSON. Neither tool
-executes arbitrary SQL or accepts secrets. Importing a model registers its
+latter lists or imports model records from structured JSON and independently
+turns exact models or providers `on`/`off` with `status_set` and
+`provider_status_set`. Neither tool executes arbitrary SQL or accepts secrets.
+Importing a model registers its
 facts and scores, but intentionally does not change role-pool membership.
 These are bounded administration tools, not a general row-level database API.
+The tool accepts old `enabled`/`disabled` arguments for compatibility and
+still reads legacy values in SQLite and configuration files.
 Call `nla_system` action `schema` for the logical table map. Critical workflow
 ledgers and fail-closed restore blocks are stored in this database and migrated
 lazily from their legacy JSON files. Browser recovery remains in its verified
@@ -155,9 +169,12 @@ effect in `select` routing and survive `nla_models_reload`. A malformed legacy
 evaluation JSON stops startup before seeding; repair it and retry rather than
 discarding observations. The supported writable settings are
 `operator_databases.enabled` (boolean) and
-`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`). The
-latter changes the default policy immediately and persists across restart.
-`nla_model_policy` saves policy, quality floor, and cost weight together under
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`).
+This setting changes the default policy immediately and persists across restart.
+`local` confines `select`/`auto` tasks to `ollama/*` bindings and fails without
+cloud fallback when no local model is eligible. Confirm that the configured
+Ollama endpoint is under your control.
+`nla_model_policy` saves policy and cost-policy quality floor together under
 `routing.selection_preferences.<select-role>` (or
 `routing.selection_preferences.<orchestra>.<select-role>` for a named orchestra).
 Unknown operational settings and secrets are rejected.

@@ -14,7 +14,7 @@ const SQLiteDatabase = globalThis.Bun
   ? (await import('bun:sqlite')).Database
   : (await import('node:sqlite')).DatabaseSync;
 
-export const SYSTEM_DATABASE_VERSION = 3;
+export const SYSTEM_DATABASE_VERSION = 4;
 
 export class SystemDatabaseError extends Error {
   constructor(message) { super(message); this.name = 'SystemDatabaseError'; }
@@ -26,8 +26,9 @@ const SYSTEM_DATABASE_NAME = 'system';
 const USER_COLUMN_TYPES = new Set(['TEXT', 'INTEGER', 'REAL', 'BLOB']);
 const SESSION_ID = /^[A-Za-z0-9_-]{8,160}$/;
 const SECRET_KEY = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|private[_-]?key|recovery[_-]?code)/i;
-const SELECT_POLICIES = new Set(['quality', 'balanced', 'cost']);
+const SELECT_POLICIES = new Set(['quality', 'balanced', 'cost', 'local']);
 const ORCHESTRA_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
+const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export function systemDatabasePath(stateRoot) {
   return path.join(path.resolve(stateRoot), 'system.sqlite');
@@ -157,6 +158,11 @@ function migrate(db) {
       source TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS provider_registry (
+      provider_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('enabled', 'disabled')),
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS model_notes (
       binding TEXT NOT NULL,
       note_key TEXT NOT NULL,
@@ -218,6 +224,9 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS model_usage_events_binding_observed_idx
       ON model_usage_events (binding, observed_at DESC);
   `);
+  db.prepare(`INSERT OR IGNORE INTO provider_registry (provider_id, status, updated_at)
+    SELECT DISTINCT substr(binding, 1, instr(binding, '/') - 1), 'enabled', ?
+    FROM model_registry WHERE instr(binding, '/') > 1`).run(now());
   const applied = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(SYSTEM_DATABASE_VERSION);
   if (!applied) db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(SYSTEM_DATABASE_VERSION, now());
 }
@@ -256,6 +265,8 @@ function ensureDefaultSettings(db) {
     'system.database.driver': 'builtin-sqlite',
     'operator_databases.enabled': true,
   })) defaultSetting.run(key, jsonText(value), now());
+  db.prepare('UPDATE system_settings SET value_json = ?, updated_at = ? WHERE setting_key = ?')
+    .run(jsonText(SYSTEM_DATABASE_VERSION), now(), 'system.database.version');
 }
 
 export function initializeSystemDatabase({ stateRoot, seedPath, legacyEvaluationPath } = {}) {
@@ -345,14 +356,13 @@ function validateSetting(key, value) {
   if (key === 'operator_databases.enabled') {
     if (typeof value !== 'boolean') throw new SystemDatabaseError(`${key} must be true or false`);
   } else if (/^routing\.selection_policy\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
-    if (!SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`${key} must be quality, balanced, or cost`);
+    if (!SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`${key} must be quality, balanced, cost, or local`);
   } else if (/^routing\.selection_preferences\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).sort().join(',') !== 'cost_weight,minimum_score,selection_policy'
+      || Object.keys(value).sort().join(',') !== 'minimum_score,selection_policy'
       || !SELECT_POLICIES.has(value.selection_policy)
-      || typeof value.minimum_score !== 'number' || !Number.isFinite(value.minimum_score) || value.minimum_score < 0 || value.minimum_score > 10
-      || typeof value.cost_weight !== 'number' || !Number.isFinite(value.cost_weight) || value.cost_weight < 0 || value.cost_weight > 1) {
-      throw new SystemDatabaseError(`${key} requires selection_policy, minimum_score (0–10), and cost_weight (0–1)`);
+      || typeof value.minimum_score !== 'number' || !Number.isFinite(value.minimum_score) || value.minimum_score < 0 || value.minimum_score > 10) {
+      throw new SystemDatabaseError(`${key} requires selection_policy and minimum_score (0–10)`);
     }
   } else if (key.startsWith('operator.')) {
     // Private operator metadata has no effect on NLA routing or security.
@@ -385,7 +395,9 @@ export function configuredSelectionPreferences(file, role, orchestra = 'go') {
   const saved = getSystemSetting(file, `routing.selection_preferences.${scope}`);
   const legacy = getSystemSetting(file, `routing.selection_policy.${scope}`);
   if (!saved) return legacy ? { selection_policy: legacy.value } : null;
-  return { ...saved.value, ...(legacy ? { selection_policy: legacy.value } : {}) };
+  // Older persisted records may still contain cost_weight; it is no longer a
+  // routing input and must not leak back into the effective pool snapshot.
+  return { selection_policy: legacy?.value ?? saved.value.selection_policy, minimum_score: saved.value.minimum_score };
 }
 
 export function saveSelectionPreferences(file, role, orchestra, preferences) {
@@ -439,6 +451,7 @@ export function systemSchema() {
     system_settings: 'Typed settings: operator_databases.enabled and routing.selection_policy.<role> for go, or routing.selection_policy.<orchestra>.<role>. system.database.* is read-only; operator.* is metadata.',
     model_evaluations: 'Empirical selector scores for each exact model binding.',
     model_registry: 'Operator facts and durable enabled/disabled status for each exact model binding.',
+    provider_registry: 'Independent durable enabled/disabled status for each provider; disabled providers exclude their models from new NLA tasks without changing model facts or evaluations.',
     model_notes: 'Optional operator annotations for registered models.',
     model_health: 'Persisted temporary cooldown and quarantine state.',
     model_usage_events: 'Privacy-preserving per-completed-request token, cache, cost, model, role, and finish metadata; never prompt or response text.',
@@ -639,6 +652,7 @@ export function systemDatabaseStatus(file) {
       settings: Number(db.prepare('SELECT COUNT(*) AS count FROM system_settings').get().count),
       model_evaluations: evaluationCount(db),
       registered_models: Number(db.prepare('SELECT COUNT(*) AS count FROM model_registry').get().count),
+      registered_providers: Number(db.prepare('SELECT COUNT(*) AS count FROM provider_registry').get().count),
       orchestras: Number(db.prepare('SELECT COUNT(*) AS count FROM orchestras').get().count),
       active_orchestra: db.prepare('SELECT active_name FROM orchestra_state WHERE id = 1').get()?.active_name || null,
       model_notes: Number(db.prepare('SELECT COUNT(*) AS count FROM model_notes').get().count),
@@ -858,17 +872,49 @@ export function importModelRegistry(file, payloadJSON, { overwriteScores = false
   } finally { closeDatabase(db); }
 }
 
+function validProviderID(provider) {
+  if (typeof provider !== 'string' || !PROVIDER_ID.test(provider)) throw new SystemDatabaseError('Provider must be an exact provider ID');
+  return provider;
+}
+
+export function listProviderRegistry(file, provider = null) {
+  const db = openDatabase(file);
+  try {
+    migrate(db);
+    return provider
+      ? db.prepare('SELECT provider_id AS provider, status, updated_at FROM provider_registry WHERE provider_id = ?').all(validProviderID(provider))
+      : db.prepare('SELECT provider_id AS provider, status, updated_at FROM provider_registry ORDER BY provider_id').all();
+  } finally { closeDatabase(db); }
+}
+
+export function setProviderStatus(file, provider, status) {
+  validProviderID(provider);
+  if (!['enabled', 'disabled'].includes(status)) throw new SystemDatabaseError('Provider status must be enabled or disabled');
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      if (!db.prepare('SELECT 1 FROM provider_registry WHERE provider_id = ?').get(provider)) throw new SystemDatabaseError(`Provider is not registered: ${provider}`);
+      db.prepare('UPDATE provider_registry SET status = ?, updated_at = ? WHERE provider_id = ?').run(status, now(), provider);
+      return { provider, status };
+    });
+  } finally { closeDatabase(db); }
+}
+
 export function listModelRegistry(file, binding = null) {
   const db = openDatabase(file);
   try {
     migrate(db);
     const where = binding ? 'WHERE r.binding = ?' : '';
-    const rows = db.prepare(`SELECT r.binding, r.facts_json, r.source, r.updated_at, e.coding, e.reasoning, e.tool_use, e.reliability, e.latency
-      FROM model_registry r LEFT JOIN model_evaluations e ON e.binding = r.binding ${where} ORDER BY r.binding`).all(...(binding ? [validBinding(binding)] : []));
+    const rows = db.prepare(`SELECT r.binding, r.facts_json, r.source, r.updated_at,
+      p.status AS provider_status, e.coding, e.reasoning, e.tool_use, e.reliability, e.latency
+      FROM model_registry r
+      LEFT JOIN provider_registry p ON p.provider_id = substr(r.binding, 1, instr(r.binding, '/') - 1)
+      LEFT JOIN model_evaluations e ON e.binding = r.binding ${where} ORDER BY r.binding`).all(...(binding ? [validBinding(binding)] : []));
     return rows.map((row) => {
       const facts = JSON.parse(row.facts_json);
       return {
-        binding: row.binding, status: facts.status || 'enabled', facts, source: row.source, updated_at: row.updated_at,
+        binding: row.binding, status: facts.status || 'enabled', provider_status: row.provider_status || 'enabled', facts, source: row.source, updated_at: row.updated_at,
         scores: row.coding === null ? null : Object.fromEntries(EVALUATION_SCORE_KEYS.map((key) => [key, row[key]])),
         notes: Object.fromEntries(db.prepare('SELECT note_key, note_text FROM model_notes WHERE binding = ? ORDER BY note_key').all(row.binding).map((note) => [note.note_key, note.note_text])),
       };
@@ -970,11 +1016,17 @@ export function poolWithSystemFacts(file, pool) {
   const db = openDatabase(file);
   try {
     migrate(db);
-    const query = db.prepare('SELECT facts_json FROM model_registry WHERE binding = ?');
+    const query = db.prepare(`SELECT r.facts_json, p.status AS provider_status FROM model_registry r
+      LEFT JOIN provider_registry p ON p.provider_id = substr(r.binding, 1, instr(r.binding, '/') - 1)
+      WHERE r.binding = ?`);
+    const providerQuery = db.prepare('SELECT status FROM provider_registry WHERE provider_id = ?');
     const facts = {};
     for (const binding of pool.models) {
       const row = query.get(binding);
-      if (row) facts[binding] = JSON.parse(row.facts_json);
+      const stored = row ? JSON.parse(row.facts_json) : {};
+      const provider = binding.slice(0, binding.indexOf('/'));
+      const providerStatus = row?.provider_status || providerQuery.get(provider)?.status || 'enabled';
+      if (row || providerStatus === 'disabled') facts[binding] = providerStatus === 'disabled' ? { ...stored, provider_status: 'disabled' } : stored;
     }
     return { ...pool, model_facts: facts };
   } finally { closeDatabase(db); }

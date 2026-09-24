@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
@@ -9,7 +10,7 @@ import { createModelInventorySync } from '../../.opencode/plugins/nla-model-inve
 import { materializeAutoPool, rankModelCandidates } from '../../.opencode/plugins/nla-model-selection.mjs';
 import {
   activateOrchestra, configuredSelectionPreferences, getOrchestra, initializeOrchestras, initializeSystemDatabase,
-  listModelRegistry, listOrchestras, saveOrchestra, setModelStatus,
+  listModelRegistry, listOrchestras, listProviderRegistry, saveOrchestra, setModelStatus,
   saveSelectionPreferences, setSystemSetting, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, updateOrchestra,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
@@ -53,12 +54,17 @@ try {
   assert.equal(getOrchestra(file).config.guidance, proposal.guidance);
   setSystemSetting(file, 'routing.selection_policy.command-openai.reviewer', JSON.stringify('cost'));
   assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), { selection_policy: 'cost' });
-  const preferences = { selection_policy: 'balanced', minimum_score: 8, cost_weight: 0.4 };
+  const preferences = { selection_policy: 'balanced', minimum_score: 8 };
   assert.deepEqual(saveSelectionPreferences(file, 'reviewer', 'command-openai', preferences).value, preferences);
   assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), preferences, 'complete preference save replaces stale policy-only override');
   setSystemSetting(file, 'routing.selection_policy.command-openai.reviewer', JSON.stringify('quality'));
   assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), { ...preferences, selection_policy: 'quality' }, 'later policy-only setting remains supported');
-  assert.throws(() => saveSelectionPreferences(file, 'reviewer', 'command-openai', { ...preferences, cost_weight: 2 }), /cost_weight/);
+  const legacyDb = new DatabaseSync(file);
+  legacyDb.prepare('UPDATE system_settings SET value_json = ? WHERE setting_key = ?')
+    .run(JSON.stringify({ ...preferences, cost_weight: 0.4 }), 'routing.selection_preferences.command-openai.reviewer');
+  legacyDb.close();
+  assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), { ...preferences, selection_policy: 'quality' }, 'old SQLite cost weight is ignored without discarding saved policy');
+  assert.throws(() => saveSelectionPreferences(file, 'reviewer', 'command-openai', { ...preferences, cost_weight: 2 }), /requires selection_policy/);
   const previousMemoryDir = process.env.NLA_MEMORY_DIR;
   process.env.NLA_MEMORY_DIR = root;
   let restarted;
@@ -69,7 +75,25 @@ try {
     assert.equal(restored.metadata.orchestra, 'command-openai', 'new OpenCode process loads active orchestra from SQLite');
     const reviewer = restored.metadata.roles.find((row) => row.role === 'reviewer');
     assert.equal(reviewer.selection_policy, 'quality');
-    assert.equal(reviewer.cost_weight, 0.4, 'new process loads saved role preferences without reevaluation');
+    assert.equal(reviewer.cost_weight, undefined, 'new process does not expose a cost weight');
+    const primary = { sessionID: 'primary_restart', directory: root };
+    const providers = await restarted.tool.nla_models_registry.execute({ action: 'provider_list' }, primary);
+    assert.ok(JSON.parse(providers.output).some((record) => record.provider === 'openai' && record.status === 'on'));
+    const providerOff = await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'openai', status: 'off' }, primary);
+    assert.equal(JSON.parse(providerOff.output).status, 'off');
+    assert.equal(listModelRegistry(file, 'openai/gpt-5')[0].provider_status, 'disabled', 'tool updates provider status without changing model status');
+    assert.equal(listModelRegistry(file, 'openai/gpt-5')[0].status, 'enabled');
+    const paused = await restarted.tool.nla_models.execute({}, primary);
+    assert.ok(paused.metadata.providers.some((record) => record.provider === 'openai' && record.status === 'off'));
+    assert.match(paused.output, /openai=off/);
+    await assert.rejects(restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'command-code', status: 'off' }, primary), /active coordinator provider/);
+    const providerOn = await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'openai', status: 'on' }, primary);
+    assert.equal(JSON.parse(providerOn.output).status, 'on');
+    assert.equal(listProviderRegistry(file, 'openai')[0].status, 'enabled', 'on/off tool inputs retain legacy SQLite storage');
+    assert.equal(JSON.parse((await restarted.tool.nla_models_registry.execute({ action: 'provider_show', provider: 'openai' }, primary)).output).status, 'on');
+    assert.equal(JSON.parse((await restarted.tool.nla_models_registry.execute({ action: 'show', binding: 'openai/gpt-5' }, primary)).output).provider_status, 'on');
+    assert.equal(JSON.parse((await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'openai', status: 'disabled' }, primary)).output).status, 'off', 'legacy status input remains accepted');
+    await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'openai', status: 'on' }, primary);
   } finally {
     await restarted?.dispose();
     if (previousMemoryDir === undefined) delete process.env.NLA_MEMORY_DIR;
@@ -87,10 +111,12 @@ try {
   const changed = structuredClone(proposal);
   changed.roles.reviewer.selection_mode = 'auto';
   changed.roles.reviewer.models = ['openai/gpt-5'];
+  changed.roles.reviewer.cost_weight = 0.4;
   delete changed.roles.reviewer.model_facts;
   assert.equal(updateOrchestra(file, 'command-openai', changed).name, 'command-openai');
   assert.deepEqual(getOrchestra(file).config.roles.reviewer.models, ['openai/gpt-5']);
   assert.equal(getOrchestra(file).config.roles.reviewer.selection_mode, 'auto');
+  assert.equal(getOrchestra(file).config.roles.reviewer.cost_weight, undefined, 'deprecated pool field is stripped when saved');
   assert.throws(() => updateOrchestra(file, 'go', changed), /original pool file/);
   assert.equal(getOrchestra(file, 'go').config.roles.implementer.models.length, 27, 'go snapshot is retained');
   assert.equal(listOrchestras(file).length, 2);

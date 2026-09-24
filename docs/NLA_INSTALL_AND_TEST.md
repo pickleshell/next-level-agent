@@ -1,5 +1,10 @@
 # Next Level Agent — Installation + Testing
 
+This document includes early implementation test evidence. For current setup
+and runtime behavior, use [`INSTALL.md`](../INSTALL.md) and
+[`Project Status and Usage`](PROJECT_STATUS_AND_USAGE.md); the current pool
+contract is `fallback`, `select`, or `auto`.
+
 Base: Superpowers (https://github.com/obra/superpowers, commit b36e082)
 Plugin: `next-level-agent` (`.codex-plugin/plugin.json`)
 
@@ -83,9 +88,9 @@ and the user explicitly approves the resulting written design.
 - Run `tests/` full suite.
 - Confirm `.checkpoints/` has timestamped `.json` files.
 - Confirm `.logs/compact.log` exists with event types (`compact`, `checkpoint_save`, `checkpoint_restore`, `token_threshold_exceeded`).
-- Confirm eight enabled subagent pools and the deliberately disabled primary
-  `nla` coordinator entry in `config/model-pools.json`; fallback pools try their
-  complete ordered chain, while `select` pools rank eligible configured models.
+- Confirm the coordinator and the configured child-role pools with `nla_models`;
+  `fallback` tries its ordered list, `select` ranks listed models, and `auto`
+  ranks enabled inventoried models with optional soft preferences.
 
 ## Run log
 
@@ -93,12 +98,12 @@ After editing the resolved model-pool file, the primary NLA coordinator can
 apply it without restarting OpenCode:
 
 1. Run `nla_models_reload` to validate and load the new snapshot.
-2. Run `nla_models` to verify each role's primary model, ordered fallbacks,
-   source, resolution reason, and health.
+2. Run `nla_models` to verify each role's mode, policy, source, and health.
+   Fixed pools show primary/fallbacks; auto pools show preferences and candidate count.
 
-The `models` array is the complete ordered attempt list. Do not add a separate
-`max_failovers` or model-count field; runtime attempts are always bounded by
-`models.length`.
+For fixed pools, the `models` array bounds attempts. For `auto`, `models` is
+an optional soft preference list and the task's resolved inventory snapshot
+bounds attempts. Do not add a separate `max_failovers` or model-count field.
 
 NLA writes newline-delimited JSON to `.opencode/agent-run.log` in the target project. Entries are emitted by OpenCode hooks, not authored by the model. They record timestamps, session and call identifiers, primary-agent selection, skill calls, subagent dispatch, and subagent completion. Prompts, tool output, and model replies are not written.
 
@@ -113,8 +118,8 @@ NLA writes newline-delimited JSON to `.opencode/agent-run.log` in the target pro
 ## Model pools
 
 NLA model pools are implemented by the local plugin, not by prompts. NLA uses
-the `nla_task` tool for configured subagents. The tool creates the child session
-first, then tries the role's ordered model list in that same session. This makes
+the `nla_task` tool for configured subagents. It creates the child session
+first, then tries the role's bounded candidate list in that same session. This makes
 early model rejection (`404`, `410`, `Model not found`, or model end-of-life),
 retryable provider failure (`429`, `5xx`, network failure), and role-specific
 timeout eligible for fallback. It records each attempt and fallback in
@@ -124,23 +129,13 @@ The raw OpenCode `task` tool is not pool-safe for early rejection because it
 selects the agent model before the child task becomes controllable by the NLA
 plugin. NLA therefore uses `nla_task` for every pooled role.
 
-A pool has exactly one fallback in `config/model-pools.json`; this prevents
-loops and uncontrolled billed usage. The primary NLA session has no automatic
-fallback: it remains visible to the user. Inkling is intentionally not a
-long-running subagent fallback because the gtop test exposed repeated upstream
-504 responses.
-
-The public Architect pool is currently ordered as:
-
-```text
-opencode/mimo-v2.5-free
-→ opencode/hy3-free
-```
-
-Both entries were usable during the documented development smoke tests, but
-free-provider availability is external and must be verified during installation.
-Provider rejection, including HTTP 410, remains covered by deterministic test
-fixtures; public defaults do not intentionally call a broken live endpoint.
+The primary NLA session has no automatic fallback: it remains visible to the
+user. The checked-in `go` Architect pool is a five-model `select` pool; its
+current exact bindings are in [`config/model-pools.json`](../config/model-pools.json).
+Named orchestras may instead use `selection_mode: "auto"` with `models: []` or
+preferred bindings. Old saved `selection_mode: "select", models: "auto"` pools
+remain readable. Provider availability must be verified during installation;
+inventory presence alone is not proof that a model request will succeed.
 
 When a deterministic or real provider failure exercises bounded Architect
 failover, the expected run-log sequence is:
@@ -162,17 +157,18 @@ gate, material milestones or anomalies, pre-compaction, and completion. Tier 2
 uses it only for repeated failures, blockers, scope drift, long-running
 milestones, or compaction. Tier 0 and Tier 1 do not use Supervisor.
 
-Primary NLA maintains a private structured ledger with `nla_state`. The ledger
-is stored outside the repository under:
+Primary NLA maintains a private structured ledger with `nla_state`. Its
+authoritative copy is stored outside the repository in SQLite under:
 
 ```text
-~/.local/share/nla/sessions/<session-id>.json
+~/.local/share/nla/system.sqlite (session_ledgers)
 ```
 
 It preserves the goal, Tier, workflow stage, acceptance criteria, approved
 decisions, completed and active work, changed files, verification, blockers,
-pending gate, and exact next step. Files are atomically replaced with mode
-`0600`; directories use `0700`. Obvious secret assignments are rejected.
+pending gate, and exact next step. Legacy session files may be migrated into
+SQLite; they are not the current source of truth. Obvious secret assignments
+are rejected.
 
 ### Assistant Notebook
 
