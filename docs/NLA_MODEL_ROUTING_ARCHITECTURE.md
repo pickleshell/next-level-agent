@@ -278,3 +278,25 @@ Runtime reliability is recorded only for successful requests or transient
 provider execution failures. Caller cancellation, permission/application
 errors, child-stop failures, browser verification blocks, and provider
 configuration/authentication failures do not lower a model's reliability.
+
+## Named orchestras and dynamic pools
+
+An orchestra is a named, durable configuration of NLA roles, pool modes,
+model membership, and selection policies. The existing Go configuration is
+saved once as `go`; its checked-in pool file remains an explicit reload source.
+`orchestras` and `orchestra_state` live in the private system database. NLA can
+list, show, propose, create, update, set one role pool, and activate orchestras through
+`nla_orchestra`. Activation is atomic in the database and updates the current
+process. New tasks use the active orchestra; in-flight tasks keep a concrete
+snapshot. The current coordinator response retains its OpenCode model, while
+new sessions pick up the active orchestra's coordinator binding.
+
+An agent `select` pool may set `models` to `"auto"`. At task start NLA gets the
+OpenCode provider inventory, syncs missing model facts into the registry, and
+intersects exact inventory bindings with `enabled` registry records. The normal
+assessor, role weights, context requirements, selection policy, and health
+filter rank this concrete candidate set. It is retained for the child task's
+failover; the saved orchestra continues to say `auto`. A missing inventory
+fails closed. Runtime discovery only adds models and missing facts; it does not
+replace operator facts, statuses, or empirical evaluations. A provider quota
+is not presently enforced by this routing scheme.

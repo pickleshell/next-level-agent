@@ -101,6 +101,17 @@ export function routableModelPool(pool) {
   }) };
 }
 
+// Materialize auto once per task. The source orchestra continues to say auto;
+// the child keeps this concrete snapshot for failover and auditability.
+export function materializeAutoPool(pool, registry, inventory) {
+  if (pool?.models !== 'auto') return pool;
+  if (!(inventory instanceof Set)) throw new ModelSelectionError('Auto pool requires a fresh OpenCode provider inventory');
+  const eligible = registry.filter((record) => record.status === 'enabled' && inventory.has(record.binding));
+  const models = eligible.map((record) => record.binding).sort();
+  const model_facts = Object.fromEntries(eligible.map((record) => [record.binding, record.facts]));
+  return { ...pool, models, model_facts };
+}
+
 function healthFor(healthManager, binding, endpoint, now) {
   if (healthManager?.state) return healthManager.state(binding, endpoint);
   const entry = healthManager?.get?.(binding);
@@ -140,6 +151,8 @@ function compareQuality(left, right) {
   if (leftScore !== rightScore) return rightScore - leftScore;
   const reliability = (right.scores.reliability || 0) - (left.scores.reliability || 0);
   if (reliability) return reliability;
+  const preference = (right.provider_preference || 0) - (left.provider_preference || 0);
+  if (preference) return preference;
   if (left.cost !== null && right.cost !== null && left.cost !== right.cost) return left.cost - right.cost;
   if (left.cost === null && right.cost !== null) return 1;
   if (left.cost !== null && right.cost === null) return -1;
@@ -188,7 +201,9 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     if (!staticAvailability(facts, now)) reasons.push('static_unavailable');
     if (taskProfile.context_window && (!Number.isFinite(Number(facts.context_window)) || facts.context_window < Number(taskProfile.context_window))) reasons.push('insufficient_context');
     const scores = evaluatedScores(evaluations, binding);
-    return { binding, index, facts, health, scores, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
+    const preferred = pool.preferred_providers || [];
+    const providerIndex = preferred.indexOf(binding.slice(0, binding.indexOf('/')));
+    return { binding, index, facts, health, scores, provider_preference: providerIndex < 0 ? 0 : preferred.length - providerIndex, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
   });
   const preferences = selectionPreferences(pool, taskProfile);
   const eligible = rankByPolicy(all.filter((candidate) => candidate.eligible), preferences);

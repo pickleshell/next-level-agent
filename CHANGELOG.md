@@ -7,6 +7,18 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Named orchestras and dynamic model pools
+
+- Preserve the original role and model configuration as the durable `go`
+  orchestra; save additional named orchestras and the active choice in SQLite.
+- Add `nla_orchestra` to inspect, propose, create, update, change one role pool,
+  and activate orchestras without restarting OpenCode. New tasks use the active
+  snapshot while running child tasks retain theirs.
+- Add `models: "auto"` for agent `select` roles, resolving enabled registry
+  models against the OpenCode provider inventory at task start. Keep per-model
+  status and empirical scores across orchestra changes; support provider
+  preference tie-breakers and stored coordinator guidance.
+
 ### Model inventory context fix
 
 - Fill missing SQLite model context limits and prices from resolved OpenCode

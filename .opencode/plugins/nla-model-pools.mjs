@@ -59,6 +59,7 @@ export function validateModelPools(parsed, source = 'model pool file') {
     if (pool.enabled !== undefined && typeof pool.enabled !== 'boolean') throw new ModelPoolValidationError(`Role ${role}.enabled must be boolean in ${source}`, source);
     if (pool.selection_mode !== undefined && !['fallback', 'select'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_mode must be fallback or select in ${source}`, source);
     if (pool.selection_policy !== undefined && !['quality', 'balanced', 'cost'].includes(pool.selection_policy)) throw new ModelPoolValidationError(`Role ${role}.selection_policy must be quality, balanced, or cost in ${source}`, source);
+    if (pool.preferred_providers !== undefined && (!Array.isArray(pool.preferred_providers) || !pool.preferred_providers.length || new Set(pool.preferred_providers).size !== pool.preferred_providers.length || pool.preferred_providers.some((provider) => typeof provider !== 'string' || !BINDING_PART.test(provider)))) throw new ModelPoolValidationError(`Role ${role}.preferred_providers must be a non-empty unique provider list in ${source}`, source);
     if (pool.minimum_score !== undefined && (typeof pool.minimum_score !== 'number' || !Number.isFinite(pool.minimum_score) || pool.minimum_score < 0 || pool.minimum_score > 10)) throw new ModelPoolValidationError(`Role ${role}.minimum_score must be a number from 0 to 10 in ${source}`, source);
     if (pool.cost_weight !== undefined && (typeof pool.cost_weight !== 'number' || !Number.isFinite(pool.cost_weight) || pool.cost_weight < 0 || pool.cost_weight > 1)) throw new ModelPoolValidationError(`Role ${role}.cost_weight must be a number from 0 to 1 in ${source}`, source);
     if (pool.selection_weights !== undefined) {
@@ -67,7 +68,12 @@ export function validateModelPools(parsed, source = 'model pool file') {
         if (!MODEL_SCORE_KEYS.includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 10) throw new ModelPoolValidationError(`Role ${role}.selection_weights.${key} must be a number from 0 to 10 in ${source}`, source);
       }
     }
-    if (!Array.isArray(pool.models) || pool.models.length === 0) throw new ModelPoolValidationError(`Role ${role} requires a non-empty models array in ${source}`, source);
+    if (pool.models === 'auto') {
+      if (role === 'nla' || pool.selection_mode !== 'select' || pool.runtime === 'utility') throw new ModelPoolValidationError(`Role ${role} requires an agent select pool for models: auto in ${source}`, source);
+      if (pool.model_facts !== undefined || pool.model_metadata !== undefined) throw new ModelPoolValidationError(`Role ${role} cannot attach model_facts to models: auto in ${source}`, source);
+      continue;
+    }
+    if (!Array.isArray(pool.models) || pool.models.length === 0) throw new ModelPoolValidationError(`Role ${role} requires a non-empty models array or auto in ${source}`, source);
     const seen = new Set();
     pool.models.forEach((binding, index) => {
       const parsedBinding = parseModelBinding(binding, `Role ${role}.models[${index}]`);
@@ -102,6 +108,7 @@ export function preflightModelPools(parsed, availableBindings, source = 'model p
   const unavailable = [];
   for (const [role, pool] of Object.entries(parsed.roles)) {
     if (!pool.enabled) continue;
+    if (pool.models === 'auto') continue; // Runtime inventory is checked when the task resolves auto.
     for (const binding of pool.models) if (pool.model_facts?.[binding]?.status !== 'disabled' && !available.has(binding)) unavailable.push(`${role}:${binding}`);
   }
   if (unavailable.length) throw new ModelPoolValidationError(`Enabled model-pool bindings absent from supplied runtime inventory: ${unavailable.join(', ')}`, source);
@@ -129,7 +136,7 @@ function readPoolFile(configPath, resolution) {
   for (const pool of Object.values(parsed.roles)) Object.assign(sharedFacts, pool.model_facts || pool.model_metadata || {});
   const roles = Object.fromEntries(Object.entries(parsed.roles).map(([role, pool]) => [role, {
     ...pool,
-    ...(Object.keys(sharedFacts).length ? { model_facts: Object.fromEntries((pool.models || []).filter((binding) => sharedFacts[binding]).map((binding) => [binding, sharedFacts[binding]])) } : {}),
+    ...(Object.keys(sharedFacts).length && Array.isArray(pool.models) ? { model_facts: Object.fromEntries(pool.models.filter((binding) => sharedFacts[binding]).map((binding) => [binding, sharedFacts[binding]])) } : {}),
   }]));
   return { version: parsed.version ?? 1, roles, source: configPath, resolution };
 }
@@ -157,7 +164,7 @@ export function modelPoolSummary(resolved) {
       selection_policy: pool?.selection_policy || 'quality',
       minimum_score: pool?.minimum_score ?? 7.5,
       cost_weight: pool?.cost_weight ?? 0.25,
-      primary: Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
+      primary: pool?.models === 'auto' ? 'auto' : Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
       fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [],
     };
   });

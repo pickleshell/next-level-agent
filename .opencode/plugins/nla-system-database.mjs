@@ -14,7 +14,7 @@ const SQLiteDatabase = globalThis.Bun
   ? (await import('bun:sqlite')).Database
   : (await import('node:sqlite')).DatabaseSync;
 
-export const SYSTEM_DATABASE_VERSION = 2;
+export const SYSTEM_DATABASE_VERSION = 3;
 
 export class SystemDatabaseError extends Error {
   constructor(message) { super(message); this.name = 'SystemDatabaseError'; }
@@ -27,6 +27,7 @@ const USER_COLUMN_TYPES = new Set(['TEXT', 'INTEGER', 'REAL', 'BLOB']);
 const SESSION_ID = /^[A-Za-z0-9_-]{8,160}$/;
 const SECRET_KEY = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|private[_-]?key|recovery[_-]?code)/i;
 const SELECT_POLICIES = new Set(['quality', 'balanced', 'cost']);
+const ORCHESTRA_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 
 export function systemDatabasePath(stateRoot) {
   return path.join(path.resolve(stateRoot), 'system.sqlite');
@@ -127,6 +128,18 @@ function migrate(db) {
     CREATE TABLE IF NOT EXISTS system_settings (
       setting_key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS orchestras (
+      name TEXT PRIMARY KEY,
+      config_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS orchestra_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      active_name TEXT NOT NULL REFERENCES orchestras(name),
       updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS model_evaluations (
@@ -331,7 +344,7 @@ function validateSetting(key, value) {
   settingKey(key);
   if (key === 'operator_databases.enabled') {
     if (typeof value !== 'boolean') throw new SystemDatabaseError(`${key} must be true or false`);
-  } else if (/^routing\.selection_policy\.[a-z][a-z0-9_]*$/.test(key)) {
+  } else if (/^routing\.selection_policy\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
     if (!SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`${key} must be quality, balanced, or cost`);
   } else if (key.startsWith('operator.')) {
     // Private operator metadata has no effect on NLA routing or security.
@@ -349,9 +362,10 @@ export function getSystemSetting(file, key) {
   } finally { closeDatabase(db); }
 }
 
-export function configuredSelectionPolicy(file, role) {
+export function configuredSelectionPolicy(file, role, orchestra = 'go') {
   if (!IDENTIFIER.test(role)) throw new SystemDatabaseError('Invalid role name');
-  const value = getSystemSetting(file, `routing.selection_policy.${role}`)?.value;
+  validOrchestraName(orchestra);
+  const value = getSystemSetting(file, orchestra === 'go' ? `routing.selection_policy.${role}` : `routing.selection_policy.${orchestra}.${role}`)?.value;
   if (value !== null && value !== undefined && !SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`Invalid stored selection policy for ${role}`);
   return value ?? null;
 }
@@ -382,7 +396,9 @@ export function setSystemSetting(file, key, valueJSON) {
 
 export function systemSchema() {
   return {
-    system_settings: 'Typed settings: operator_databases.enabled and routing.selection_policy.<role>. system.database.* is read-only; operator.* is metadata.',
+    orchestras: 'Named durable role, model-pool, and policy configurations. go is seeded from the original pool file.',
+    orchestra_state: 'Durable active orchestra name; new tasks use its current snapshot.',
+    system_settings: 'Typed settings: operator_databases.enabled and routing.selection_policy.<role> for go, or routing.selection_policy.<orchestra>.<role>. system.database.* is read-only; operator.* is metadata.',
     model_evaluations: 'Empirical selector scores for each exact model binding.',
     model_registry: 'Operator facts and durable enabled/disabled status for each exact model binding.',
     model_notes: 'Optional operator annotations for registered models.',
@@ -394,6 +410,117 @@ export function systemSchema() {
     schema_migrations: 'Applied system database migrations.',
     data_migrations: 'One-time imports of legacy and seed data.',
   };
+}
+
+function validOrchestraName(name) {
+  if (!ORCHESTRA_NAME.test(name || '')) throw new SystemDatabaseError('Orchestra name must be a lowercase identifier (up to 64 characters)');
+  return name;
+}
+
+function validOrchestraConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new SystemDatabaseError('Orchestra config must be an object');
+  if (config.version !== undefined && config.version !== 1) throw new SystemDatabaseError('Unsupported orchestra config version');
+  if (config.guidance !== undefined && (typeof config.guidance !== 'string' || config.guidance.length > 1000)) throw new SystemDatabaseError('Orchestra guidance must be a string up to 1000 characters');
+  const normalized = { version: config.version ?? 1, roles: config.roles, ...(config.guidance ? { guidance: config.guidance } : {}) };
+  validateModelPools(normalized, 'orchestra');
+  for (const role of ['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']) {
+    if (!normalized.roles[role]) throw new SystemDatabaseError(`Orchestra is missing required role: ${role}`);
+  }
+  if (!Array.isArray(normalized.roles.nla.models) || normalized.roles.nla.models.length !== 1) throw new SystemDatabaseError('Orchestra nla role requires exactly one coordinator model');
+  if (JSON.stringify(normalized).length > 262144) throw new SystemDatabaseError('Orchestra config is too large');
+  assertNoSecrets(normalized, 'Orchestra config');
+  return normalized;
+}
+
+export function initializeOrchestras(file, goConfig) {
+  const config = validOrchestraConfig(goConfig);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      db.prepare('INSERT OR IGNORE INTO orchestras (name, config_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run('go', jsonText(config), 'original-pool-config', now(), now());
+      db.prepare('INSERT OR IGNORE INTO orchestra_state (id, active_name, updated_at) VALUES (1, ?, ?)').run('go', now());
+      return db.prepare('SELECT active_name FROM orchestra_state WHERE id = 1').get().active_name;
+    });
+  } finally { closeDatabase(db); }
+}
+
+export function listOrchestras(file) {
+  const db = openDatabase(file);
+  try {
+    migrate(db);
+    const active = db.prepare('SELECT active_name FROM orchestra_state WHERE id = 1').get()?.active_name;
+    return db.prepare('SELECT name, source, created_at, updated_at FROM orchestras ORDER BY name').all()
+      .map((row) => ({ ...row, active: row.name === active }));
+  } finally { closeDatabase(db); }
+}
+
+export function getOrchestra(file, name = null) {
+  const db = openDatabase(file);
+  try {
+    migrate(db);
+    const selected = name === null ? db.prepare('SELECT active_name FROM orchestra_state WHERE id = 1').get()?.active_name : validOrchestraName(name);
+    if (!selected) return null;
+    const row = db.prepare('SELECT name, config_json, source, created_at, updated_at FROM orchestras WHERE name = ?').get(selected);
+    return row ? { name: row.name, config: validOrchestraConfig(JSON.parse(row.config_json)), source: row.source, created_at: row.created_at, updated_at: row.updated_at } : null;
+  } finally { closeDatabase(db); }
+}
+
+export function saveOrchestra(file, name, config) {
+  validOrchestraName(name);
+  const valid = validOrchestraConfig(config);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      if (db.prepare('SELECT 1 FROM orchestras WHERE name = ?').get(name)) throw new SystemDatabaseError(`Orchestra already exists: ${name}`);
+      db.prepare('INSERT INTO orchestras (name, config_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run(name, jsonText(valid), 'operator', now(), now());
+      return { name, roles: Object.keys(valid.roles).length };
+    });
+  } finally { closeDatabase(db); }
+}
+
+export function reloadGoOrchestra(file, config) {
+  const valid = validOrchestraConfig(config);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      db.prepare('UPDATE orchestras SET config_json = ?, updated_at = ? WHERE name = ?').run(jsonText(valid), now(), 'go');
+      return { name: 'go', roles: Object.keys(valid.roles).length };
+    });
+  } finally { closeDatabase(db); }
+}
+
+export function updateOrchestra(file, name, config) {
+  validOrchestraName(name);
+  if (name === 'go') throw new SystemDatabaseError('The go orchestra is updated only by reloading its original pool file');
+  const valid = validOrchestraConfig(config);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      if (!db.prepare('SELECT 1 FROM orchestras WHERE name = ?').get(name)) throw new SystemDatabaseError(`Unknown orchestra: ${name}`);
+      db.prepare('UPDATE orchestras SET config_json = ?, updated_at = ? WHERE name = ?')
+        .run(jsonText(valid), now(), name);
+      return { name, roles: Object.keys(valid.roles).length };
+    });
+  } finally { closeDatabase(db); }
+}
+
+export function activateOrchestra(file, name) {
+  validOrchestraName(name);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      if (!db.prepare('SELECT 1 FROM orchestras WHERE name = ?').get(name)) throw new SystemDatabaseError(`Unknown orchestra: ${name}`);
+      db.prepare('UPDATE orchestra_state SET active_name = ?, updated_at = ? WHERE id = 1').run(name, now());
+      return { active: name };
+    });
+  } finally { closeDatabase(db); }
 }
 
 function legacyLedgerPath(stateRoot, sessionID) { return path.join(path.resolve(stateRoot), 'sessions', `${validSessionID(sessionID)}.json`); }
@@ -474,6 +601,8 @@ export function systemDatabaseStatus(file) {
       settings: Number(db.prepare('SELECT COUNT(*) AS count FROM system_settings').get().count),
       model_evaluations: evaluationCount(db),
       registered_models: Number(db.prepare('SELECT COUNT(*) AS count FROM model_registry').get().count),
+      orchestras: Number(db.prepare('SELECT COUNT(*) AS count FROM orchestras').get().count),
+      active_orchestra: db.prepare('SELECT active_name FROM orchestra_state WHERE id = 1').get()?.active_name || null,
       model_notes: Number(db.prepare('SELECT COUNT(*) AS count FROM model_notes').get().count),
       health_records: Number(db.prepare('SELECT COUNT(*) AS count FROM model_health').get().count),
       model_usage_events: Number(db.prepare('SELECT COUNT(*) AS count FROM model_usage_events').get().count),
@@ -754,13 +883,18 @@ export function synchronizeConfiguredModelRegistry(file, roles = {}) {
 // Runtime metadata fills holes only: operator facts and configured prices win.
 export function synchronizeRuntimeModelFacts(file, roles, providers) {
   const candidates = new Map();
-  for (const pool of Object.values(roles)) {
-    if (pool?.runtime === 'utility') continue;
-    for (const binding of pool?.models || []) {
-      const slash = binding.indexOf('/');
-      const provider = providers.find((item) => item?.id === binding.slice(0, slash));
-      const model = provider?.models?.[binding.slice(slash + 1)];
-      if (!model) continue;
+  const hasAuto = Object.values(roles).some((pool) => pool?.models === 'auto');
+  const assigned = new Set(Object.values(roles).filter((pool) => pool?.runtime !== 'utility').flatMap((pool) => Array.isArray(pool.models) ? pool.models : []));
+  const utilityOnly = new Set(Object.values(roles).filter((pool) => pool?.runtime === 'utility').flatMap((pool) => Array.isArray(pool.models) ? pool.models : []));
+  for (const pool of Object.values(roles)) if (pool?.runtime !== 'utility' && Array.isArray(pool?.models)) for (const binding of pool.models) utilityOnly.delete(binding);
+  for (const provider of providers) {
+    if (!provider?.id || !provider.models || typeof provider.models !== 'object') continue;
+    for (const [modelID, model] of Object.entries(provider.models)) {
+      const binding = `${provider.id}/${modelID}`;
+      try { validBinding(binding); } catch { continue; }
+      if (!hasAuto && !assigned.has(binding)) continue;
+      if (utilityOnly.has(binding)) continue;
+      if (!model || (Array.isArray(model.modalities?.output) && !model.modalities.output.includes('text'))) continue;
       const facts = {};
       if (Number.isSafeInteger(model.limit?.context) && model.limit.context > 0) facts.context_window = model.limit.context;
       for (const [field, key] of [['input_cost', 'input'], ['output_cost', 'output']]) {
@@ -774,9 +908,11 @@ export function synchronizeRuntimeModelFacts(file, roles, providers) {
     return transaction(db, () => {
       const query = db.prepare('SELECT facts_json FROM model_registry WHERE binding = ?');
       const update = db.prepare('UPDATE model_registry SET facts_json = ?, updated_at = ? WHERE binding = ?');
+      const insert = db.prepare("INSERT OR IGNORE INTO model_registry (binding, facts_json, source, updated_at) VALUES (?, ?, 'runtime-discovery', ?)");
       let models_updated = 0;
       let fields_added = 0;
       for (const [binding, discovered] of candidates) {
+        insert.run(binding, jsonText(discovered), now());
         const row = query.get(binding);
         if (!row) continue;
         const facts = JSON.parse(row.facts_json);

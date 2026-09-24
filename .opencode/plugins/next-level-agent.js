@@ -24,7 +24,7 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
-import { rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { materializeAutoPool, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
 import { assessTask } from './nla-task-assessor.mjs';
 import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
@@ -33,6 +33,7 @@ import {
   listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   recordSystemReviewerEvaluation, setSystemSetting, saveSystemHealth, loadSystemHealth, synchronizeConfiguredModelRegistry, systemDatabaseStatus,
   hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, setModelStatus, summarizeSystemModelUsage, systemSchema,
+  initializeOrchestras, listOrchestras, getOrchestra, saveOrchestra, updateOrchestra, activateOrchestra, reloadGoOrchestra,
 } from './nla-system-database.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
 import { ModelHealthManager, classifyProviderError, modelCooldownMs, unavailablePoolError } from './nla-model-health.mjs';
@@ -143,6 +144,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
   let defaultAgent = 'nla';
   let defaultModel = null;
+  let liveConfig = null;
   const runLogPath = path.join(directory, '.opencode', 'agent-run.log');
   const capabilityCachePath = path.join(directory, '.opencode', 'nla-role-capabilities.json');
   const stateRoot = memoryRoot(homeDir);
@@ -158,14 +160,21 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const softContextTokens = Number(process.env.NLA_CONTEXT_SOFT_TOKENS || 50000);
   const hardContextTokens = Number(process.env.NLA_CONTEXT_HARD_TOKENS || 70000);
 
-  let resolvedPools = effectiveModelPools();
-  const applyPersistedPolicies = (roles) => Object.fromEntries(Object.entries(roles).map(([role, pool]) => {
-    const policy = pool.selection_mode === 'select' ? configuredSelectionPolicy(systemDatabase, role) : null;
+  if (!getOrchestra(systemDatabase)) initializeOrchestras(systemDatabase, effectiveModelPools());
+  let activeOrchestra = getOrchestra(systemDatabase);
+  if (!activeOrchestra) throw new Error('Active NLA orchestra is missing');
+  let resolvedPools = { ...activeOrchestra.config, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra' };
+  const applyPersistedPolicies = (roles, orchestraName = activeOrchestra.name) => Object.fromEntries(Object.entries(roles).map(([role, pool]) => {
+    const policy = pool.selection_mode === 'select' ? configuredSelectionPolicy(systemDatabase, role, orchestraName) : null;
     return [role, policy ? { ...pool, selection_policy: policy } : pool];
   }));
   synchronizeConfiguredModelRegistry(systemDatabase, resolvedPools.roles);
   let pools = applyPersistedPolicies(resolvedPools.roles);
   resolvedPools = { ...resolvedPools, roles: pools };
+  const applyCoordinatorModel = () => {
+    const primary = pools.nla?.models?.[0];
+    if (liveConfig?.agent?.nla && primary && splitModel(primary)) liveConfig.agent.nla.model = primary;
+  };
   const pendingTasks = new Map();
   const healthManager = new ModelHealthManager();
   healthManager.hydrate(loadSystemHealth(systemDatabase));
@@ -434,9 +443,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const runPooledTask = async (args, context) => {
     await syncModelInventory();
-      const pool = routableModelPool(poolWithSystemFacts(systemDatabase, pools[args.role]));
+      const orchestraPools = pools;
+      const configuredPool = orchestraPools[args.role];
+      const concretePool = materializeAutoPool(configuredPool, listModelRegistry(systemDatabase), syncModelInventory.availableBindings());
+      const pool = routableModelPool(poolWithSystemFacts(systemDatabase, concretePool));
       if (!pool || !pool.enabled || !Array.isArray(pool.models) || pool.models.length === 0) {
-        throw new Error(`No enabled NLA model pool for role: ${args.role}`);
+        throw new Error(`No enabled NLA model pool for role: ${args.role}; check orchestra, registry status, and provider inventory`);
       }
 
       const maxAttempts = pool.models.length;
@@ -539,7 +551,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
               persistCapabilityCache();
             }
           }
-          const compactorPool = routableModelPool(poolWithSystemFacts(systemDatabase, pools.compactor));
+          const compactorPool = routableModelPool(poolWithSystemFacts(systemDatabase, orchestraPools.compactor));
           const optimized = await optimizeInvocation({
             role: args.role,
             prompt: args.prompt,
@@ -953,27 +965,35 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       assertPrimaryNla(context.sessionID);
       appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
       await syncModelInventory();
-      const registered = new Map(listModelRegistry(systemDatabase).map((record) => [record.binding, record.status]));
-      const health = Object.values(pools).flatMap((pool) => (pool.models || []).map((binding) => {
+      const records = listModelRegistry(systemDatabase);
+      const registered = new Map(records.map((record) => [record.binding, record.status]));
+      const health = Object.values(pools).flatMap((pool) => (Array.isArray(pool.models) ? pool.models : []).map((binding) => {
         const endpoint = pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '';
         const state = healthManager.state(binding, endpoint);
         const status = registered.get(binding) || 'enabled';
         return { ...state, status, eligible: state.eligible && status === 'enabled', endpoint };
       }));
-      const disabled = [...new Set(health.filter((entry) => entry.status === 'disabled').map((entry) => entry.binding))];
-      return { title: 'Effective NLA model pools', output: `${formatModelPools(resolvedPools)}\n\nDisabled models: ${disabled.join(', ') || 'none'}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), health, disabled } };
+      const disabled = records.filter((record) => record.status === 'disabled').map((record) => record.binding);
+      const auto = Object.entries(pools).filter(([, pool]) => pool.models === 'auto').map(([role, pool]) => {
+        const models = syncModelInventory.availableBindings() ? materializeAutoPool(pool, records, syncModelInventory.availableBindings()).models : null;
+        return { role, candidates: models?.length ?? null, sample: models?.slice(0, 10) ?? [] };
+      });
+      return { title: 'Effective NLA model pools', output: `Active orchestra: ${activeOrchestra.name}\nGuidance: ${activeOrchestra.config.guidance || 'none'}\n${formatModelPools(resolvedPools)}\n\nAuto pools: ${JSON.stringify(auto)}\nDisabled models: ${disabled.join(', ') || 'none'}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { orchestra: activeOrchestra.name, source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), auto, health, disabled } };
     },
   });
 
   const nlaModelsReload = tool({
-    description: 'Reload the NLA model-pool configuration from its resolved source without restarting OpenCode. The new snapshot applies to new tasks; active tasks keep their existing pool snapshot. Never includes credentials.',
+    description: 'Reload the active NLA orchestra without restarting OpenCode. For go, refresh its original model-pools.json source first. New tasks use the new snapshot; active tasks keep theirs.',
     args: {},
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
-      const nextResolvedPools = effectiveModelPools();
+      if (activeOrchestra.name === 'go') reloadGoOrchestra(systemDatabase, effectiveModelPools());
+      activeOrchestra = getOrchestra(systemDatabase);
+      const nextResolvedPools = { ...activeOrchestra.config, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra reload' };
       synchronizeConfiguredModelRegistry(systemDatabase, nextResolvedPools.roles);
       pools = applyPersistedPolicies(nextResolvedPools.roles);
       resolvedPools = { ...nextResolvedPools, roles: pools };
+      applyCoordinatorModel();
       await syncModelInventory({ force: true });
       appendRunLog({
         event: 'model_pools_reloaded',
@@ -1024,7 +1044,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelPolicy = tool({
-    description: 'Change one select pool policy in the current OpenCode process without restarting or rewriting configuration. Applies to new tasks only and is runtime-only; use nla_system setting_set routing.selection_policy.<role> for a persistent default. Primary NLA only.',
+    description: 'Change one select pool policy in the current OpenCode process. Applies to new tasks only; for a persistent default use nla_system setting_set routing.selection_policy.<role> for go, or routing.selection_policy.<orchestra>.<role> for a named orchestra. Primary NLA only.',
     args: {
       role: tool.schema.string().describe('Exact configured role name'),
       policy: tool.schema.string().describe('quality, balanced, or cost'),
@@ -1054,7 +1074,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     args: { binding: tool.schema.string().describe('Exact provider/model binding'), endpoint: tool.schema.string().optional().describe('Optional exact runtime endpoint identity') },
     execute: async (args, context) => {
       assertPrimaryNla(context.sessionID);
-      const valid = Object.values(pools).some((pool) => (pool.models || []).includes(args.binding) && (pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '') === (args.endpoint || ''));
+      await syncModelInventory();
+      const valid = Object.values(pools).some((pool) => (Array.isArray(pool.models) ? pool.models : materializeAutoPool(pool, listModelRegistry(systemDatabase), syncModelInventory.availableBindings()).models).includes(args.binding) && (pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '') === (args.endpoint || ''));
       if (!valid) throw new Error('Unknown configured model binding; use nla_models for exact binding and endpoint');
       healthManager.reset(args.binding, args.endpoint || '');
       persistModelHealth(args.binding, args.endpoint || '');
@@ -1086,12 +1107,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       } else if (args.action === 'setting_set') {
         if (!args.key || args.value_json === undefined) throw new Error('setting_set requires key and value_json');
         if (args.key.startsWith('routing.selection_policy.')) {
-          const role = args.key.slice('routing.selection_policy.'.length);
+          const scope = args.key.slice('routing.selection_policy.'.length);
+          const role = activeOrchestra.name === 'go' ? scope : scope.startsWith(`${activeOrchestra.name}.`) ? scope.slice(activeOrchestra.name.length + 1) : '';
           if (!pools[role] || selectionMode(pools[role]) !== 'select') throw new Error('Selection policy setting requires a configured select role');
         }
         result = setSystemSetting(systemDatabase, args.key, args.value_json);
         if (args.key.startsWith('routing.selection_policy.')) {
-          const role = args.key.slice('routing.selection_policy.'.length);
+          const scope = args.key.slice('routing.selection_policy.'.length);
+          const role = activeOrchestra.name === 'go' ? scope : scope.slice(activeOrchestra.name.length + 1);
           pools = { ...pools, [role]: { ...pools[role], selection_policy: result.value } };
           resolvedPools = { ...resolvedPools, roles: pools };
         }
@@ -1148,6 +1171,92 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       }
       appendRunLog({ event: 'model_registry_action', session_id: context.sessionID, action: args.action, binding: args.binding, status: args.status, source: args.source_path ? 'project_file' : args.json ? 'interactive_json' : undefined });
       return { title: `Model registry: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, binding: args.binding } };
+    },
+  });
+
+  const ensureOrchestraReady = async (config, name) => {
+    await syncModelInventory({ force: true, rolesOverride: config.roles });
+    const inventory = syncModelInventory.availableBindings();
+    if (!inventory) throw new Error('Cannot activate orchestra without the OpenCode provider inventory');
+    const registry = listModelRegistry(systemDatabase);
+    const coordinator = config.roles.nla.models[0];
+    if (!inventory.has(coordinator) || registry.find((record) => record.binding === coordinator)?.status !== 'enabled') throw new Error(`Orchestra ${name} coordinator model is not enabled in the provider inventory: ${coordinator}`);
+    for (const [role, configured] of Object.entries(config.roles)) {
+      if (!configured.enabled || role === 'nla') continue;
+      const concrete = materializeAutoPool(configured, registry, inventory);
+      const eligible = routableModelPool(poolWithSystemFacts(systemDatabase, concrete)).models
+        .filter((binding) => inventory.has(binding));
+      if (!eligible.length) throw new Error(`Orchestra ${name} has no enabled available models for ${role}`);
+    }
+  };
+
+  const nlaOrchestra = tool({
+    description: 'Manage named durable NLA orchestras. list/show inspect; propose returns roles and eligible models; create/update save complete configurations; pool_set replaces one role pool; activate switches new tasks immediately. Existing child tasks retain their model snapshot. Primary NLA only; credentials are never stored.',
+    args: {
+      action: tool.schema.enum(['list', 'show', 'propose', 'create', 'update', 'pool_set', 'activate']).describe('Orchestra action'),
+      name: tool.schema.string().max(64).optional().describe('Unique lowercase orchestra name for show/create/update/pool_set/activate'),
+      config_json: tool.schema.string().max(262144).optional().describe('For create: complete JSON object with roles, selection modes/policies, and arrays or models: auto'),
+      role: tool.schema.string().max(64).optional().describe('For pool_set: exact role name in the saved orchestra'),
+      pool_json: tool.schema.string().max(65536).optional().describe('For pool_set: complete JSON object for one role pool'),
+    },
+    execute: async (args, context) => {
+      assertPrimaryNla(context.sessionID);
+      let result;
+      if (args.action === 'list') result = { active: activeOrchestra.name, orchestras: listOrchestras(systemDatabase) };
+      else if (args.action === 'show') {
+        result = getOrchestra(systemDatabase, args.name || activeOrchestra.name);
+        if (!result) throw new Error(`Unknown orchestra: ${args.name}`);
+      } else if (args.action === 'propose') {
+        await syncModelInventory({ force: true, rolesOverride: { discovery: { models: 'auto' } } });
+        const inventory = syncModelInventory.availableBindings();
+        if (!inventory) throw new Error('Cannot propose orchestra from an unavailable OpenCode provider inventory');
+        result = {
+          current: activeOrchestra.name,
+          base: activeOrchestra.config,
+          available_models: listModelRegistry(systemDatabase)
+            .filter((record) => record.status === 'enabled' && inventory?.has(record.binding))
+            .map(({ binding, facts, scores }) => ({ binding, facts, scores })),
+          instruction: 'Draft a new named orchestra from these exact bindings. Save its operator policy in guidance, e.g. use Command Code by default, prefer free or economical models when capable, reserve OpenAI for tasks where a stronger model improves quality or lowers risk, and treat 20–30% OpenAI usage as a soft guide. For select roles, preferred_providers: ["command-code", "openai"] breaks quality ties toward Command Code. Use models: auto for dynamically selected agent roles. Present the proposal before create/activate.',
+        };
+      } else if (['create', 'update', 'pool_set'].includes(args.action)) {
+        if (!args.name) throw new Error(`${args.action} requires name`);
+        if (args.action !== 'create' && args.name === 'go') throw new Error('The go orchestra is updated through its original pool file and nla_models_reload');
+        let config;
+        if (args.action === 'pool_set') {
+          if (!args.role || !args.pool_json) throw new Error('pool_set requires role and pool_json');
+          const existing = getOrchestra(systemDatabase, args.name);
+          if (!existing) throw new Error(`Unknown orchestra: ${args.name}`);
+          if (!Object.hasOwn(existing.config.roles, args.role)) throw new Error(`Unknown orchestra role: ${args.role}`);
+          let replacement;
+          try { replacement = JSON.parse(args.pool_json); } catch { throw new Error('pool_json must be valid JSON'); }
+          config = { ...existing.config, roles: { ...existing.config.roles, [args.role]: replacement } };
+        } else {
+          if (!args.config_json) throw new Error(`${args.action} requires config_json`);
+          try { config = JSON.parse(args.config_json); } catch { throw new Error('config_json must be valid JSON'); }
+        }
+        if (args.action !== 'create' && args.name === activeOrchestra.name) await ensureOrchestraReady(config, args.name);
+        result = args.action === 'create' ? saveOrchestra(systemDatabase, args.name, config) : updateOrchestra(systemDatabase, args.name, config);
+        synchronizeConfiguredModelRegistry(systemDatabase, config.roles);
+        if (args.action !== 'create' && args.name === activeOrchestra.name) {
+          activeOrchestra = getOrchestra(systemDatabase);
+          pools = applyPersistedPolicies(activeOrchestra.config.roles);
+          resolvedPools = { ...activeOrchestra.config, roles: pools, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra update' };
+          applyCoordinatorModel();
+        }
+      } else {
+        if (!args.name) throw new Error('activate requires name');
+        const next = getOrchestra(systemDatabase, args.name);
+        if (!next) throw new Error(`Unknown orchestra: ${args.name}`);
+        await ensureOrchestraReady(next.config, args.name);
+        const nextPools = applyPersistedPolicies(next.config.roles, next.name);
+        result = { ...activateOrchestra(systemDatabase, args.name), new_tasks_use_active_orchestra: true, current_coordinator_response_unchanged: true };
+        activeOrchestra = next;
+        pools = nextPools;
+        resolvedPools = { ...next.config, roles: pools, source: `system.sqlite:orchestra:${next.name}`, resolution: 'active orchestra' };
+        applyCoordinatorModel();
+      }
+      appendRunLog({ event: 'orchestra_action', session_id: context.sessionID, action: args.action, name: args.name || activeOrchestra.name });
+      return { title: `NLA orchestra: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, active: activeOrchestra.name } };
     },
   });
 
@@ -1316,10 +1425,11 @@ When skills request actions, substitute OpenCode equivalents:
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
 	- Inspect effective model routing → \`nla_models\`; relay every role separately with distinct Primary and Fallbacks fields, use none for no fallback, and never group roles, omit fallbacks, or call the complete chain a fallback chain; reload it after an approved config change with \`nla_models_reload\`
 	- Inspect completed model token/cache/cost usage for this workflow → \`nla_usage\` with \`summary\` or \`recent\`; never infer missing provider accounting
-	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; use config plus \`nla_models_reload\` when the change must persist
+	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; persist via \`nla_system\` setting_set using \`routing.selection_policy.<role>\` for go or \`routing.selection_policy.<orchestra>.<role>\` for other orchestras
 	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
 	- Inspect or import model registry records, or enable/disable one exact model for new tasks → \`nla_models_registry\` (action \`status_set\`); imports register models but do not silently change role pools or erase evaluations
+	- Inspect, propose, save, and activate named orchestras → \`nla_orchestra\`; \`go\` preserves the original roles. \`models: "auto"\` chooses from enabled, inventoried models at task start. Present a proposal before creating or activating a new orchestra. Active child tasks keep their existing pool snapshot.
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
@@ -1357,6 +1467,7 @@ ${toolMapping}
       nla_model_health_reset: nlaModelHealthReset,
       nla_system: nlaSystem,
       nla_models_registry: nlaModelsRegistry,
+      nla_orchestra: nlaOrchestra,
       nla_work_state: nlaWorkState,
       nla_notebook: nlaNotebook,
       nla_compact: nlaCompact,
@@ -1366,6 +1477,8 @@ ${toolMapping}
     // This works because Config.get() returns a cached singleton — modifications
     // here are visible when skills are lazily discovered later.
     config: async (config) => {
+      liveConfig = config;
+      applyCoordinatorModel();
       defaultAgent = config.default_agent || defaultAgent;
       defaultModel = typeof config.model === 'string' ? splitModel(config.model) : defaultModel;
       showNlaBanner();
@@ -1408,11 +1521,12 @@ ${toolMapping}
       }
       if (event.type === 'session.created' && props.info && props.info.parentID) {
         const queue = pendingTasks.get(props.info.parentID) || [];
-        const role = queue.shift();
+        const assignment = queue.shift();
         if (queue.length) pendingTasks.set(props.info.parentID, queue);
         else pendingTasks.delete(props.info.parentID);
-        const pool = role && poolWithSystemFacts(systemDatabase, pools[role]);
-        if (pool && pool.enabled) {
+        const role = assignment?.role;
+        const pool = assignment?.pool;
+        if (pool && pool.enabled && pool.models.length) {
           const observedModel = modelBinding(props.info.model);
           const configuredModel = observedModel && pool.models.includes(observedModel) ? observedModel : pool.models[0];
           const attemptedModels = new Set(observedModel && pool.models.includes(observedModel) ? [observedModel] : []);
@@ -1596,13 +1710,13 @@ ${toolMapping}
       if (input.tool === 'task') {
         const args = output.args || {};
         const role = args.subagent_type || args.agent || args.type;
-        if (typeof role === 'string' && pools[role] && pools[role].enabled) {
+        if (typeof role === 'string' && pools[role]?.enabled && Array.isArray(pools[role].models)) {
           const queue = pendingTasks.get(input.sessionID) || [];
-          queue.push(role);
+          queue.push({ role, pool: routableModelPool(poolWithSystemFacts(systemDatabase, pools[role])) });
           pendingTasks.set(input.sessionID, queue);
         }
       }
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_orchestra', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_invoked' : 'subagent_dispatch',
         session_id: input.sessionID,
@@ -1613,7 +1727,7 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
-      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
+      if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_orchestra', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
         session_id: input.sessionID,
@@ -1647,7 +1761,8 @@ ${toolMapping}
       if (firstUser.parts.some(p => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) return;
 
       const ref = firstUser.parts[0];
-      firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap });
+      const orchestraContext = `<NLA_ACTIVE_ORCHESTRA name=${JSON.stringify(activeOrchestra.name)}>\n${activeOrchestra.config.guidance || 'No additional provider guidance.'}\n</NLA_ACTIVE_ORCHESTRA>`;
+      firstUser.parts.unshift({ ...ref, type: 'text', text: `${bootstrap}\n\n${orchestraContext}` });
       const sessionID = firstUser.info && firstUser.info.sessionID;
       const compact = sessionID && compactionState.get(sessionID);
       if (compact && compact.noticePending) {

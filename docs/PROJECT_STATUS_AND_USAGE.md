@@ -48,40 +48,53 @@ API keys and provider credentials do not belong in this repository, model-pool c
 
 ## Runtime truth
 
-The effective model-pool resolver has explicit precedence: a request/runtime
-override when supplied, `NLA_MODEL_POOLS_PATH`, and finally the repository
-default. Overrides are complete pool files and invalid or missing overrides fail
-closed. The repository default is portable; operator-specific bindings belong in
-the external override. Startup telemetry records the selected source and
-resolution reason without secrets. `nla_models` reports the same resolved roles
-consumed by `nla_task`; `nla_models_reload` validates and atomically replaces
-that in-memory snapshot without restarting OpenCode. Run `nla_models` after a
-reload to verify the effective role ordering and health. New tasks use the new
-snapshot; active tasks retain the snapshot already assigned to them.
+On first startup, the model-pool resolver seeds the `go` orchestra using a
+request/runtime override when supplied, `NLA_MODEL_POOLS_PATH`, or the
+repository default. Overrides are complete pool files and invalid overrides
+fail closed. The active orchestra then lives in `system.sqlite`; `go` can be
+refreshed explicitly from its file with `nla_models_reload`, while other named
+orchestras reload from the database. Startup telemetry records the source
+without secrets. `nla_models` reports the active roles consumed by `nla_task`.
+New tasks use a switched or reloaded snapshot; active child tasks retain theirs.
 `nla_work_state` reports a reconciled ledger.
 
-The pool file owns role membership, order, and mode. Its facts seed new model
+The pool file seeds the named `go` orchestra and remains its explicit reload
+source. Named orchestras, their active selection, and all other role pools are
+durable in `system.sqlite`. `nla_orchestra` lists, shows, proposes, creates,
+updates, changes one role pool with `pool_set`, and activates them. Switching
+affects new tasks; existing child tasks keep their resolved model list.
+`models: "auto"` is allowed for agent `select`
+pools and resolves enabled registry records found in the current OpenCode
+provider inventory at task start. It retains `auto` in storage, and the
+concrete candidate list is retained by the task for failover. Provider
+inventory presence alone does not prove the endpoint will answer. An unavailable
+inventory blocks new auto tasks. The coordinator model is updated for new
+OpenCode sessions; the current coordinator response is not replaced.
+
+The saved orchestra owns role membership, order, and mode. Its facts seed new model
 bindings once; SQLite then owns model facts and empirical scores. Registry
 imports therefore affect subsequent `select` choices without changing pool
 membership and survive `nla_models_reload`. The typed setting
-`routing.selection_policy.<select-role>` persists a role's default policy;
+`routing.selection_policy.<select-role>` persists a `go` role's default policy;
+`routing.selection_policy.<orchestra>.<select-role>` does so for another orchestra;
 `nla_model_policy` changes only the current process.
 
 On first NLA use, missing context limits and input/output prices are filled from
 OpenCode's resolved `/config/providers` inventory and persisted in SQLite.
 `nla_models_reload` refreshes this discovery, including after a failed request.
 Discovery runs after plugin initialization, is bounded to five seconds, and
-coalesces concurrent requests. It only fills absent fields for configured
-non-utility bindings: existing facts (including zero prices), operator imports,
+coalesces concurrent requests. With fixed pools it fills absent fields for
+configured non-utility bindings; an auto pool also discovers provider models.
+Existing facts (including zero prices), operator imports,
 evaluations, and notes remain authoritative. No provider credentials are stored.
 Inventory presence is not proof of live model availability. When discovery is
 unavailable, existing facts remain intact and unknown context still fails the
 selector's context requirement; inspect `model_inventory_unavailable` in the
 run log, correct provider configuration, and run `nla_models_reload`.
 
-The ordered `models` array is the complete attempt budget. Runtime attempt count
-is always `models.length`; there is no separate `max_failovers` or model-count
-field in the architecture or configuration.
+For fixed pools the ordered `models` array is the complete attempt budget. An
+auto pool materializes an array at task start; its length is that task's attempt
+budget. There is no separate `max_failovers` or model-count field.
 
 Work State has two authority classes. NLA owns intent and semantic fields such
 as goals, approvals, workflow stage, acceptance criteria, blockers, and planned
@@ -326,7 +339,9 @@ Omitting the policy preserves the previous behavior. Example:
 ```
 
 
-Model pools are configured in [`config/model-pools.json`](../config/model-pools.json).
+The [`config/model-pools.json`](../config/model-pools.json) file supplies the
+`go` orchestra; other named orchestras are configured through `nla_orchestra`
+and stored in SQLite.
 
 NLA keeps one process-local health manager for child and utility invocations.
 Rate limits, overloads, transient network errors, and bounded timeouts place a
@@ -357,8 +372,8 @@ node scripts/nla-model-pools-preflight.mjs --pools /absolute/path/to/model-pools
 ```
 
 The optional `--available-models` JSON inventory adds an exact runtime-binding
-check. It is deliberately operator-supplied: NLA does not query providers or
-infer availability from a similar model name. Thus a configured
+check. The offline preflight does not query providers or infer availability
+from a similar model name. Thus a configured
 `provider-a/model-x` remains blocked if the supplied runtime inventory
 contains only `provider-b/model-x`.
 

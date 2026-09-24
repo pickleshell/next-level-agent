@@ -55,6 +55,13 @@ Open:
 ```
 
 Each enabled role must contain at least one model available through the user's OpenCode providers.
+On first launch, this file is saved as the `go` orchestra in the private system
+database. Use `nla_orchestra` to inspect, propose, create, and activate another
+named orchestra without restarting OpenCode. `models: "auto"` is supported for
+agent roles in `select` mode; it resolves enabled registry bindings against
+OpenCode's provider inventory when a new task starts. Configure provider
+credentials in OpenCode, not in an orchestra. New sessions use the active
+orchestra's coordinator model; an existing coordinator response keeps its model.
 
 Before a long run, validate the complete pool file locally. This check rejects
 malformed bindings, repeated bindings, and bindings whose model component
@@ -91,8 +98,10 @@ Bounded Explorer or Compactor pools may instead select the direct utility-model
 runtime. Ollama or generic OpenAI-compatible endpoint settings belong in the
 same external pool file; see the [utility-model runtime configuration](docs/PROJECT_STATUS_AND_USAGE.md#utility-model-runtime).
 
-The checked-in default is a ready-to-use OpenCode Go example: all role bindings
-use `opencode-go/*`; Architect, Explorer, Implementer, and Reviewer use
+The checked-in default is an OpenCode Go example and requires working access
+to `opencode-go/*`. If that provider is paused, configure another provider in
+OpenCode and ask NLA to propose and activate a new named orchestra. Architect,
+Explorer, Implementer, and Reviewer use
 `selection_mode: "select"`, while the remaining roles use ordered `fallback`.
 The select examples use `quality` for Architect and Reviewer and `balanced`
 for Explorer and Implementer. `nla_models` reports the effective policies;
@@ -101,7 +110,9 @@ while file-backed changes become active through `nla_models_reload`.
 Provider access still depends on the operator's OpenCode Go package and account,
 so inspect `opencode models` before a long run. Ask NLA for `nla_models` to see
 the effective role bindings and source; `opencode debug config` alone does not
-show pool routing.
+show pool routing. After upgrading an existing installation, restart OpenCode
+once to load the new `nla_orchestra` tool; switching saved orchestras thereafter
+needs no restart.
 
 A fresh NLA state creates a private SQLite system database at
 `~/.local/share/nla/system.sqlite`. On its first use it imports the versioned
@@ -133,7 +144,8 @@ For live operator observation, use
 These records contain only model/role/session identifiers, token/cache counts,
 cost, and finish reason; prompts and model responses are not stored.
 
-Role membership and pool mode remain in `model-pools.json`; the pool's facts
+The `go` orchestra reloads role membership and pool mode from
+`model-pools.json`; other orchestras keep them in SQLite. The pool's facts
 seed new bindings once, then SQLite owns them. Registry imports therefore take
 effect in `select` routing and survive `nla_models_reload`. A malformed legacy
 evaluation JSON stops startup before seeding; repair it and retry rather than

@@ -135,10 +135,10 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 | **Compactor** | Optimizes model input: compresses structured state, shapes prompts, and prunes tool schemas to a small relevant shortlist | Before controlled compaction and before model invocation when prompt optimization is enabled |
 
 The primary NLA coordinator can inspect the currently loaded model pool for
-every role with `nla_models`. After an operator edits the resolved pool file,
-`nla_models_reload` validates and atomically loads the new snapshot without
-restarting OpenCode; a subsequent `nla_models` call confirms the effective
-role-to-model ordering. New tasks use the reloaded snapshot, while active tasks
+every role with `nla_models`. For the original `go` orchestra, an operator can
+edit the resolved pool file and call `nla_models_reload` to load it without
+restarting OpenCode. For other orchestras, use `nla_orchestra` to save or switch
+the configuration. New tasks use the changed snapshot; active child tasks
 continue with the pool snapshot they already received.
 
 Model availability is controlled per exact binding, not by disabling an entire
@@ -151,6 +151,49 @@ retaining its pool membership, facts, evaluations, health history, and usage.
 Use `nla_models_registry` (`show` or `list`) or `nla_models` to inspect status.
 This controls NLA pool dispatch only; it cannot switch the model of an already
 running OpenCode coordinator or a direct OpenCode session.
+
+### Named orchestras and auto pools
+
+An **orchestra** is a saved set of roles, model pools, and selection policies.
+The original Go-based configuration is saved as `go` on first startup. NLA
+stores orchestras and the active name in its private `system.sqlite`; switching
+survives an OpenCode restart. `nla_orchestra` supports `list`, `show`, `propose`,
+`create`, `update`, `pool_set`, and `activate`. `pool_set` changes one role pool
+inside a saved non-`go` orchestra while preserving every other role. `propose`
+shows the OpenCode model inventory and registry facts so NLA can suggest a new
+named orchestra before saving it.
+An orchestra may also save a short `guidance` string with operator preferences;
+NLA sees it in its coordinator context after activation.
+`nla_models` reports which orchestra is active. A switch affects new tasks;
+running child tasks retain the concrete pool selected for them.
+
+For an agent role using `selection_mode: "select"`, set `"models": "auto"` to
+draw candidates at task start from enabled registry records present in the
+current OpenCode provider inventory. The selector applies the role weights,
+task risk/context requirements, policy, and model health, then keeps the
+resolved candidate list for that task's failover. The saved orchestra continues
+to contain `auto`; it never turns into a fixed list after the first task.
+`preferred_providers` lists optional provider tie-breakers for a select pool,
+for example `["command-code", "openai"]`; quality, cost, context, and health
+still decide non-tied cases. Provider share goals such as “roughly 20–30% OpenAI”
+remain guidance to NLA, not enforced quotas. New providers appear after
+OpenCode exposes their models and NLA refreshes the inventory. An unreachable
+inventory fails closed for an auto pool. Disable an
+exact binding with `nla_models_registry status_set` to remove it from future
+auto choices without losing its evaluations.
+
+The active orchestra also supplies the coordinator model to new OpenCode
+sessions. Switching an orchestra does not change the model of the current
+coordinator response. Direct OpenCode `task` calls bypass auto selection;
+use `nla_task` for managed dynamic routing.
+
+For example, ask NLA: “Show my orchestras. Propose a `command-openai` orchestra
+with Command Code as the default provider, OpenAI for difficult or risky tasks,
+and `auto` for appropriate select roles. Prefer free and economical models when
+they are capable. Show the proposal before creating or activating it.” OpenAI
+must first be configured in OpenCode; an inventory entry does not prove that a
+provider endpoint answers. Existing OpenCode processes must restart once to
+load the new `nla_orchestra` tool. Subsequent orchestra switches need no restart.
 
 ### Recommended models by role
 
@@ -281,15 +324,16 @@ telemetry without task or response content.
 `nla_models` displays mode and policy for every role. Primary NLA can call
 `nla_model_policy` to change a `select` pool's policy, quality floor, or cost
 weight immediately for new tasks without restarting OpenCode. This override is
-runtime-only. To persist a role's default policy in this installation, use
-`nla_system` with `setting_set` and key `routing.selection_policy.<role>`;
-editing the pool file and calling `nla_models_reload` changes the portable
-configuration instead. Task-specific preferences still take precedence, subject
-to high-risk safeguards.
+runtime-only. To persist a role's default policy, use `nla_system` with
+`setting_set` and key `routing.selection_policy.<role>` for `go`, or
+`routing.selection_policy.<orchestra>.<role>` for another orchestra. Editing the
+pool file and calling `nla_models_reload` changes `go` instead. Task-specific
+preferences still take precedence, subject to high-risk safeguards.
 
-Every attempt is bounded by the pool's `models` array; there is no separate
-`max_failovers` or model-count setting. The checked-in default is ready to use
-with the OpenCode Go model package: every role binding is `opencode-go/*`, while
+For a fixed pool, the `models` array bounds its attempts; an auto pool uses the
+candidate list resolved at task start. There is no separate `max_failovers` or
+model-count setting. The checked-in `go` orchestra requires working OpenCode Go
+access: every role binding is `opencode-go/*`, while
 Architect, Explorer, Implementer, and Reviewer demonstrate adaptive `select`
 pools. Architect and Reviewer default to `quality`; Explorer and Implementer
 default to `balanced`. Other roles retain predictable `fallback` behavior. Operators can still
@@ -307,14 +351,15 @@ NLA imports it once instead; repository updates never replace local evidence.
 ### Persistent system database
 
 `system.sqlite` is NLA's relational state layer. Versioned migrations create
-system settings, empirical model evaluations, model registry facts and notes,
+system settings, named orchestras and their active selection, empirical model evaluations, model registry facts and notes,
 model health, privacy-preserving per-request usage accounting, authoritative workflow ledgers, fail-closed restore blocks, and
 a catalog for additional local operator databases. The database directory and
 files are private to the NLA user. The checked-in JSON files remain portable
 configuration and first-run seed data; they are not a competing live source of
 truth.
 
-Pool JSON remains authoritative for role membership, order, and mode. Its model
+The pool JSON seeds the `go` orchestra and remains its reload source. Saved
+orchestras own their role membership, order, and mode. Pool JSON model
 facts seed the database only when a binding is first seen; after that, SQLite
 owns those facts and imports survive `nla_models_reload`. A malformed legacy
 evaluation file stops first-run migration instead of silently replacing learned
@@ -337,8 +382,10 @@ Primary NLA has two bounded tools for this state:
 
 - `nla_system`: `schema`, `status`, `setting_list`, `setting_get`, `setting_set`,
   `database_create`, `database_list`, `table_create`, and `table_list`;
-- `nla_models_registry`: `list`, `show`, and `import` model records from
+- `nla_models_registry`: `list`, `show`, `import`, and `status_set` model records from
   interactive JSON or a JSON file inside the active project.
+- `nla_orchestra`: `list`, `show`, `propose`, `create`, `update`, `pool_set`, and `activate`
+  named, persistent role and pool configurations.
 - `nla_usage`: `summary` or `recent` token, cache, and cost accounting for the
   current NLA workflow tree.
 
