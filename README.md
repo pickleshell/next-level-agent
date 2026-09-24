@@ -70,9 +70,9 @@ flowchart TB
     N -. optional browser tasks .-> B[Browser]
     B -. evidence .-> N
 
-    F[Operator model facts] --> S
-    Q[(Local empirical<br/>evaluations)] --> S
-    MH[Model health<br/>availability and cooldown] --> S
+    F[Operator model facts] --> DB
+    DB[(system.sqlite<br/>orchestras, model registry,<br/>evaluations, health, ledgers)]
+    DB -->|active orchestra,<br/>facts, scores, health| S
     S --> P{Role pool mode}
     P -->|select| MS[Rank by quality,<br/>balance, or cost]
     P -->|auto: all enabled inventory,<br/>optional preferences| MS
@@ -90,7 +90,10 @@ flowchart TB
     OC -. powers .-> C
     UR -. powers .-> C
 
-    N <--> M[(Ledger and<br/>Assistant Notebook)]
+    N <-->|workflow ledger and<br/>orchestra controls| DB
+    N <--> NB[(Assistant Notebook)]
+    N -. optional recall and storage .-> MEM[(Mem0 service)]
+    MEM -. relevant memories .-> N
     N -. context pressure .-> SA
     SA -. checkpoint required .-> C[Compactor checkpoint]
     C --> O[OpenCode compaction]
@@ -105,7 +108,7 @@ flowchart TB
     classDef memory fill:#78c6a3,color:#111,stroke:#333;
     class N primary;
     class H,T,AG,G,RG,RF,P,RT gate;
-    class M,Q memory;
+    class DB,NB,MEM memory;
 ```
 
 ## What NLA Can Do
@@ -351,6 +354,32 @@ Every role pool declares one of three modes:
   eligible, the task stops without cloud fallback. This policy applies to
   `select` and `auto`, not `fallback`. Confirm that the Ollama endpoint is
   actually self-hosted; a provider name alone cannot prove network locality.
+
+The configuration and routing paths are separate: the pool JSON seeds or
+reloads `go`, while SQLite holds named orchestras and the active selection.
+Each new task resolves one role pool into its own candidate snapshot:
+
+```mermaid
+flowchart TB
+    J[Pool JSON<br/>override or repository default] -->|seed or reload go| DB[(system.sqlite<br/>orchestras, registry, scores,<br/>statuses, health, policy overrides)]
+    OT[nla_orchestra<br/>save or activate] --> DB
+    DB -->|active orchestra and role pool| MODE{Pool mode}
+    MODE -->|fallback| F[Listed models<br/>in fixed order]
+    MODE -->|select| S[Only listed models]
+    MODE -->|auto| A[Provider inventory<br/>listed models are preferences]
+    INV[OpenCode provider inventory] --> A
+    F --> EF[Provider and model on;<br/>runtime health]
+    S --> ER[Candidate eligibility<br/>status, health, availability,<br/>context and local policy]
+    A --> ER
+    DB -->|statuses and health| EF
+    DB -->|statuses, facts, health| ER
+    EF --> O[Keep configured order]
+    ER --> R[Rank by task profile,<br/>role scores and policy]
+    DB -->|scores and policy overrides| R
+    RA[Risk and Complexity Assessor] --> R
+    O --> TASK[Per-task concrete pool<br/>retryable failover]
+    R --> TASK
+```
 
 Before ranking a `select` or `auto` pool, NLA runs a hybrid Risk & Complexity Assessor.
 Runtime code derives a mandatory baseline from the delegated role, bounded task
