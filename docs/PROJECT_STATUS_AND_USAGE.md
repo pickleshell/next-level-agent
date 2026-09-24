@@ -78,10 +78,13 @@ source. Named orchestras, their active selection, and all other role pools are
 durable in `system.sqlite`. `nla_orchestra` lists, shows, proposes, creates,
 updates, changes one role pool with `pool_set`, and activates them. Switching
 affects new tasks; existing child tasks keep their resolved model list.
-`models: "auto"` is allowed for agent `select`
-pools and resolves enabled registry records found in the current OpenCode
-provider inventory at task start. It retains `auto` in storage, and the
-concrete candidate list is retained by the task for failover. Provider
+`selection_mode: "auto"` is available for agent pools with `models: []` or a
+list of preferred bindings. Unlike `select`, it considers every enabled registry
+record in the current OpenCode provider inventory at task start; listed models
+receive only a small suitability preference. Old saved
+`selection_mode: "select", models: "auto"` pools load as empty-preference auto.
+The durable orchestra retains its preferences, while a concrete candidate
+list is retained by each task for failover. Provider
 inventory presence alone does not prove the endpoint will answer. An unavailable
 inventory blocks new auto tasks. The coordinator model is updated for new
 OpenCode sessions; the current coordinator response is not replaced.

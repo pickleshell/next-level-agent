@@ -5,7 +5,7 @@ import {
   EVALUATION_SCORE_KEYS, emptyEvaluationStore,
   parseReviewerEvaluation, updateEvaluationScores, validateEvaluationStore,
 } from './nla-model-evaluations.mjs';
-import { parseModelBinding, validateModelPools } from './nla-model-pools.mjs';
+import { normalizeAutoPool, parseModelBinding, validateModelPools } from './nla-model-pools.mjs';
 
 // OpenCode CLI loads local plugins in Bun, while some Desktop builds use
 // Node/Electron. Both runtimes have a built-in SQLite implementation, but
@@ -459,7 +459,7 @@ function validOrchestraConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new SystemDatabaseError('Orchestra config must be an object');
   if (config.version !== undefined && config.version !== 1) throw new SystemDatabaseError('Unsupported orchestra config version');
   if (config.guidance !== undefined && (typeof config.guidance !== 'string' || config.guidance.length > 1000)) throw new SystemDatabaseError('Orchestra guidance must be a string up to 1000 characters');
-  const normalized = { version: config.version ?? 1, roles: config.roles, ...(config.guidance ? { guidance: config.guidance } : {}) };
+  const normalized = { version: config.version ?? 1, roles: config.roles && Object.fromEntries(Object.entries(config.roles).map(([role, pool]) => [role, normalizeAutoPool(pool)])), ...(config.guidance ? { guidance: config.guidance } : {}) };
   validateModelPools(normalized, 'orchestra');
   for (const role of ['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']) {
     if (!normalized.roles[role]) throw new SystemDatabaseError(`Orchestra is missing required role: ${role}`);
@@ -921,7 +921,7 @@ export function synchronizeConfiguredModelRegistry(file, roles = {}) {
 // Runtime metadata fills holes only: operator facts and configured prices win.
 export function synchronizeRuntimeModelFacts(file, roles, providers) {
   const candidates = new Map();
-  const hasAuto = Object.values(roles).some((pool) => pool?.models === 'auto');
+  const hasAuto = Object.values(roles).some((pool) => pool?.models === 'auto' || pool?.selection_mode === 'auto');
   const assigned = new Set(Object.values(roles).filter((pool) => pool?.runtime !== 'utility').flatMap((pool) => Array.isArray(pool.models) ? pool.models : []));
   const utilityOnly = new Set(Object.values(roles).filter((pool) => pool?.runtime === 'utility').flatMap((pool) => Array.isArray(pool.models) ? pool.models : []));
   for (const pool of Object.values(roles)) if (pool?.runtime !== 'utility' && Array.isArray(pool?.models)) for (const binding of pool.models) utilityOnly.delete(binding);

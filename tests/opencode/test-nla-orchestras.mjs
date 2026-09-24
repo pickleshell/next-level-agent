@@ -28,6 +28,8 @@ try {
   validateModelPools(proposal);
   assert.throws(() => validateModelPools({ roles: { implementer: { enabled: true, selection_mode: 'fallback', models: 'auto' } } }), /agent select pool/);
   assert.deepEqual(saveOrchestra(file, 'command-openai', proposal), { name: 'command-openai', roles: 9 });
+  assert.deepEqual(getOrchestra(file, 'command-openai').config.roles.implementer.models, [], 'legacy auto loads as canonical empty preferences');
+  assert.equal(getOrchestra(file, 'command-openai').config.roles.implementer.selection_mode, 'auto');
   assert.throws(() => saveOrchestra(file, 'command-openai', proposal), /already exists/);
   assert.equal(getOrchestra(file).name, 'go', 'saving a proposal must not activate it');
   synchronizeConfiguredModelRegistry(file, proposal.roles);
@@ -83,9 +85,12 @@ try {
   assert.ok(sync.availableBindings().has('openai/gpt-new'));
   assert.equal(listModelRegistry(file, 'openai/gpt-new')[0].facts.context_window, 128000);
   const changed = structuredClone(proposal);
-  changed.roles.reviewer.models = 'auto';
+  changed.roles.reviewer.selection_mode = 'auto';
+  changed.roles.reviewer.models = ['openai/gpt-5'];
+  delete changed.roles.reviewer.model_facts;
   assert.equal(updateOrchestra(file, 'command-openai', changed).name, 'command-openai');
-  assert.equal(getOrchestra(file).config.roles.reviewer.models, 'auto');
+  assert.deepEqual(getOrchestra(file).config.roles.reviewer.models, ['openai/gpt-5']);
+  assert.equal(getOrchestra(file).config.roles.reviewer.selection_mode, 'auto');
   assert.throws(() => updateOrchestra(file, 'go', changed), /original pool file/);
   assert.equal(getOrchestra(file, 'go').config.roles.implementer.models.length, 27, 'go snapshot is retained');
   assert.equal(listOrchestras(file).length, 2);

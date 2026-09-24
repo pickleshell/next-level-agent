@@ -26,6 +26,7 @@ export function normalizedScores(scores = {}) {
 }
 
 export function selectionMode(pool = {}) {
+  if (pool.selection_mode === 'auto' || (pool.selection_mode === 'select' && pool.models === 'auto')) return 'auto';
   return pool.selection_mode === 'select' ? 'select' : 'fallback';
 }
 
@@ -101,15 +102,18 @@ export function routableModelPool(pool) {
   }) };
 }
 
-// Materialize auto once per task. The source orchestra continues to say auto;
-// the child keeps this concrete snapshot for failover and auditability.
+// Materialize auto once per task. Explicit models are soft preferences, not a
+// whitelist. The child keeps a concrete snapshot for failover and auditability.
 export function materializeAutoPool(pool, registry, inventory) {
-  if (pool?.models !== 'auto') return pool;
+  if (selectionMode(pool) !== 'auto') return pool;
   if (!(inventory instanceof Set)) throw new ModelSelectionError('Auto pool requires a fresh OpenCode provider inventory');
   const eligible = registry.filter((record) => record.status === 'enabled' && inventory.has(record.binding));
-  const models = eligible.map((record) => record.binding).sort();
+  const available = new Set(eligible.map((record) => record.binding));
+  const preferred = Array.isArray(pool.models) ? pool.models.filter((binding) => available.has(binding)) : [];
+  const preferredSet = new Set(preferred);
+  const models = [...preferred, ...eligible.map((record) => record.binding).filter((binding) => !preferredSet.has(binding)).sort()];
   const model_facts = Object.fromEntries(eligible.map((record) => [record.binding, record.facts]));
-  return { ...pool, models, model_facts };
+  return { ...pool, selection_mode: 'auto', models, model_facts, auto_preferences: preferred };
 }
 
 function healthFor(healthManager, binding, endpoint, now) {
@@ -146,8 +150,8 @@ function staticCost(facts) {
 }
 
 function compareQuality(left, right) {
-  const leftScore = left.score === null ? -1 : left.score;
-  const rightScore = right.score === null ? -1 : right.score;
+  const leftScore = left.score === null ? -1 : left.score + (left.preference_rank ? 0.25 : 0);
+  const rightScore = right.score === null ? -1 : right.score + (right.preference_rank ? 0.25 : 0);
   if (leftScore !== rightScore) return rightScore - leftScore;
   const reliability = (right.scores.reliability || 0) - (left.scores.reliability || 0);
   if (reliability) return reliability;
@@ -157,7 +161,9 @@ function compareQuality(left, right) {
   if (left.cost === null && right.cost !== null) return 1;
   if (left.cost !== null && right.cost === null) return -1;
   const latency = (right.scores.latency || 0) - (left.scores.latency || 0);
-  return latency || left.index - right.index;
+  if (latency) return latency;
+  if (left.preference_rank !== right.preference_rank) return (left.preference_rank || Infinity) - (right.preference_rank || Infinity);
+  return left.index - right.index;
 }
 
 function rankByPolicy(candidates, preferences) {
@@ -169,7 +175,7 @@ function rankByPolicy(candidates, preferences) {
       : maximumCost === minimumCost ? 10
         : 10 * (maximumCost - candidate.cost) / (maximumCost - minimumCost);
     candidate.utility = candidate.score === null ? null
-      : (1 - preferences.cost_weight) * candidate.score + preferences.cost_weight * candidate.cost_score;
+      : (1 - preferences.cost_weight) * (candidate.score + (candidate.preference_rank ? 0.25 : 0)) + preferences.cost_weight * candidate.cost_score;
   }
   if (preferences.policy === 'quality') return candidates.sort(compareQuality);
   if (preferences.policy === 'balanced') return candidates.sort((left, right) => {
@@ -203,7 +209,8 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     const scores = evaluatedScores(evaluations, binding);
     const preferred = pool.preferred_providers || [];
     const providerIndex = preferred.indexOf(binding.slice(0, binding.indexOf('/')));
-    return { binding, index, facts, health, scores, provider_preference: providerIndex < 0 ? 0 : preferred.length - providerIndex, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
+    const preferenceIndex = selectionMode(pool) === 'auto' ? (pool.auto_preferences || []).indexOf(binding) : -1;
+    return { binding, index, facts, health, scores, preference_rank: preferenceIndex < 0 ? 0 : preferenceIndex + 1, provider_preference: providerIndex < 0 ? 0 : preferred.length - providerIndex, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
   });
   const preferences = selectionPreferences(pool, taskProfile);
   const eligible = rankByPolicy(all.filter((candidate) => candidate.eligible), preferences);

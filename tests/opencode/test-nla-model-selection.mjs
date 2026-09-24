@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
-import { parseContextWindow, parseSelectionWeights, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from '../../.opencode/plugins/nla-model-selection.mjs';
+import { materializeAutoPool, parseContextWindow, parseSelectionWeights, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from '../../.opencode/plugins/nla-model-selection.mjs';
 import {
   averageScore,
   emptyEvaluationStore,
@@ -40,6 +40,32 @@ const pool = {
 
 validateModelPools({ roles: { explorer: { enabled: true, models: ['fixture/a'] } } });
 assert.equal(selectionMode({}), 'fallback', 'missing selection mode preserves fallback');
+assert.equal(selectionMode({ selection_mode: 'auto', models: [] }), 'auto');
+validateModelPools({ roles: { implementer: { enabled: true, selection_mode: 'auto', models: [] } } });
+validateModelPools({ roles: { implementer: { enabled: true, selection_mode: 'auto', models: ['fixture/a'] } } });
+assert.throws(() => validateModelPools({ roles: { implementer: { enabled: true, selection_mode: 'select', models: [] } } }), /non-empty/);
+assert.throws(() => validateModelPools({ roles: { implementer: { enabled: true, selection_mode: 'auto', models: ['fixture/a', 'fixture/a'] } } }), /repeats/);
+assert.throws(() => validateModelPools({ roles: { nla: { enabled: true, selection_mode: 'auto', models: [] } } }), /agent pool/);
+const autoSource = { selection_mode: 'auto', selection_policy: 'quality', models: ['fixture/preferred'], model_facts: { 'fixture/preferred': { context_window: 131072 } } };
+const autoRegistry = [
+  { binding: 'fixture/preferred', status: 'enabled', facts: { context_window: 131072, input_cost: 1 } },
+  { binding: 'fixture/other', status: 'enabled', facts: { context_window: 131072, input_cost: 1 } },
+  { binding: 'fixture/disabled', status: 'disabled', facts: {} },
+];
+const autoInventory = new Set(autoRegistry.map((record) => record.binding));
+const autoPool = materializeAutoPool(autoSource, autoRegistry, autoInventory);
+assert.deepEqual(autoPool.models, ['fixture/preferred', 'fixture/other'], 'auto includes unlisted enabled inventory models but not disabled ones');
+assert.deepEqual(autoSource.models, ['fixture/preferred'], 'materialization does not mutate saved preferences');
+const autoEvaluations = { models: {
+  'fixture/preferred': { scores: { coding: 8, reasoning: 8, tool_use: 8 } },
+  'fixture/other': { scores: { coding: 8, reasoning: 8, tool_use: 8 } },
+} };
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: autoPool, evaluations: autoEvaluations }).models, ['fixture/preferred', 'fixture/other'], 'equivalent candidates favor listed preference');
+autoEvaluations.models['fixture/other'].scores.coding = 10;
+assert.equal(rankModelCandidates({ role: 'implementer', pool: autoPool, evaluations: autoEvaluations }).models[0], 'fixture/other', 'higher suitability outside preferences wins');
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: autoPool, evaluations: autoEvaluations, attempted: ['fixture/other'] }).models, ['fixture/preferred'], 'auto failover reselects remaining candidate');
+assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: autoPool, evaluations: autoEvaluations, healthManager: health({ 'fixture/other': { state: 'cooling', eligible: false } }) }).models, ['fixture/preferred'], 'auto respects health');
+assert.deepEqual(materializeAutoPool({ selection_mode: 'auto', models: [] }, autoRegistry, autoInventory).models.sort(), ['fixture/other', 'fixture/preferred'], 'empty auto preferences use all enabled inventory');
 assert.deepEqual(parseSelectionWeights('{"coding":10,"latency":3}'), { coding: 10, latency: 3 });
 assert.throws(() => parseSelectionWeights('{"unknown":5}'), /selection_weights/);
 assert.throws(() => parseSelectionWeights('{"coding":11}'), /selection_weights/);

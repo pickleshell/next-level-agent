@@ -165,7 +165,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   if (!activeOrchestra) throw new Error('Active NLA orchestra is missing');
   let resolvedPools = { ...activeOrchestra.config, source: `system.sqlite:orchestra:${activeOrchestra.name}`, resolution: 'active orchestra' };
   const applyPersistedPolicies = (roles, orchestraName = activeOrchestra.name) => Object.fromEntries(Object.entries(roles).map(([role, pool]) => {
-    const preferences = pool.selection_mode === 'select' ? configuredSelectionPreferences(systemDatabase, role, orchestraName) : null;
+    const preferences = ['select', 'auto'].includes(selectionMode(pool)) ? configuredSelectionPreferences(systemDatabase, role, orchestraName) : null;
     return [role, preferences ? { ...pool, ...preferences } : pool];
   }));
   synchronizeConfiguredModelRegistry(systemDatabase, resolvedPools.roles);
@@ -255,7 +255,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       // The configured initial binding is not attributed when OpenCode did
       // not report the child model, but it must not be dispatched twice.
       : [...state.attemptedModels, state.model];
-    const remaining = selectionMode(state.pool) === 'select'
+    const remaining = selectionMode(state.pool) !== 'fallback'
       ? rankModelCandidates({ role: state.role, pool: state.pool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, attempted: attemptedForSelection }).models
       : state.pool.models.slice(state.modelIndex + 1).filter((binding) => healthManager.state(binding).eligible);
     const nextModel = remaining[0];
@@ -461,7 +461,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
       const maxAttempts = pool.models.length;
       const mode = selectionMode(pool);
-      const taskProfile = mode === 'select' ? assessTask({
+      const taskProfile = mode !== 'fallback' ? assessTask({
         role: args.role,
         description: args.description,
         prompt: args.prompt,
@@ -473,15 +473,15 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           cost_weight: args.cost_weight,
         },
       }) : {};
-      const selection = mode === 'select'
+      const selection = mode !== 'fallback'
         ? rankModelCandidates({ role: args.role, pool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, taskProfile })
         : healthManager.candidates(pool.models, maxAttempts);
-      const attempts = mode === 'select' ? selection.models : pool.models;
+      const attempts = mode !== 'fallback' ? selection.models : pool.models;
       let attempted = 0;
       if (!selection.models.length) {
         throw unavailablePoolError(selection, `NLA pooled task ${args.role}`);
       }
-      if (mode === 'select') appendRunLog({
+      if (mode !== 'fallback') appendRunLog({
         event: 'task_assessed', session_id: context.sessionID, agent: args.role,
         risk: taskProfile.risk, complexity: taskProfile.complexity,
         weights: taskProfile.weights, context_window: taskProfile.context_window,
@@ -859,7 +859,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaTask = tool({
-    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select automatically assesses task risk and complexity, ranks eligible models, and retains bounded failover.',
+    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select ranks only configured models; auto ranks all enabled inventory models with optional configured preferences. Select and auto assess risk and complexity and retain bounded failover.',
     args: {
       role: tool.schema.string().describe('Configured NLA subagent role, for example explorer, architect, implementer, or reviewer'),
       description: tool.schema.string().max(120).describe('Short task title'),
@@ -967,7 +967,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModels = tool({
-    description: 'Report the effective NLA model pools consumed by nla_task, including primary model, ordered fallbacks, per-model operator status, source, resolution reason, and health. When presenting this result, preserve one separate row per role with distinct Primary and Fallbacks fields; never call the complete model chain a fallback chain, group roles, or omit fallbacks. Use none when a role has no fallback. Never includes credentials.',
+    description: 'Report the effective NLA model pools consumed by nla_task. Preserve one row per role; distinguish fixed Primary/Fallbacks from auto preferences and available inventory candidates. Auto preferences are not hard candidates or fallbacks. Include source, status, and health. Never include credentials.',
     args: {},
     execute: async (_args, context) => {
       assertPrimaryNla(context.sessionID);
@@ -982,9 +982,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         return { ...state, status, eligible: state.eligible && status === 'enabled', endpoint };
       }));
       const disabled = records.filter((record) => record.status === 'disabled').map((record) => record.binding);
-      const auto = Object.entries(pools).filter(([, pool]) => pool.models === 'auto').map(([role, pool]) => {
+      const auto = Object.entries(pools).filter(([, pool]) => selectionMode(pool) === 'auto').map(([role, pool]) => {
         const models = syncModelInventory.availableBindings() ? materializeAutoPool(pool, records, syncModelInventory.availableBindings()).models : null;
-        return { role, candidates: models?.length ?? null, sample: models?.slice(0, 10) ?? [] };
+        return { role, preferences: Array.isArray(pool.models) ? pool.models : [], candidates: models?.length ?? null, sample: models?.slice(0, 10) ?? [] };
       });
       return { title: 'Effective NLA model pools', output: `Active orchestra: ${activeOrchestra.name}\nGuidance: ${activeOrchestra.config.guidance || 'none'}\n${formatModelPools(resolvedPools)}\n\nAuto pools: ${JSON.stringify(auto)}\nDisabled models: ${disabled.join(', ') || 'none'}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { orchestra: activeOrchestra.name, source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), auto, health, disabled } };
     },
@@ -1052,7 +1052,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelPolicy = tool({
-    description: 'Persist one select pool policy, quality floor, and cost weight in the private system database. Applies to new tasks immediately and survives OpenCode restart. Primary NLA only.',
+    description: 'Persist one select/auto pool policy, quality floor, and cost weight in the private system database. Applies to new tasks immediately and survives OpenCode restart. Primary NLA only.',
     args: {
       role: tool.schema.string().describe('Exact configured role name'),
       policy: tool.schema.string().describe('quality, balanced, or cost'),
@@ -1063,7 +1063,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       assertPrimaryNla(context.sessionID);
       const pool = pools[args.role];
       if (!pool) throw new Error(`Unknown configured role: ${args.role}`);
-      if (selectionMode(pool) !== 'select') throw new Error(`Role ${args.role} uses fallback; runtime selection policy applies only to select pools`);
+      if (selectionMode(pool) === 'fallback') throw new Error(`Role ${args.role} uses fallback; runtime selection policy applies only to select/auto pools`);
       const preferences = selectionPreferences(pool, { policy: args.policy, minimum_score: args.minimum_score, cost_weight: args.cost_weight });
       saveSelectionPreferences(systemDatabase, args.role, activeOrchestra.name, {
         selection_policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight,
@@ -1084,7 +1084,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     execute: async (args, context) => {
       assertPrimaryNla(context.sessionID);
       await syncModelInventory();
-      const valid = Object.values(pools).some((pool) => (Array.isArray(pool.models) ? pool.models : materializeAutoPool(pool, listModelRegistry(systemDatabase), syncModelInventory.availableBindings()).models).includes(args.binding) && (pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '') === (args.endpoint || ''));
+      const inventory = syncModelInventory.availableBindings();
+      const registry = listModelRegistry(systemDatabase);
+      const valid = Object.values(pools).some((pool) => {
+        const models = selectionMode(pool) === 'auto'
+          ? inventory ? materializeAutoPool(pool, registry, inventory).models : []
+          : pool.models;
+        return models.includes(args.binding) && (pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '') === (args.endpoint || '');
+      });
       if (!valid) throw new Error('Unknown configured model binding; use nla_models for exact binding and endpoint');
       healthManager.reset(args.binding, args.endpoint || '');
       persistModelHealth(args.binding, args.endpoint || '');
@@ -1119,7 +1126,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         if (routingPrefix) {
           const scope = args.key.slice(routingPrefix.length);
           const role = activeOrchestra.name === 'go' ? scope : scope.startsWith(`${activeOrchestra.name}.`) ? scope.slice(activeOrchestra.name.length + 1) : '';
-          if (!pools[role] || selectionMode(pools[role]) !== 'select') throw new Error('Selection policy setting requires a configured select role');
+          if (!pools[role] || selectionMode(pools[role]) === 'fallback') throw new Error('Selection policy setting requires a configured select/auto role');
         }
         result = setSystemSetting(systemDatabase, args.key, args.value_json);
         if (routingPrefix) applyOrchestraSnapshot(activeOrchestra, 'active orchestra with saved policy');
@@ -1200,7 +1207,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     args: {
       action: tool.schema.enum(['list', 'show', 'propose', 'create', 'update', 'pool_set', 'activate']).describe('Orchestra action'),
       name: tool.schema.string().max(64).optional().describe('Unique lowercase orchestra name for show/create/update/pool_set/activate'),
-      config_json: tool.schema.string().max(262144).optional().describe('For create: complete JSON object with roles, selection modes/policies, and arrays or models: auto'),
+      config_json: tool.schema.string().max(262144).optional().describe('For create: complete JSON object with roles; fallback/select require model arrays, auto accepts an empty or preferred model array'),
       role: tool.schema.string().max(64).optional().describe('For pool_set: exact role name in the saved orchestra'),
       pool_json: tool.schema.string().max(65536).optional().describe('For pool_set: complete JSON object for one role pool'),
     },
@@ -1221,7 +1228,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           available_models: listModelRegistry(systemDatabase)
             .filter((record) => record.status === 'enabled' && inventory?.has(record.binding))
             .map(({ binding, facts, scores }) => ({ binding, facts, scores })),
-          instruction: 'Draft a new named orchestra from these exact bindings. Save its operator policy in guidance, e.g. use Command Code by default, prefer free or economical models when capable, reserve OpenAI for tasks where a stronger model improves quality or lowers risk, and treat 20–30% OpenAI usage as a soft guide. For select roles, preferred_providers: ["command-code", "openai"] breaks quality ties toward Command Code. Use models: auto for dynamically selected agent roles. Present the proposal before create/activate.',
+          instruction: 'Draft a new named orchestra from these exact bindings. Save its operator policy in guidance, e.g. use Command Code by default, prefer free or economical models when capable, reserve OpenAI for tasks where a stronger model improves quality or lowers risk, and treat 20–30% OpenAI usage as a soft guide. For select/auto roles, preferred_providers: ["command-code", "openai"] breaks quality ties toward Command Code. Use selection_mode: auto with models: [] for unrestricted dynamic selection, or list preferred bindings in models; all enabled inventory models remain eligible. Present the proposal before create/activate.',
         };
       } else if (['create', 'update', 'pool_set'].includes(args.action)) {
         if (!args.name) throw new Error(`${args.action} requires name`);
@@ -1421,13 +1428,13 @@ When skills request actions, substitute OpenCode equivalents:
 - Create or update todos → \`todowrite\`
 	- Run an NLA subagent role → \`nla_task\` with \`role\`, \`description\`, and a bounded \`prompt\`
 	- Save the workflow ledger → \`nla_state\` with a complete JSON snapshot
-	- Inspect effective model routing → \`nla_models\`; relay every role separately with distinct Primary and Fallbacks fields, use none for no fallback, and never group roles, omit fallbacks, or call the complete chain a fallback chain; reload it after an approved config change with \`nla_models_reload\`
+	- Inspect effective model routing → \`nla_models\`; relay every role separately. For fallback/select, distinguish Primary and Fallbacks; for auto, show model preferences separately from the full inventory candidate count. Reload after an approved config change with \`nla_models_reload\`
 	- Inspect completed model token/cache/cost usage for this workflow → \`nla_usage\` with \`summary\` or \`recent\`; never infer missing provider accounting
-	- Change a select pool policy for new tasks without restart → \`nla_model_policy\`; persist via \`nla_system\` setting_set using \`routing.selection_policy.<role>\` for go or \`routing.selection_policy.<orchestra>.<role>\` for other orchestras
+	- Change a select/auto pool policy for new tasks without restart → \`nla_model_policy\`; persist via \`nla_system\` setting_set using \`routing.selection_policy.<role>\` for go or \`routing.selection_policy.<orchestra>.<role>\` for other orchestras
 	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
 	- Inspect or import model registry records, or enable/disable one exact model for new tasks → \`nla_models_registry\` (action \`status_set\`); imports register models but do not silently change role pools or erase evaluations
-	- Inspect, propose, save, and activate named orchestras → \`nla_orchestra\`; \`go\` preserves the original roles. \`models: "auto"\` chooses from enabled, inventoried models at task start. Present a proposal before creating or activating a new orchestra. Active child tasks keep their existing pool snapshot.
+	- Inspect, propose, save, and activate named orchestras → \`nla_orchestra\`; \`go\` preserves the original roles. \`selection_mode: "auto"\` with \`models: []\` chooses from all enabled, inventoried models; listed models are soft preferences, not a whitelist. Present a proposal before creating or activating a new orchestra. Active child tasks keep their existing pool snapshot.
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)
