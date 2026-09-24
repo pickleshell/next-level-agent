@@ -11,7 +11,7 @@ import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
   listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   hasSystemRestoreBlock, loadSystemLedger, saveSystemHealth, loadSystemHealth, saveSystemLedger, saveSystemRestoreBlock,
-  poolWithSystemFacts, recordSystemModelUsage, setModelStatus, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema,
+  poolWithSystemFacts, recordSystemModelUsage, setModelStatus, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema, SYSTEM_DATABASE_VERSION,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-system-database-'));
@@ -251,7 +251,7 @@ try {
   assert.throws(() => createUserDatabase(file, root, 'disabled', 'disabled fixture'), /disabled/);
   assert.throws(() => createUserTable(file, root, 'research', 'blocked', '[{"name":"x","type":"TEXT"}]'), /disabled/);
   const status = systemDatabaseStatus(file);
-  assert.equal(status.version, 2);
+  assert.equal(status.version, SYSTEM_DATABASE_VERSION);
   assert.equal(status.model_usage_events, 1);
   assert.equal(status.databases[0].name, 'research');
 } finally {
