@@ -2,16 +2,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { ModelHealthManager } from '../../.opencode/plugins/nla-model-health.mjs';
-import { rankModelCandidates } from '../../.opencode/plugins/nla-model-selection.mjs';
+import { materializeAutoPool, rankModelCandidates, routableModelPool } from '../../.opencode/plugins/nla-model-selection.mjs';
 import { createModelInventorySync } from '../../.opencode/plugins/nla-model-inventory.mjs';
 
 import {
   configuredSelectionPolicy, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
-  listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
+  listModelRegistry, listProviderRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   hasSystemRestoreBlock, loadSystemLedger, saveSystemHealth, loadSystemHealth, saveSystemLedger, saveSystemRestoreBlock,
-  poolWithSystemFacts, recordSystemModelUsage, setModelStatus, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema, SYSTEM_DATABASE_VERSION,
+  poolWithSystemFacts, recordSystemModelUsage, setModelStatus, setProviderStatus, setSystemSetting, summarizeSystemModelUsage, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, systemDatabasePath, systemDatabaseStatus, systemSchema, SYSTEM_DATABASE_VERSION,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-system-database-'));
@@ -21,6 +22,16 @@ fs.writeFileSync(seed, JSON.stringify({ version: 1, models: { 'fixture/seed': { 
 fs.writeFileSync(legacy, JSON.stringify({ version: 1, models: { 'fixture/legacy': { scores: { coding: 7, reasoning: 8, tool_use: 7, reliability: 6, latency: 5 } } } }));
 
 try {
+  const upgradeRoot = path.join(root, 'provider-upgrade');
+  const upgradeFile = initializeSystemDatabase({ stateRoot: upgradeRoot, seedPath: seed });
+  synchronizeConfiguredModelRegistry(upgradeFile, { explorer: { models: ['fixture/seed'] } });
+  const old = new DatabaseSync(upgradeFile);
+  old.exec('DROP TABLE provider_registry; DELETE FROM schema_migrations; INSERT INTO schema_migrations (version, applied_at) VALUES (3, \'legacy\')');
+  old.close();
+  assert.equal(listProviderRegistry(upgradeFile, 'fixture')[0].status, 'enabled', 'schema v3 upgrades and backfills providers');
+  assert.equal(systemDatabaseStatus(upgradeFile).version, SYSTEM_DATABASE_VERSION);
+  assert.equal(getSystemSetting(upgradeFile, 'system.database.version').value, SYSTEM_DATABASE_VERSION, 'schema version setting follows migration');
+  assert.equal(loadSystemEvaluations(upgradeFile).models['fixture/seed'].scores.coding, 8, 'provider migration preserves evaluations');
   const inventoryFile = initializeSystemDatabase({ stateRoot: path.join(root, 'inventory'), seedPath: seed });
   const inventoryRoles = {
     explorer: { selection_mode: 'select', models: ['fixture/seed', 'fixture/invalid'], model_facts: { 'fixture/seed': { input_cost: 0 } } },
@@ -132,9 +143,12 @@ try {
   assert.equal(setSystemSetting(file, 'routing.selection_policy.implementer', '"balanced"').value, 'balanced');
   assert.equal(configuredSelectionPolicy(file, 'implementer'), 'balanced');
   assert.equal(getSystemSetting(file, 'routing.selection_policy.implementer').value, 'balanced');
+  assert.equal(setSystemSetting(file, 'routing.selection_policy.implementer', '"local"').value, 'local', 'local policy persists in SQLite');
+  assert.equal(configuredSelectionPolicy(file, 'implementer'), 'local');
+  setSystemSetting(file, 'routing.selection_policy.implementer', '"balanced"');
   assert.throws(() => setSystemSetting(file, 'system.database.version', '5'), /read-only/);
   assert.throws(() => setSystemSetting(file, 'routing.health_persistence', 'false'), /unsupported/);
-  assert.throws(() => setSystemSetting(file, 'routing.selection_policy.implementer', '"random"'), /quality, balanced, or cost/);
+  assert.throws(() => setSystemSetting(file, 'routing.selection_policy.implementer', '"random"'), /quality, balanced, cost, or local/);
   assert.throws(() => setSystemSetting(file, 'api_key', '"secret"'), /Setting key|secret/i);
   assert.throws(() => setSystemSetting(file, 'operator.notes', '{"nested":{"api_key":"secret"}}'), /secret field/);
 
@@ -160,6 +174,29 @@ try {
   assert.equal(listModelRegistry(file, 'fixture/imported')[0].status, 'disabled', 'pool reload does not re-enable a disabled model');
   assert.deepEqual(setModelStatus(file, 'fixture/imported', 'enabled'), { binding: 'fixture/imported', status: 'enabled' });
   assert.equal(listModelRegistry(file, 'fixture/imported')[0].scores.reasoning, 9, 'status changes retain evaluations');
+  const scoresBeforeProviderPause = loadSystemEvaluations(file);
+  assert.equal(listProviderRegistry(file, 'fixture')[0].status, 'enabled', 'registered model providers default to enabled');
+  assert.deepEqual(setProviderStatus(file, 'fixture', 'disabled'), { provider: 'fixture', status: 'disabled' });
+  const pausedModel = listModelRegistry(file, 'fixture/imported')[0];
+  assert.equal(pausedModel.status, 'enabled', 'provider pause does not mutate model status');
+  assert.equal(pausedModel.provider_status, 'disabled');
+  assert.deepEqual(routableModelPool(poolWithSystemFacts(file, { models: ['fixture/imported'] })).models, [], 'fixed pools exclude a disabled provider');
+  assert.deepEqual(materializeAutoPool({ selection_mode: 'auto', models: [] }, listModelRegistry(file), new Set(['fixture/imported'])).models, [], 'auto excludes a disabled provider');
+  importModelRegistry(file, JSON.stringify({ models: { 'fixture/imported': { facts: { context_window: 65536 } } } }));
+  assert.equal(listProviderRegistry(file, 'fixture')[0].status, 'disabled', 'model import does not re-enable a provider');
+  initializeSystemDatabase({ stateRoot: path.dirname(file), seedPath: seed });
+  assert.equal(listProviderRegistry(file, 'fixture')[0].status, 'disabled', 'provider pause survives restart');
+  assert.deepEqual(loadSystemEvaluations(file), scoresBeforeProviderPause, 'provider pause preserves every model evaluation');
+  assert.deepEqual(setProviderStatus(file, 'fixture', 'enabled'), { provider: 'fixture', status: 'enabled' });
+  assert.deepEqual(routableModelPool(poolWithSystemFacts(file, { models: ['fixture/imported'] })).models, ['fixture/imported'], 'provider resume restores individually enabled model');
+  setModelStatus(file, 'fixture/imported', 'disabled');
+  setProviderStatus(file, 'fixture', 'disabled');
+  setProviderStatus(file, 'fixture', 'enabled');
+  assert.equal(listModelRegistry(file, 'fixture/imported')[0].status, 'disabled', 'provider resume does not enable an individually disabled model');
+  assert.deepEqual(routableModelPool(poolWithSystemFacts(file, { models: ['fixture/imported'] })).models, []);
+  setModelStatus(file, 'fixture/imported', 'enabled');
+  assert.throws(() => setProviderStatus(file, 'bad/provider', 'disabled'), /provider ID/);
+  assert.throws(() => setProviderStatus(file, 'typo-provider', 'disabled'), /not registered/);
   assert.throws(() => setModelStatus(file, 'fixture/missing', 'disabled'), /not registered/);
   assert.throws(() => setModelStatus(file, 'fixture/imported', 'paused'), /enabled or disabled/);
   const nestedBinding = 'command-code/xiaomi/mimo-v2.6-pro';

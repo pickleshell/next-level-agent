@@ -112,15 +112,18 @@ try {
   const autoTask = await instance.tool.nla_task.execute({ role: 'supervisor', description: 'auto suitability fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(autoTask.metadata.model, 'fixture/b', 'auto selects better unlisted model, not only configured preference');
   await instance.tool.nla_model_health_reset.execute({ binding: 'fixture/b' }, { sessionID: 'primary_select', directory: root });
-  await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'disabled' }, { sessionID: 'primary_select', directory: root });
+  const turnedOff = await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'off' }, { sessionID: 'primary_select', directory: root });
+  assert.equal(JSON.parse(turnedOff.output).status, 'off');
   const disabledRegistry = await instance.tool.nla_models_registry.execute({ action: 'show', binding: 'fixture/b' }, { sessionID: 'primary_select', directory: root });
-  assert.equal(JSON.parse(disabledRegistry.output).status, 'disabled', 'model status is visible through NLA');
+  assert.equal(JSON.parse(disabledRegistry.output).status, 'off', 'model switch is visible through NLA');
+  assert.equal(JSON.parse(disabledRegistry.output).facts.status, 'off', 'raw facts in tool output use the same switch label');
   const disabledView = await instance.tool.nla_models.execute({}, { sessionID: 'primary_select', directory: root });
   assert.equal(disabledView.metadata.health.find((entry) => entry.binding === 'fixture/b').eligible, false, 'nla_models reports operator-disabled binding as ineligible');
-  assert.match(disabledView.output, /Disabled models: fixture\/b/, 'nla_models makes disabled models visible without inspecting health JSON');
+  assert.match(disabledView.output, /Models off: fixture\/b/, 'nla_models makes off models visible without inspecting health JSON');
+  assert.equal(disabledView.metadata.health.find((entry) => entry.binding === 'fixture/b').status, 'off');
   const afterDisable = await instance.tool.nla_task.execute({ role: 'architect', description: 'disabled binding fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(afterDisable.metadata.model, 'fixture/c', 'new select task skips disabled highest-ranked model');
-  await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'enabled' }, { sessionID: 'primary_select', directory: root });
+  await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'on' }, { sessionID: 'primary_select', directory: root });
   const afterEnable = await instance.tool.nla_task.execute({ role: 'architect', description: 're-enabled binding fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(afterEnable.metadata.model, 'fixture/b', 'model is selectable again without pool reload');
   await instance.tool.nla_models_registry.execute({ action: 'import', json: JSON.stringify({ models: {
@@ -135,6 +138,14 @@ try {
   assert.equal(inventoryCalls, 2, 'reload refreshes resolved provider inventory');
   const afterReload = await instance.tool.nla_task.execute({ role: 'architect', description: 'preserve operator context', prompt: 'bounded task', context_window: '100000' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(afterReload.metadata.model, 'fixture/c', 'inventory refresh must preserve operator context overrides');
+  await instance.tool.nla_model_policy.execute({ role: 'architect', policy: 'local' }, { sessionID: 'primary_select', directory: root });
+  const callsBeforeLocal = selectedCalls.length;
+  const childrenBeforeLocal = selectedChild;
+  await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'production migration', prompt: 'must not leave local infrastructure' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal }), /No available local Ollama model.*cloud fallback is disabled/);
+  assert.equal(selectedCalls.length, callsBeforeLocal, 'local policy never dispatches a cloud request');
+  assert.equal(selectedChild, childrenBeforeLocal, 'local policy fails before creating a child session');
+  await instance.tool.nla_model_policy.execute({ role: 'architect', policy: 'balanced' }, { sessionID: 'primary_select', directory: root });
+  assert.equal((await instance.tool.nla_models.execute({}, { sessionID: 'primary_select', directory: root })).metadata.roles.find((row) => row.role === 'architect').selection_policy, 'balanced');
   const beforeInvalidReviewTarget = evaluationStore();
   const callsBeforeInvalidReviewTarget = selectedCalls.length;
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'invalid review target role', prompt: 'must not dispatch', review_target_session_id: selected.metadata.sessionID }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal }), /review_target_session_id/);
@@ -157,6 +168,7 @@ try {
     },
   });
   await instance['chat.message']({ sessionID: 'primary_event', agent: 'nla', directory: root });
+  assert.equal((await instance.tool.nla_models.execute({}, { sessionID: 'primary_event', directory: root })).metadata.roles.find((row) => row.role === 'architect').selection_policy, 'balanced', 'restart retains restored policy');
   await instance['tool.execute.before']({ tool: 'task', sessionID: 'primary_event' }, { args: { subagent_type: 'architect' } });
   await instance.event({ event: { type: 'session.created', properties: { info: { id: 'child_event', parentID: 'primary_event', model: { providerID: 'fixture', modelID: 'a' } } } } });
   await instance.event({ event: { type: 'session.error', properties: { sessionID: 'child_event', error: { status: 429, message: 'rate limit' } } } });

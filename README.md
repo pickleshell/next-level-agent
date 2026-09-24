@@ -33,7 +33,7 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 - **Risk-based routing.** Small tasks stay with NLA. Larger or riskier tasks receive only the roles and gates they need.
 - **Architecture before implementation.** Important designs and Tier 3 tasks go through Architect and user approval before code changes begin.
 - **Independent checks.** Reviewer checks the result, while Supervisor checks workflow state, approvals, context pressure, and evidence.
-- **Role-specific model pools.** Each child role can use a preferred model and bounded fallbacks, so one failed model does not have to stop the task.
+- **Role-specific model pools.** Each child role can use ordered fallback, ranked selection from a fixed list, or dynamic selection across the enabled inventory with optional model preferences.
 - **Efficient context use.** Child agents receive focused task packets instead of the full conversation. Completed state is kept in structured memory rather than repeatedly copied into prompts.
 - **Coordinator memory.** A private ledger and Assistant Notebook preserve decisions, verified facts, blockers, and the next step across a long task.
 - **Automatic context protection.** OpenCode auto-compaction handles normal context pressure. NLA adds monitoring, a Supervisor audit, a Compactor checkpoint, and state restoration for controlled recovery.
@@ -151,16 +151,28 @@ restarting OpenCode. For other orchestras, use `nla_orchestra` to save or switch
 the configuration. New tasks use the changed snapshot; active child tasks
 continue with the pool snapshot they already received.
 
-Model availability is controlled per exact binding, not by disabling an entire
-provider. Primary NLA can call `nla_models_registry` with `action=status_set`,
-`binding=provider/model`, and `status=enabled` or `disabled`. The status is
-durable in the private system database and takes effect for new tasks without
-a pool reload; active tasks are not interrupted. An absent status means enabled.
-Disabling a model removes it from both `fallback` and `select` dispatch while
-retaining its pool membership, facts, evaluations, health history, and usage.
-Use `nla_models_registry` (`show` or `list`) or `nla_models` to inspect status.
-This controls NLA pool dispatch only; it cannot switch the model of an already
-running OpenCode coordinator or a direct OpenCode session.
+Provider and model status are independent in SQLite. Primary NLA can use
+`nla_models_registry provider_list` / `provider_show` to inspect providers and
+`provider_status_set` with `provider` and `status=on|off` to pause or
+resume one provider. `status_set` with an exact `binding=provider/model` still
+controls one model with the same `on|off` values. New tasks require both switches
+to be `on`; switching a provider never changes its models' statuses, facts,
+scores, or pool membership.
+`nla_models` shows provider status alongside model health. A provider serving
+the active coordinator cannot be disabled until another orchestra is activated.
+Running tasks retain their pool snapshot. These controls affect NLA routing,
+not direct OpenCode provider access. Older `enabled|disabled` tool arguments
+still work, and existing SQLite/config values keep their legacy representation;
+NLA displays them as `on|off`.
+
+To pause OpenCode Go without losing its model setup, keep individual
+`opencode-go/*` models `on` and set only the `opencode-go` provider to
+`off` with `nla_models_registry` action `provider_status_set`. Check the
+result with `provider_show` and `nla_models`. Later, setting that provider back
+to `on` restores eligibility for models that are individually `on`, without
+resetting their scores. If some models were switched off individually, turning
+on the provider does not turn on those models. This is an operator procedure,
+not the default provider state of a fresh installation.
 
 ### Named orchestras and auto pools
 
@@ -209,7 +221,7 @@ use `nla_task` for managed dynamic routing.
 
 For example, ask NLA: “Show my orchestras. Propose a `command-openai` orchestra
 with Command Code as the default provider, OpenAI for difficult or risky tasks,
-and `auto` for appropriate select roles. Prefer free and economical models when
+and `auto` for appropriate agent roles. Prefer free and economical models when
 they are capable. Show the proposal before creating or activating it.” OpenAI
 must first be configured in OpenCode; an inventory entry does not prove that a
 provider endpoint answers. Existing OpenCode processes must restart once to
@@ -309,50 +321,59 @@ request override, then `NLA_MODEL_POOLS_PATH`, then the portable repository
 default. An explicitly selected but missing or invalid file fails closed; it is
 never silently replaced by another pool. `nla_task` and the primary-only
 `nla_models` tool use the same resolved object. `nla_models` reports each role's
-primary and ordered fallbacks, enabled state, source, resolution reason, and
-health without credentials. `nla_models_reload` re-reads that same source,
+mode, policy, enabled state, source, resolution reason, and health without
+credentials. Fixed pools show primary and fallbacks; `auto` also shows model
+preferences and the inventoried candidate count. `nla_models_reload` re-reads that same source,
 validates the candidate and provider inventory before saving `go` or replacing
 the in-memory snapshot, and leaves the previous orchestra active if validation
 fails. Inventory presence does not prove that a provider endpoint answers.
 
-Every role pool declares one of two modes:
+Every role pool declares one of three modes:
 
 - `fallback` attempts the configured `models` array in order and moves to the
   next model after a retryable failure;
-- `select` filters unavailable or already attempted models, ranks the remaining
-  candidates with role/task weights and learned scores, and repeats selection
-  among the remaining candidates after a failure.
+- `select` filters and ranks only its listed models, then reselects among the
+  remaining candidates after a retryable failure;
+- `auto` applies the same assessor and ranking to every enabled model in the
+  current OpenCode provider inventory. Its optional `models` array is a soft
+  preference list, not a whitelist; `[]` means no preferences. The concrete
+  candidate list is fixed for each task and bounds that task's attempts.
 
-`select` pools also declare a policy:
+`select` and `auto` pools also declare a policy:
 
 - `quality` maximizes the role-weighted quality score and uses price as a
   tie-break;
-- `balanced` combines quality with a normalized price score using
-  `cost_weight` (default `0.25`);
+- `balanced` considers task fit first, then favors lower cost among similarly
+  suitable models; the assessor can choose a different policy for the task;
 - `cost` first requires `minimum_score` (default `7.5`), then chooses the least
-  expensive qualified model.
+  expensive qualified model;
+- `local` considers only `ollama/*` models, ranked by quality. If none is
+  eligible, the task stops without cloud fallback. This policy applies to
+  `select` and `auto`, not `fallback`. Confirm that the Ollama endpoint is
+  actually self-hosted; a provider name alone cannot prove network locality.
 
-Before ranking a `select` pool, NLA runs a hybrid Risk & Complexity Assessor.
+Before ranking a `select` or `auto` pool, NLA runs a hybrid Risk & Complexity Assessor.
 Runtime code derives a mandatory baseline from the delegated role, bounded task
 packet, risk indicators, complexity, tool dependence, and context size. The
 coordinator may refine the five selection weights, context requirement, and
 policy, but it never chooses a model directly. Runtime validates the refinement,
-forces `quality` plus reliability and reasoning floors for high-risk work, and
+forces `quality` plus reliability and reasoning floors for high-risk work (or
+retains a requested `local` boundary with those same score safeguards), and
 falls back to the deterministic profile when no refinement is supplied. The
 resulting profile and selected binding are recorded as redacted operational
 telemetry without task or response content.
 
 `nla_models` displays mode and policy for every role. Primary NLA can call
-`nla_model_policy` to change a `select` pool's policy, quality floor, or cost
-weight immediately for new tasks without restarting OpenCode. The complete
+`nla_model_policy` to change a `select` or `auto` pool's policy or cost-policy
+quality floor immediately for new tasks without restarting OpenCode. The complete
 preference set is saved in SQLite and restored after reload or restart. For a
 policy-only persistent change, `nla_system setting_set` also accepts
 `routing.selection_policy.<role>` for `go`, or
 `routing.selection_policy.<orchestra>.<role>` for another orchestra; an explicit
-policy-only change overrides the saved policy while retaining its quality floor
-and cost weight. Editing the pool file and calling `nla_models_reload` changes
+policy-only change overrides the saved policy while retaining its quality floor.
+Editing the pool file and calling `nla_models_reload` changes
 the `go` role pools. Task-specific preferences still take precedence, subject
-to high-risk safeguards.
+to high-risk safeguards and any pool-level `local` boundary.
 
 For a fixed pool, the `models` array bounds its attempts; an auto pool uses the
 candidate list resolved at task start. There is no separate `max_failovers` or
@@ -406,8 +427,9 @@ Primary NLA has two bounded tools for this state:
 
 - `nla_system`: `schema`, `status`, `setting_list`, `setting_get`, `setting_set`,
   `database_create`, `database_list`, `table_create`, and `table_list`;
-- `nla_models_registry`: `list`, `show`, `import`, and `status_set` model records from
-  interactive JSON or a JSON file inside the active project.
+- `nla_models_registry`: `list`, `show`, `import`, and `status_set` for models;
+  `provider_list`, `provider_show`, and `provider_status_set` for independently
+  stored provider status.
 - `nla_orchestra`: `list`, `show`, `propose`, `create`, `update`, `pool_set`, and `activate`
   named, persistent role and pool configurations.
 - `nla_usage`: `summary` or `recent` token, cache, and cost accounting for the
@@ -436,14 +458,14 @@ response text. Ask NLA for
 
 Writable operational settings are intentionally narrow: `operator_databases.enabled`
 (boolean) controls creation of additional databases and tables, and
-`routing.selection_policy.<select-role>` (`quality`, `balanced`, or `cost`)
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, or `local`)
 persists a role's default selection policy across restart;
-`routing.selection_preferences.<select-role>` stores policy, quality floor, and
-cost weight together when changed through `nla_model_policy` (named orchestras
+`routing.selection_preferences.<select-role>` stores policy and quality floor
+together when changed through `nla_model_policy` (named orchestras
 prefix the role with the orchestra name). `operator.*` holds
 non-secret notes only. `system.database.*` is read-only; unknown routing or
 security settings are rejected. A task-specific policy can still override the
-role default, subject to the high-risk quality safeguard.
+role default, subject to high-risk safeguards and a pool-level `local` boundary.
 
 Use [`config/model-registry.example.json`](config/model-registry.example.json)
 as the import shape. `0` means a score is unevaluated; imported scores seed a

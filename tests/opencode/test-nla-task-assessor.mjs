@@ -28,6 +28,10 @@ assert.equal(critical.policy, 'quality', 'high-risk work cannot be downgraded to
 assert.equal(critical.weights.reliability, 10, 'high-risk reliability floor is mandatory');
 assert.ok(critical.weights.reasoning >= 9, 'high-risk reasoning floor is mandatory');
 assert.ok(critical.weights.latency <= 5, 'high-risk work cannot prioritize latency over safety');
+const criticalLocal = assessTask({ role: 'implementer', description: 'Production authentication migration', prompt: 'Review rollback safety.', refinement: { selection_policy: 'local' } });
+assert.equal(criticalLocal.policy, 'local', 'high-risk tasks retain an explicit local-only boundary');
+assert.equal(criticalLocal.weights.reliability, 10);
+assert.ok(criticalLocal.weights.reasoning >= 9);
 
 const refined = assessTask({
   role: 'explorer',

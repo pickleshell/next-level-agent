@@ -1,5 +1,11 @@
 export const MODEL_SCORE_KEYS = ['coding', 'reasoning', 'tool_use', 'reliability', 'latency'];
-export const SELECTION_POLICIES = ['quality', 'balanced', 'cost'];
+export const SELECTION_POLICIES = ['quality', 'balanced', 'cost', 'local'];
+// Ollama is the self-hosted provider in the current NLA runtime. A local
+// policy is a hard routing boundary, never a preference or cloud fallback.
+const LOCAL_PROVIDERS = new Set(['ollama']);
+export function isLocalModelBinding(binding) {
+  return typeof binding === 'string' && LOCAL_PROVIDERS.has(binding.split('/')[0]);
+}
 
 export class ModelSelectionError extends Error {
   constructor(message) { super(message); this.name = 'ModelSelectionError'; }
@@ -31,8 +37,8 @@ export function selectionMode(pool = {}) {
 }
 
 export function selectionPolicy(pool = {}, taskProfile = {}) {
-  const value = taskProfile.policy || pool.selection_policy || 'quality';
-  if (!SELECTION_POLICIES.includes(value)) throw new ModelSelectionError('selection_policy must be quality, balanced, or cost');
+  const value = pool.selection_policy === 'local' ? 'local' : taskProfile.policy || pool.selection_policy || 'quality';
+  if (!SELECTION_POLICIES.includes(value)) throw new ModelSelectionError('selection_policy must be quality, balanced, cost, or local');
   return value;
 }
 
@@ -47,7 +53,6 @@ export function selectionPreferences(pool = {}, taskProfile = {}) {
   return {
     policy: selectionPolicy(pool, taskProfile),
     minimum_score: boundedNumber(taskProfile.minimum_score ?? pool.minimum_score, 7.5, 0, 10, 'minimum_score'),
-    cost_weight: boundedNumber(taskProfile.cost_weight ?? pool.cost_weight, 0.25, 0, 1, 'cost_weight'),
   };
 }
 
@@ -98,7 +103,7 @@ export function routableModelPool(pool) {
   if (!pool || !Array.isArray(pool.models)) return pool;
   return { ...pool, models: pool.models.filter((binding) => {
     const status = modelFacts(pool, binding).status;
-    return status === undefined || status === 'enabled';
+    return (status === undefined || status === 'enabled') && modelFacts(pool, binding).provider_status !== 'disabled';
   }) };
 }
 
@@ -107,7 +112,8 @@ export function routableModelPool(pool) {
 export function materializeAutoPool(pool, registry, inventory) {
   if (selectionMode(pool) !== 'auto') return pool;
   if (!(inventory instanceof Set)) throw new ModelSelectionError('Auto pool requires a fresh OpenCode provider inventory');
-  const eligible = registry.filter((record) => record.status === 'enabled' && inventory.has(record.binding));
+  const eligible = registry.filter((record) => record.status === 'enabled' && record.provider_status !== 'disabled'
+    && inventory.has(record.binding) && (pool.selection_policy !== 'local' || isLocalModelBinding(record.binding)));
   const available = new Set(eligible.map((record) => record.binding));
   const preferred = Array.isArray(pool.models) ? pool.models.filter((binding) => available.has(binding)) : [];
   const preferredSet = new Set(preferred);
@@ -167,22 +173,21 @@ function compareQuality(left, right) {
 }
 
 function rankByPolicy(candidates, preferences) {
-  const knownCosts = candidates.map((candidate) => candidate.cost).filter((cost) => cost !== null);
-  const minimumCost = knownCosts.length ? Math.min(...knownCosts) : null;
-  const maximumCost = knownCosts.length ? Math.max(...knownCosts) : null;
-  for (const candidate of candidates) {
-    candidate.cost_score = candidate.cost === null || minimumCost === null ? 0
-      : maximumCost === minimumCost ? 10
-        : 10 * (maximumCost - candidate.cost) / (maximumCost - minimumCost);
-    candidate.utility = candidate.score === null ? null
-      : (1 - preferences.cost_weight) * (candidate.score + (candidate.preference_rank ? 0.25 : 0)) + preferences.cost_weight * candidate.cost_score;
+  if (preferences.policy === 'quality' || preferences.policy === 'local') return candidates.sort(compareQuality);
+  if (preferences.policy === 'balanced') {
+    // The assessor/coordinator chooses the policy. Balanced keeps models close
+    // to the best task fit, then prefers the cheaper of those viable choices.
+    const best = Math.max(...candidates.map((candidate) => candidate.score === null ? -1 : candidate.score + (candidate.preference_rank ? 0.25 : 0)));
+    const viable = candidates.filter((candidate) => best < 0 || (candidate.score !== null && candidate.score + (candidate.preference_rank ? 0.25 : 0) >= best - 1));
+    const remaining = candidates.filter((candidate) => !viable.includes(candidate));
+    viable.sort((left, right) => {
+      if (left.cost === null && right.cost !== null) return 1;
+      if (left.cost !== null && right.cost === null) return -1;
+      if (left.cost !== null && right.cost !== null && left.cost !== right.cost) return left.cost - right.cost;
+      return compareQuality(left, right);
+    });
+    return [...viable, ...remaining.sort(compareQuality)];
   }
-  if (preferences.policy === 'quality') return candidates.sort(compareQuality);
-  if (preferences.policy === 'balanced') return candidates.sort((left, right) => {
-    const leftUtility = left.utility ?? -1;
-    const rightUtility = right.utility ?? -1;
-    return rightUtility - leftUtility || compareQuality(left, right);
-  });
   const qualified = candidates.filter((candidate) => candidate.score !== null && candidate.score >= preferences.minimum_score);
   return qualified.sort((left, right) => {
     if (left.cost === null && right.cost !== null) return 1;
@@ -194,6 +199,7 @@ function rankByPolicy(candidates, preferences) {
 
 export function rankModelCandidates({ role, pool = {}, evaluations, healthManager, endpoint = '', attempted = [], now = new Date(), taskProfile = {} } = {}) {
   const models = Array.isArray(pool.models) ? pool.models : [];
+  const preferences = selectionPreferences(pool, taskProfile);
   const attemptedSet = new Set(attempted);
   const baseWeights = DEFAULT_ROLE_WEIGHTS[role] || DEFAULT_ROLE_WEIGHTS.implementer;
   const weights = taskProfile.weights || pool.selection_weights || baseWeights;
@@ -204,6 +210,8 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     if (attemptedSet.has(binding)) reasons.push('attempted');
     if (!health.eligible) reasons.push(health.state || 'unavailable');
     if (facts.status !== undefined && facts.status !== 'enabled') reasons.push('disabled');
+    if (facts.provider_status === 'disabled') reasons.push('provider_disabled');
+    if (preferences.policy === 'local' && !isLocalModelBinding(binding)) reasons.push('not_local');
     if (!staticAvailability(facts, now)) reasons.push('static_unavailable');
     if (taskProfile.context_window && (!Number.isFinite(Number(facts.context_window)) || facts.context_window < Number(taskProfile.context_window))) reasons.push('insufficient_context');
     const scores = evaluatedScores(evaluations, binding);
@@ -212,7 +220,6 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     const preferenceIndex = selectionMode(pool) === 'auto' ? (pool.auto_preferences || []).indexOf(binding) : -1;
     return { binding, index, facts, health, scores, preference_rank: preferenceIndex < 0 ? 0 : preferenceIndex + 1, provider_preference: providerIndex < 0 ? 0 : preferred.length - providerIndex, cost: staticCost(facts), score: weightedScore(scores, weights), eligible: reasons.length === 0, reasons };
   });
-  const preferences = selectionPreferences(pool, taskProfile);
   const eligible = rankByPolicy(all.filter((candidate) => candidate.eligible), preferences);
   return {
     mode: selectionMode(pool),

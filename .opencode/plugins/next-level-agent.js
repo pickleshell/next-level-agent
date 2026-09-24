@@ -24,15 +24,15 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
-import { materializeAutoPool, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { isLocalModelBinding, materializeAutoPool, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
 import { assessTask } from './nla-task-assessor.mjs';
 import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
 import {
   configuredSelectionPreferences, createUserDatabase, createUserTable, getSystemSetting, importModelRegistry, initializeSystemDatabase,
-  listModelRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
+  listModelRegistry, listProviderRegistry, listSystemModelUsage, listSystemSettings, listUserTables, loadSystemEvaluations, recordSystemEvaluation,
   recordSystemReviewerEvaluation, setSystemSetting, saveSystemHealth, loadSystemHealth, synchronizeConfiguredModelRegistry, systemDatabaseStatus,
-  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, setModelStatus, summarizeSystemModelUsage, systemSchema,
+  hasSystemRestoreBlock, loadSystemLedger, poolWithSystemFacts, recordSystemModelUsage, saveSystemLedger, saveSystemRestoreBlock, setModelStatus, setProviderStatus, summarizeSystemModelUsage, systemSchema,
   initializeOrchestras, listOrchestras, getOrchestra, saveOrchestra, updateOrchestra, activateOrchestra, reloadGoOrchestra, saveSelectionPreferences,
 } from './nla-system-database.mjs';
 import { reconcileWorkState } from './nla-reconciliation.mjs';
@@ -46,6 +46,19 @@ export { modelCooldownMs };
 export { formatModelPools };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Keep legacy SQLite/config values stable while presenting simple switches to
+// operators. Old tool callers can still send enabled/disabled.
+const switchStatus = (value) => value === 'enabled' ? 'on' : value === 'disabled' ? 'off' : value;
+const storedStatus = (value) => value === 'on' ? 'enabled' : value === 'off' ? 'disabled' : value;
+const presentRegistryRecord = (record) => {
+  if (!record) return record;
+  const presented = { ...record, status: switchStatus(record.status) };
+  if (record.provider_status !== undefined) presented.provider_status = switchStatus(record.provider_status);
+  if (record.facts?.status !== undefined) presented.facts = { ...record.facts, status: switchStatus(record.facts.status) };
+  return presented;
+};
+const presentRegistryResult = (result) => Array.isArray(result) ? result.map(presentRegistryRecord) : presentRegistryRecord(result);
 
 // Simple frontmatter extraction (avoid dependency on skills-core for bootstrap)
 const extractAndStripFrontmatter = (content) => {
@@ -470,7 +483,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           context_window: args.context_window,
           selection_policy: args.selection_policy,
           minimum_score: args.minimum_score,
-          cost_weight: args.cost_weight,
         },
       }) : {};
       const selection = mode !== 'fallback'
@@ -479,6 +491,11 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       const attempts = mode !== 'fallback' ? selection.models : pool.models;
       let attempted = 0;
       if (!selection.models.length) {
+        if (mode !== 'fallback' && selection.policy === 'local') {
+          const error = new Error(`No available local Ollama model for role ${args.role}; cloud fallback is disabled by the local policy`);
+          error.code = 'NLA_LOCAL_MODEL_UNAVAILABLE';
+          throw error;
+        }
         throw unavailablePoolError(selection, `NLA pooled task ${args.role}`);
       }
       if (mode !== 'fallback') appendRunLog({
@@ -866,9 +883,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
       selection_weights: tool.schema.string().optional().describe('Optional model-proposed refinement for the runtime task assessor: strict JSON with only coding, reasoning, tool_use, reliability, and latency weights from 0 to 10'),
       context_window: tool.schema.string().optional().describe('Optional model-proposed minimum context window; runtime may raise it and select excludes models without sufficient declared context'),
-      selection_policy: tool.schema.string().optional().describe('Optional model-proposed select policy: quality, balanced, or cost; runtime forces quality for high-risk tasks'),
+      selection_policy: tool.schema.string().optional().describe('Optional model-proposed select policy: quality, balanced, cost, or local; high-risk tasks force quality except when local is required'),
       minimum_score: tool.schema.string().optional().describe('Optional cost-policy quality floor from 0 to 10'),
-      cost_weight: tool.schema.string().optional().describe('Optional balanced-policy cost weight from 0 to 1'),
       review_target_session_id: tool.schema.string().optional().describe('Reviewer only: exact completed Implementer child session ID from prior nla_task metadata.sessionID. When supplied, the Reviewer must return only strict JSON with verdict (pass, fail, or needs_changes) and coding, reasoning, and tool_use scores from 1 to 10; no target prompt, response, secrets, or other target internals are provided or accepted.'),
       browser_task_id: tool.schema.string().optional().describe('Explicit logical Browser task continuation ID returned by runtime. Omit for new work; provide the original complete browser contract when continuing. This is not a live browser session_id.'),
       browser: tool.schema.string().optional().describe('Required for role browser. JSON object: {"goal":"read fact","permissions":{"navigation":true,"interaction":false,"authentication":false,"uploads":false,"downloads":false,"external_mutation":false},"origins":["http://approved-host:port"],"success_criteria":[{"id":"fact","check":"text_contains","locator":{"test_id":"fact"},"expected":"required prefix","wait_ms":1000,"mandatory":true}],"keep_session":false}. Only these permission names are valid; omitted rights are false. Each criterion requires id and check, with locator (exactly one of role plus optional name, label, test_id, text) for element/text checks. Supported checks: text_equals, text_contains, element_visible, element_enabled, url_equals, no_console_errors, no_dialogs. Optional session_id explicitly resumes an owned session; optional upload_files must fit operator grants.'),
@@ -974,19 +990,23 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       appendRunLog({ event: 'model_pools_introspected', session_id: context.sessionID, source: resolvedPools.source, resolution: resolvedPools.resolution });
       await syncModelInventory();
       const records = listModelRegistry(systemDatabase);
-      const registered = new Map(records.map((record) => [record.binding, record.status]));
+      const registered = new Map(records.map((record) => [record.binding, record]));
+      const providerRecords = listProviderRegistry(systemDatabase);
+      const providers = providerRecords.map(presentRegistryRecord);
       const health = Object.values(pools).flatMap((pool) => (Array.isArray(pool.models) ? pool.models : []).map((binding) => {
         const endpoint = pool.runtime === 'utility' ? utilityHealthEndpoint(pool) : '';
         const state = healthManager.state(binding, endpoint);
-        const status = registered.get(binding) || 'enabled';
-        return { ...state, status, eligible: state.eligible && status === 'enabled', endpoint };
+        const record = registered.get(binding);
+        const status = record?.status || 'enabled';
+        const provider_status = record?.provider_status || providerRecords.find((item) => item.provider === binding.split('/')[0])?.status || 'enabled';
+        return { ...state, status: switchStatus(status), provider_status: switchStatus(provider_status), eligible: state.eligible && status === 'enabled' && provider_status === 'enabled' && (pool.selection_policy !== 'local' || isLocalModelBinding(binding)), endpoint };
       }));
       const disabled = records.filter((record) => record.status === 'disabled').map((record) => record.binding);
       const auto = Object.entries(pools).filter(([, pool]) => selectionMode(pool) === 'auto').map(([role, pool]) => {
         const models = syncModelInventory.availableBindings() ? materializeAutoPool(pool, records, syncModelInventory.availableBindings()).models : null;
         return { role, preferences: Array.isArray(pool.models) ? pool.models : [], candidates: models?.length ?? null, sample: models?.slice(0, 10) ?? [] };
       });
-      return { title: 'Effective NLA model pools', output: `Active orchestra: ${activeOrchestra.name}\nGuidance: ${activeOrchestra.config.guidance || 'none'}\n${formatModelPools(resolvedPools)}\n\nAuto pools: ${JSON.stringify(auto)}\nDisabled models: ${disabled.join(', ') || 'none'}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { orchestra: activeOrchestra.name, source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), auto, health, disabled } };
+      return { title: 'Effective NLA model pools', output: `Active orchestra: ${activeOrchestra.name}\nGuidance: ${activeOrchestra.config.guidance || 'none'}\n${formatModelPools(resolvedPools)}\n\nProviders: ${providers.map((item) => `${item.provider}=${item.status}`).join(', ') || 'none'}\nAuto pools: ${JSON.stringify(auto)}\nModels off: ${disabled.join(', ') || 'none'}\n\nHealth:\n${JSON.stringify(health, null, 2)}`, metadata: { orchestra: activeOrchestra.name, source: resolvedPools.source, resolution: resolvedPools.resolution, roles: modelPoolSummary(resolvedPools), providers, auto, health, off_models: disabled } };
     },
   });
 
@@ -1052,24 +1072,25 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelPolicy = tool({
-    description: 'Persist one select/auto pool policy, quality floor, and cost weight in the private system database. Applies to new tasks immediately and survives OpenCode restart. Primary NLA only.',
+    description: 'Persist one select/auto pool policy and cost-policy quality floor in the private system database. Applies to new tasks immediately and survives OpenCode restart. Primary NLA only.',
     args: {
       role: tool.schema.string().describe('Exact configured role name'),
-      policy: tool.schema.string().describe('quality, balanced, or cost'),
+      policy: tool.schema.string().describe('quality, balanced, cost, or local (Ollama only; no cloud fallback)'),
       minimum_score: tool.schema.string().optional().describe('Cost-policy quality floor from 0 to 10; default 7.5'),
-      cost_weight: tool.schema.string().optional().describe('Balanced-policy cost weight from 0 to 1; default 0.25'),
     },
     execute: async (args, context) => {
       assertPrimaryNla(context.sessionID);
       const pool = pools[args.role];
       if (!pool) throw new Error(`Unknown configured role: ${args.role}`);
       if (selectionMode(pool) === 'fallback') throw new Error(`Role ${args.role} uses fallback; runtime selection policy applies only to select/auto pools`);
-      const preferences = selectionPreferences(pool, { policy: args.policy, minimum_score: args.minimum_score, cost_weight: args.cost_weight });
+      // This is an operator change to the effective pool, not a task-level
+      // refinement. It must be able to replace an existing local policy.
+      const preferences = selectionPreferences({ ...pool, selection_policy: undefined }, { policy: args.policy, minimum_score: args.minimum_score });
       saveSelectionPreferences(systemDatabase, args.role, activeOrchestra.name, {
-        selection_policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight,
+        selection_policy: preferences.policy, minimum_score: preferences.minimum_score,
       });
       applyOrchestraSnapshot(activeOrchestra, 'active orchestra with saved policy');
-      appendRunLog({ event: 'model_policy_changed', session_id: context.sessionID, role: args.role, policy: preferences.policy, minimum_score: preferences.minimum_score, cost_weight: preferences.cost_weight });
+      appendRunLog({ event: 'model_policy_changed', session_id: context.sessionID, role: args.role, policy: preferences.policy, minimum_score: preferences.minimum_score });
       return {
         title: `NLA model policy changed for ${args.role}`,
         output: `${formatModelPools(resolvedPools)}\n\nSaved in SQLite. New tasks use this policy; active tasks retain their snapshot. The setting survives reload and restart.`,
@@ -1147,11 +1168,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelsRegistry = tool({
-    description: 'Inspect or import persistent model registry records, or set one model status to enabled/disabled for new tasks. Status is per exact binding, not per provider; scores, facts, health, and pool membership are retained. import accepts either json or a project-local source_path. Existing empirical scores are preserved unless overwrite_scores is exactly true. Primary NLA only.',
+    description: 'Inspect/import models and turn providers or individual models on/off for new NLA tasks. Provider and model switches are independent; neither erases facts, scores, or pools. Import accepts json or a project-local source_path. Legacy enabled/disabled tool inputs remain accepted. Primary NLA only.',
     args: {
-      action: tool.schema.enum(['list', 'show', 'import', 'status_set']).describe('Requested model-registry action'),
+      action: tool.schema.enum(['list', 'show', 'import', 'status_set', 'provider_list', 'provider_show', 'provider_status_set']).describe('Requested model or provider registry action'),
       binding: tool.schema.string().max(256).optional().describe('Exact provider/model binding for show'),
-      status: tool.schema.enum(['enabled', 'disabled']).optional().describe('For status_set: enabled or disabled for this exact model binding'),
+      provider: tool.schema.string().max(128).optional().describe('Exact provider ID for provider_show or provider_status_set'),
+      status: tool.schema.enum(['on', 'off', 'enabled', 'disabled']).optional().describe('Switch for model status_set or provider_status_set: on or off (legacy enabled/disabled accepted)'),
       json: tool.schema.string().max(131072).optional().describe('Model import JSON object: {"models":{"provider/model":{"facts":{},"scores":{},"notes":{}}}}'),
       source_path: tool.schema.string().max(1024).optional().describe('Relative JSON file path within the current project directory'),
       overwrite_scores: tool.schema.string().optional().describe('For import only: exact string true to replace existing empirical scores; otherwise existing scores are preserved'),
@@ -1163,9 +1185,17 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       else if (args.action === 'show') {
         if (!args.binding) throw new Error('show requires binding');
         result = listModelRegistry(systemDatabase, args.binding)[0] || null;
+      } else if (args.action === 'provider_list') result = listProviderRegistry(systemDatabase);
+      else if (args.action === 'provider_show') {
+        if (!args.provider) throw new Error('provider_show requires provider');
+        result = listProviderRegistry(systemDatabase, args.provider)[0] || null;
+      } else if (args.action === 'provider_status_set') {
+        if (!args.provider || !args.status) throw new Error('provider_status_set requires provider and status');
+        if (storedStatus(args.status) === 'disabled' && activeOrchestra.config.roles.nla.models[0].startsWith(`${args.provider}/`)) throw new Error('Cannot turn off the active coordinator provider; activate an orchestra with another coordinator first');
+        result = setProviderStatus(systemDatabase, args.provider, storedStatus(args.status));
       } else if (args.action === 'status_set') {
         if (!args.binding || !args.status) throw new Error('status_set requires binding and status');
-        result = setModelStatus(systemDatabase, args.binding, args.status);
+        result = setModelStatus(systemDatabase, args.binding, storedStatus(args.status));
       } else {
         if (Boolean(args.json) === Boolean(args.source_path)) throw new Error('import requires exactly one of json or source_path');
         let payload = args.json;
@@ -1181,8 +1211,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         if (args.overwrite_scores !== undefined && args.overwrite_scores !== 'true' && args.overwrite_scores !== 'false') throw new Error('overwrite_scores must be true or false');
         result = importModelRegistry(systemDatabase, payload, { overwriteScores: args.overwrite_scores === 'true' });
       }
-      appendRunLog({ event: 'model_registry_action', session_id: context.sessionID, action: args.action, binding: args.binding, status: args.status, source: args.source_path ? 'project_file' : args.json ? 'interactive_json' : undefined });
-      return { title: `Model registry: ${args.action}`, output: JSON.stringify(result, null, 2), metadata: { action: args.action, binding: args.binding } };
+      appendRunLog({ event: 'model_registry_action', session_id: context.sessionID, action: args.action, binding: args.binding, provider: args.provider, status: args.status, source: args.source_path ? 'project_file' : args.json ? 'interactive_json' : undefined });
+      return { title: `Model registry: ${args.action}`, output: JSON.stringify(args.action === 'import' ? result : presentRegistryResult(result), null, 2), metadata: { action: args.action, binding: args.binding, provider: args.provider } };
     },
   });
 
@@ -1192,7 +1222,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     if (!inventory) throw new Error('Cannot activate orchestra without the OpenCode provider inventory');
     const registry = listModelRegistry(systemDatabase);
     const coordinator = config.roles.nla.models[0];
-    if (!inventory.has(coordinator) || registry.find((record) => record.binding === coordinator)?.status !== 'enabled') throw new Error(`Orchestra ${name} coordinator model is not enabled in the provider inventory: ${coordinator}`);
+    const coordinatorRecord = registry.find((record) => record.binding === coordinator);
+    if (!inventory.has(coordinator) || coordinatorRecord?.status !== 'enabled' || coordinatorRecord?.provider_status !== 'enabled') throw new Error(`Orchestra ${name} coordinator model or provider is not enabled in the provider inventory: ${coordinator}`);
     for (const [role, configured] of Object.entries(config.roles)) {
       if (!configured.enabled || role === 'nla') continue;
       const concrete = materializeAutoPool(configured, registry, inventory);
@@ -1226,7 +1257,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           current: activeOrchestra.name,
           base: activeOrchestra.config,
           available_models: listModelRegistry(systemDatabase)
-            .filter((record) => record.status === 'enabled' && inventory?.has(record.binding))
+            .filter((record) => record.status === 'enabled' && record.provider_status === 'enabled' && inventory?.has(record.binding))
             .map(({ binding, facts, scores }) => ({ binding, facts, scores })),
           instruction: 'Draft a new named orchestra from these exact bindings. Save its operator policy in guidance, e.g. use Command Code by default, prefer free or economical models when capable, reserve OpenAI for tasks where a stronger model improves quality or lowers risk, and treat 20–30% OpenAI usage as a soft guide. For select/auto roles, preferred_providers: ["command-code", "openai"] breaks quality ties toward Command Code. Use selection_mode: auto with models: [] for unrestricted dynamic selection, or list preferred bindings in models; all enabled inventory models remain eligible. Present the proposal before create/activate.',
         };
@@ -1433,7 +1464,7 @@ When skills request actions, substitute OpenCode equivalents:
 	- Change a select/auto pool policy for new tasks without restart → \`nla_model_policy\`; persist via \`nla_system\` setting_set using \`routing.selection_policy.<role>\` for go or \`routing.selection_policy.<orchestra>.<role>\` for other orchestras
 	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
-	- Inspect or import model registry records, or enable/disable one exact model for new tasks → \`nla_models_registry\` (action \`status_set\`); imports register models but do not silently change role pools or erase evaluations
+	- Inspect or import model registry records, or turn one exact model on/off for new tasks → \`nla_models_registry\` (action \`status_set\`, status \`on\` or \`off\`). Inspect providers with \`provider_list\` or \`provider_show\`; toggle a provider independently with \`provider_status_set\`. Neither switch erases model evaluations or role pools
 	- Inspect, propose, save, and activate named orchestras → \`nla_orchestra\`; \`go\` preserves the original roles. \`selection_mode: "auto"\` with \`models: []\` chooses from all enabled, inventoried models; listed models are soft preferences, not a whitelist. Present a proposal before creating or activating a new orchestra. Active child tasks keep their existing pool snapshot.
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`

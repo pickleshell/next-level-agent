@@ -44,8 +44,7 @@
         "opencode-go/glm-5.3"
       ],
       "idle_timeout_ms": 900000,
-      "selection_policy": "balanced",
-      "cost_weight": 0.25
+      "selection_policy": "balanced"
     },
     "architect": {
       "enabled": true,
@@ -257,8 +256,7 @@
           "availability": "always"
         }
       },
-      "selection_policy": "balanced",
-      "cost_weight": 0.25
+      "selection_policy": "balanced"
     },
     "reviewer": {
       "enabled": true,
