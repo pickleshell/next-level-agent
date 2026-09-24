@@ -8,7 +8,9 @@ import { NlaMem0Plugin } from '../../.opencode/plugins/nla-mem0.js';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const configPath = path.join(repoRoot, 'opencode.json');
 
-const output = execFileSync('opencode', ['debug', 'skill'], {
+// Keep the catalog limited to this test's configured skill; OpenCode may
+// otherwise truncate a large global catalog mid-JSON while exiting 0.
+const output = execFileSync('opencode', ['debug', 'skill', '--pure'], {
   cwd: repoRoot,
   env: {
     ...process.env,
