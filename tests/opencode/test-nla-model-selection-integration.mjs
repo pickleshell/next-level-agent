@@ -17,7 +17,7 @@ const pool = {
   version: 1,
   roles: {
     nla: { enabled: false, selection_mode: 'fallback', models: ['fixture/a'] },
-    supervisor: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+    supervisor: { enabled: true, selection_mode: 'auto', models: ['fixture/a'] },
     scout: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
     explorer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
     architect: {
@@ -106,6 +106,12 @@ try {
   assert.equal(assessmentEvents[1].source, 'hybrid');
   assert.equal(assessmentEvents[1].selected_model, 'fixture/coding');
   assert.ok(assessmentEvents.every((entry) => !Object.hasOwn(entry, 'prompt') && !Object.hasOwn(entry, 'description')), 'assessment telemetry excludes task content');
+  const autoView = await instance.tool.nla_models.execute({}, { sessionID: 'primary_select', directory: root });
+  assert.equal(autoView.metadata.auto.find((entry) => entry.role === 'supervisor').candidates, 7);
+  assert.deepEqual(autoView.metadata.auto.find((entry) => entry.role === 'supervisor').preferences, ['fixture/a']);
+  const autoTask = await instance.tool.nla_task.execute({ role: 'supervisor', description: 'auto suitability fixture', prompt: 'bounded task' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(autoTask.metadata.model, 'fixture/b', 'auto selects better unlisted model, not only configured preference');
+  await instance.tool.nla_model_health_reset.execute({ binding: 'fixture/b' }, { sessionID: 'primary_select', directory: root });
   await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'disabled' }, { sessionID: 'primary_select', directory: root });
   const disabledRegistry = await instance.tool.nla_models_registry.execute({ action: 'show', binding: 'fixture/b' }, { sessionID: 'primary_select', directory: root });
   assert.equal(JSON.parse(disabledRegistry.output).status, 'disabled', 'model status is visible through NLA');

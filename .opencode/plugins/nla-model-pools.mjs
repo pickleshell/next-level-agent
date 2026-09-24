@@ -57,7 +57,7 @@ export function validateModelPools(parsed, source = 'model pool file') {
     if (!ROLE_ID.test(role)) throw new ModelPoolValidationError(`Invalid model-pool role name ${JSON.stringify(role)} in ${source}`, source);
     if (!pool || typeof pool !== 'object' || Array.isArray(pool)) throw new ModelPoolValidationError(`Role ${role} must be an object in ${source}`, source);
     if (pool.enabled !== undefined && typeof pool.enabled !== 'boolean') throw new ModelPoolValidationError(`Role ${role}.enabled must be boolean in ${source}`, source);
-    if (pool.selection_mode !== undefined && !['fallback', 'select'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_mode must be fallback or select in ${source}`, source);
+    if (pool.selection_mode !== undefined && !['fallback', 'select', 'auto'].includes(pool.selection_mode)) throw new ModelPoolValidationError(`Role ${role}.selection_mode must be fallback, select, or auto in ${source}`, source);
     if (pool.selection_policy !== undefined && !['quality', 'balanced', 'cost'].includes(pool.selection_policy)) throw new ModelPoolValidationError(`Role ${role}.selection_policy must be quality, balanced, or cost in ${source}`, source);
     if (pool.preferred_providers !== undefined && (!Array.isArray(pool.preferred_providers) || !pool.preferred_providers.length || new Set(pool.preferred_providers).size !== pool.preferred_providers.length || pool.preferred_providers.some((provider) => typeof provider !== 'string' || !BINDING_PART.test(provider)))) throw new ModelPoolValidationError(`Role ${role}.preferred_providers must be a non-empty unique provider list in ${source}`, source);
     if (pool.minimum_score !== undefined && (typeof pool.minimum_score !== 'number' || !Number.isFinite(pool.minimum_score) || pool.minimum_score < 0 || pool.minimum_score > 10)) throw new ModelPoolValidationError(`Role ${role}.minimum_score must be a number from 0 to 10 in ${source}`, source);
@@ -73,7 +73,8 @@ export function validateModelPools(parsed, source = 'model pool file') {
       if (pool.model_facts !== undefined || pool.model_metadata !== undefined) throw new ModelPoolValidationError(`Role ${role} cannot attach model_facts to models: auto in ${source}`, source);
       continue;
     }
-    if (!Array.isArray(pool.models) || pool.models.length === 0) throw new ModelPoolValidationError(`Role ${role} requires a non-empty models array or auto in ${source}`, source);
+    if (pool.selection_mode === 'auto' && (role === 'nla' || pool.runtime === 'utility')) throw new ModelPoolValidationError(`Role ${role} requires an agent pool for selection_mode: auto in ${source}`, source);
+    if (!Array.isArray(pool.models) || (pool.models.length === 0 && pool.selection_mode !== 'auto')) throw new ModelPoolValidationError(`Role ${role} requires a non-empty models array (auto mode permits an empty preference list) in ${source}`, source);
     const seen = new Set();
     pool.models.forEach((binding, index) => {
       const parsedBinding = parseModelBinding(binding, `Role ${role}.models[${index}]`);
@@ -108,7 +109,7 @@ export function preflightModelPools(parsed, availableBindings, source = 'model p
   const unavailable = [];
   for (const [role, pool] of Object.entries(parsed.roles)) {
     if (!pool.enabled) continue;
-    if (pool.models === 'auto') continue; // Runtime inventory is checked when the task resolves auto.
+    if (pool.models === 'auto' || pool.selection_mode === 'auto') continue; // Auto preferences are not hard inventory requirements.
     for (const binding of pool.models) if (pool.model_facts?.[binding]?.status !== 'disabled' && !available.has(binding)) unavailable.push(`${role}:${binding}`);
   }
   if (unavailable.length) throw new ModelPoolValidationError(`Enabled model-pool bindings absent from supplied runtime inventory: ${unavailable.join(', ')}`, source);
@@ -135,10 +136,17 @@ function readPoolFile(configPath, resolution) {
   const sharedFacts = {};
   for (const pool of Object.values(parsed.roles)) Object.assign(sharedFacts, pool.model_facts || pool.model_metadata || {});
   const roles = Object.fromEntries(Object.entries(parsed.roles).map(([role, pool]) => [role, {
-    ...pool,
+    ...normalizeAutoPool(pool),
     ...(Object.keys(sharedFacts).length && Array.isArray(pool.models) ? { model_facts: Object.fromEntries(pool.models.filter((binding) => sharedFacts[binding]).map((binding) => [binding, sharedFacts[binding]])) } : {}),
   }]));
   return { version: parsed.version ?? 1, roles, source: configPath, resolution };
+}
+
+// Accept old persisted models: "auto" orchestras without perpetuating that shape.
+export function normalizeAutoPool(pool) {
+  return pool?.models === 'auto' && pool.selection_mode === 'select'
+    ? { ...pool, selection_mode: 'auto', models: [] }
+    : pool;
 }
 
 export function resolveModelPools({ explicitPath = null, env = process.env, homeDir = os.homedir(), defaultPath } = {}) {
@@ -155,23 +163,33 @@ export function modelPoolSummary(resolved) {
   return Object.entries(resolved.roles).map(([role, pool]) => {
     const coordinator = role === 'nla';
     const enabled = Boolean(pool?.enabled);
+    const auto = pool?.selection_mode === 'auto' || pool?.models === 'auto';
     return {
       role,
       enabled: coordinator ? null : enabled,
       pooled: !coordinator && enabled,
       status: coordinator ? 'orchestrator' : (enabled ? 'enabled' : 'disabled'),
-      selection_mode: pool?.selection_mode || 'fallback',
+      selection_mode: auto ? 'auto' : pool?.selection_mode || 'fallback',
       selection_policy: pool?.selection_policy || 'quality',
       minimum_score: pool?.minimum_score ?? 7.5,
       cost_weight: pool?.cost_weight ?? 0.25,
-      primary: pool?.models === 'auto' ? 'auto' : Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
-      fallbacks: Array.isArray(pool?.models) ? pool.models.slice(1) : [],
+      primary: auto ? 'auto' : Array.isArray(pool?.models) ? (pool.models[0] || null) : null,
+      fallbacks: auto ? [] : Array.isArray(pool?.models) ? pool.models.slice(1) : [],
+      preferences: auto && Array.isArray(pool?.models) ? pool.models : [],
     };
   });
 }
 
 export function formatModelPools(resolved) {
   if (!resolved || typeof resolved !== 'object' || !resolved.roles || typeof resolved.roles !== 'object') return '';
-  const lines = ['Role        Mode      Policy     Primary                         Fallbacks                         Status', ...modelPoolSummary(resolved).map((row) => `${row.role.padEnd(11)} ${(row.selection_mode || 'fallback').padEnd(9)} ${(row.selection_policy || 'quality').padEnd(10)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`), '', `source: ${resolved.source}`, `resolution: ${resolved.resolution}`];
+  const rows = modelPoolSummary(resolved);
+  const lines = [
+    'Role        Mode      Policy     Primary                         Fallbacks                         Status',
+    ...rows.map((row) => `${row.role.padEnd(11)} ${row.selection_mode.padEnd(9)} ${row.selection_policy.padEnd(10)} ${(row.primary || '-').padEnd(32)} ${(row.fallbacks.join(' -> ') || '-').padEnd(32)} ${row.status}`),
+    '',
+    ...rows.filter((row) => row.selection_mode === 'auto').map((row) => `${row.role} auto preferences: ${row.preferences.join(' -> ') || 'none'} (all enabled inventory models remain eligible)`),
+    `source: ${resolved.source}`,
+    `resolution: ${resolved.resolution}`,
+  ];
   return lines.join('\n');
 }

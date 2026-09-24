@@ -54,12 +54,15 @@ Open:
 ~/.local/share/nla/next-level-agent/config/model-pools.json
 ```
 
-Each enabled role must contain at least one model available through the user's OpenCode providers.
+Each enabled `fallback` or `select` role must list at least one model available through the user's OpenCode providers; an `auto` role may have an empty preference list.
 On first launch, this file is saved as the `go` orchestra in the private system
 database. Use `nla_orchestra` to inspect, propose, create, and activate another
-named orchestra without restarting OpenCode. `models: "auto"` is supported for
-agent roles in `select` mode; it resolves enabled registry bindings against
-OpenCode's provider inventory when a new task starts. Configure provider
+named orchestra without restarting OpenCode. For agent roles,
+`selection_mode: "auto"` with `models: []` considers all enabled registry
+bindings in OpenCode's provider inventory at task start. A non-empty `models`
+array is a soft preference list, not a whitelist. Existing saved
+`selection_mode: "select", models: "auto"` configurations still load.
+Configure provider
 credentials in OpenCode, not in an orchestra. New sessions use the active
 orchestra's coordinator model; an existing coordinator response keeps its model.
 

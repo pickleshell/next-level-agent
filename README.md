@@ -75,6 +75,7 @@ flowchart TB
     MH[Model health<br/>availability and cooldown] --> S
     S --> P{Role pool mode}
     P -->|select| MS[Rank by quality,<br/>balance, or cost]
+    P -->|auto: all enabled inventory,<br/>optional preferences| MS
     P -->|fallback| MF[Ordered bounded<br/>failover]
     MS --> RT{Execution runtime}
     MF --> RT
@@ -139,8 +140,8 @@ NLA is the only user-facing coordinator and owns the shared memory. Specialized 
 - **Orchestrator / coordinator:** the primary NLA agent. It owns the user task and delegates bounded work; it is not an orchestra.
 - **Orchestra:** a named, durable configuration of roles and their model pools and policies. `go` is the original orchestra; one orchestra is active at a time.
 - **Role:** a responsibility such as Explorer, Implementer, or Reviewer. Each child role has its own pool in the active orchestra.
-- **Model pool:** the models available to one role, plus its selection mode and policy. `fallback` tries an ordered list; `select` ranks eligible models for the task and can fail over if a choice fails.
-- **`auto` pool:** a `select` pool whose candidate list is built for each new task from enabled registry models present in OpenCode's provider inventory. `auto` is not a model name.
+- **Model pool:** one role's model-selection mode and policy. `fallback` tries its list in order; `select` ranks only listed models; `auto` ranks all enabled models in the current provider inventory.
+- **`auto` preferences:** the optional `models` array in an `auto` pool. Listed bindings get a small ranking preference, but other suitable models can win. An empty array means no model preferences.
 - **Model binding:** an exact `provider/model` identifier. Registry status, model facts, learned scores, and runtime health apply to that binding, not automatically to every model from its provider.
 
 The primary NLA coordinator can inspect the currently loaded model pool for
@@ -176,13 +177,23 @@ NLA sees it in its coordinator context after activation.
 `nla_models` reports which orchestra is active. A switch affects new tasks;
 running child tasks retain the concrete pool selected for them.
 
-For an agent role using `selection_mode: "select"`, set `"models": "auto"` to
+For an agent role, set `"selection_mode": "auto"` and `"models": []` to
 draw candidates at task start from enabled registry records present in the
-current OpenCode provider inventory. The selector applies the role weights,
+current OpenCode provider inventory. Or list preferred model bindings in
+`models`; they receive a small ranking bonus, not exclusive access. A better
+fit elsewhere in the inventory can still win. For example:
+
+```json
+{"selection_mode":"auto","selection_policy":"balanced","models":["command-code/gpt-6-luna"]}
+```
+
+The selector applies the role weights,
 task risk/context requirements, policy, and model health, then keeps the
-resolved candidate list for that task's failover. The saved orchestra continues
-to contain `auto`; it never turns into a fixed list after the first task.
-`preferred_providers` lists optional provider tie-breakers for a select pool,
+resolved candidate list for that task's failover. The saved orchestra keeps
+its preference list; it never turns into a fixed list after the first task.
+Older saved `"selection_mode":"select","models":"auto"` orchestras still load
+as an `auto` pool with an empty preference list.
+`preferred_providers` lists optional provider tie-breakers for select/auto pools,
 for example `["command-code", "openai"]`; quality, cost, context, and health
 still decide non-tied cases. Provider share goals such as “roughly 20–30% OpenAI”
 remain guidance to NLA, not enforced quotas. New providers appear after
