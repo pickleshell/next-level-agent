@@ -86,7 +86,9 @@ async function fixture(run) {
       command: [process.execPath, mcpFixture, '--isolated'],
       allowed_origins: ['http://example.test'], timeout_ms: 2000, session_ttl_ms: 1000,
     }));
-    fs.writeFileSync(env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: {
+    const requiredRoles = Object.fromEntries(['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']
+      .map((role) => [role, { enabled: role !== 'nla', models: ['fixture/browser'] }]));
+    fs.writeFileSync(env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { ...requiredRoles,
       // Health claims serialize each model binding; two fake bindings allow
       // the concurrency regression to exercise independent Browser tasks.
       browser: { enabled: true, models: ['fixture/browser', 'fixture/browser-parallel'], idle_timeout_ms: 2000 },

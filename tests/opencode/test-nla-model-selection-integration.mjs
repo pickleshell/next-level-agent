@@ -16,6 +16,10 @@ process.env.NLA_MEMORY_DIR = path.join(root, 'memory');
 const pool = {
   version: 1,
   roles: {
+    nla: { enabled: false, selection_mode: 'fallback', models: ['fixture/a'] },
+    supervisor: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+    scout: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+    explorer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
     architect: {
       enabled: true,
       selection_mode: 'select',
@@ -25,6 +29,7 @@ const pool = {
     router: { enabled: true, selection_mode: 'select', models: ['fixture/coding', 'fixture/reasoning'], idle_timeout_ms: 0 },
     implementer: { enabled: true, selection_mode: 'select', models: ['fixture/impl'], idle_timeout_ms: 0 },
     reviewer: { enabled: true, selection_mode: 'select', models: ['fixture/reviewer'], idle_timeout_ms: 0 },
+    compactor: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
   },
 };
 fs.writeFileSync(process.env.NLA_MODEL_POOLS_PATH, JSON.stringify(pool));
@@ -59,7 +64,7 @@ try {
     client: {
       config: { providers: async () => {
         inventoryCalls++;
-        return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
+        return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c', 'coding', 'reasoning', 'impl', 'reviewer'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
       } },
       session: {
         create: async () => ({ data: { id: `child_select_${++selectedChild}` } }),

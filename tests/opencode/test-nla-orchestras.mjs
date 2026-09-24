@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
 import { createModelInventorySync } from '../../.opencode/plugins/nla-model-inventory.mjs';
 import { materializeAutoPool, rankModelCandidates } from '../../.opencode/plugins/nla-model-selection.mjs';
 import {
-  activateOrchestra, getOrchestra, initializeOrchestras, initializeSystemDatabase,
+  activateOrchestra, configuredSelectionPreferences, getOrchestra, initializeOrchestras, initializeSystemDatabase,
   listModelRegistry, listOrchestras, saveOrchestra, setModelStatus,
-  synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, updateOrchestra,
+  saveSelectionPreferences, setSystemSetting, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, updateOrchestra,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-orchestras-'));
@@ -48,6 +49,30 @@ try {
   assert.deepEqual(activateOrchestra(file, 'command-openai'), { active: 'command-openai' });
   assert.equal(getOrchestra(file).name, 'command-openai', 'active orchestra survives reopening the database');
   assert.equal(getOrchestra(file).config.guidance, proposal.guidance);
+  setSystemSetting(file, 'routing.selection_policy.command-openai.reviewer', JSON.stringify('cost'));
+  assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), { selection_policy: 'cost' });
+  const preferences = { selection_policy: 'balanced', minimum_score: 8, cost_weight: 0.4 };
+  assert.deepEqual(saveSelectionPreferences(file, 'reviewer', 'command-openai', preferences).value, preferences);
+  assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), preferences, 'complete preference save replaces stale policy-only override');
+  setSystemSetting(file, 'routing.selection_policy.command-openai.reviewer', JSON.stringify('quality'));
+  assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), { ...preferences, selection_policy: 'quality' }, 'later policy-only setting remains supported');
+  assert.throws(() => saveSelectionPreferences(file, 'reviewer', 'command-openai', { ...preferences, cost_weight: 2 }), /cost_weight/);
+  const previousMemoryDir = process.env.NLA_MEMORY_DIR;
+  process.env.NLA_MEMORY_DIR = root;
+  let restarted;
+  try {
+    restarted = await NextLevelAgentPlugin({ directory: root, client: {} });
+    await restarted['chat.message']({ sessionID: 'primary_restart', agent: 'nla', directory: root });
+    const restored = await restarted.tool.nla_models.execute({}, { sessionID: 'primary_restart', directory: root });
+    assert.equal(restored.metadata.orchestra, 'command-openai', 'new OpenCode process loads active orchestra from SQLite');
+    const reviewer = restored.metadata.roles.find((row) => row.role === 'reviewer');
+    assert.equal(reviewer.selection_policy, 'quality');
+    assert.equal(reviewer.cost_weight, 0.4, 'new process loads saved role preferences without reevaluation');
+  } finally {
+    await restarted?.dispose();
+    if (previousMemoryDir === undefined) delete process.env.NLA_MEMORY_DIR;
+    else process.env.NLA_MEMORY_DIR = previousMemoryDir;
+  }
   const sync = createModelInventorySync({
     client: { config: { providers: async () => ({ data: { providers: [
       { id: 'openai', models: { 'gpt-new': { limit: { context: 128000 }, cost: { input: 1, output: 4 } } } },

@@ -346,6 +346,14 @@ function validateSetting(key, value) {
     if (typeof value !== 'boolean') throw new SystemDatabaseError(`${key} must be true or false`);
   } else if (/^routing\.selection_policy\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
     if (!SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`${key} must be quality, balanced, or cost`);
+  } else if (/^routing\.selection_preferences\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'cost_weight,minimum_score,selection_policy'
+      || !SELECT_POLICIES.has(value.selection_policy)
+      || typeof value.minimum_score !== 'number' || !Number.isFinite(value.minimum_score) || value.minimum_score < 0 || value.minimum_score > 10
+      || typeof value.cost_weight !== 'number' || !Number.isFinite(value.cost_weight) || value.cost_weight < 0 || value.cost_weight > 1) {
+      throw new SystemDatabaseError(`${key} requires selection_policy, minimum_score (0–10), and cost_weight (0–1)`);
+    }
   } else if (key.startsWith('operator.')) {
     // Private operator metadata has no effect on NLA routing or security.
   } else {
@@ -368,6 +376,36 @@ export function configuredSelectionPolicy(file, role, orchestra = 'go') {
   const value = getSystemSetting(file, orchestra === 'go' ? `routing.selection_policy.${role}` : `routing.selection_policy.${orchestra}.${role}`)?.value;
   if (value !== null && value !== undefined && !SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`Invalid stored selection policy for ${role}`);
   return value ?? null;
+}
+
+export function configuredSelectionPreferences(file, role, orchestra = 'go') {
+  if (!IDENTIFIER.test(role)) throw new SystemDatabaseError('Invalid role name');
+  validOrchestraName(orchestra);
+  const scope = orchestra === 'go' ? role : `${orchestra}.${role}`;
+  const saved = getSystemSetting(file, `routing.selection_preferences.${scope}`);
+  const legacy = getSystemSetting(file, `routing.selection_policy.${scope}`);
+  if (!saved) return legacy ? { selection_policy: legacy.value } : null;
+  return { ...saved.value, ...(legacy ? { selection_policy: legacy.value } : {}) };
+}
+
+export function saveSelectionPreferences(file, role, orchestra, preferences) {
+  if (!IDENTIFIER.test(role)) throw new SystemDatabaseError('Invalid role name');
+  validOrchestraName(orchestra);
+  const scope = orchestra === 'go' ? role : `${orchestra}.${role}`;
+  const key = `routing.selection_preferences.${scope}`;
+  validateSetting(key, preferences);
+  const db = openDatabase(file);
+  try {
+    return transaction(db, () => {
+      migrate(db);
+      db.prepare(`INSERT INTO system_settings (setting_key, value_json, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
+        .run(key, jsonText(preferences), now());
+      // A previously saved policy-only override must not hide this complete set.
+      db.prepare('DELETE FROM system_settings WHERE setting_key = ?').run(`routing.selection_policy.${scope}`);
+      return { key, value: preferences };
+    });
+  } finally { closeDatabase(db); }
 }
 
 export function listSystemSettings(file) {

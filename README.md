@@ -300,8 +300,9 @@ never silently replaced by another pool. `nla_task` and the primary-only
 `nla_models` tool use the same resolved object. `nla_models` reports each role's
 primary and ordered fallbacks, enabled state, source, resolution reason, and
 health without credentials. `nla_models_reload` re-reads that same source,
-validates it before replacing the in-memory snapshot, and leaves the previous
-snapshot active if validation fails.
+validates the candidate and provider inventory before saving `go` or replacing
+the in-memory snapshot, and leaves the previous orchestra active if validation
+fails. Inventory presence does not prove that a provider endpoint answers.
 
 Every role pool declares one of two modes:
 
@@ -332,12 +333,15 @@ telemetry without task or response content.
 
 `nla_models` displays mode and policy for every role. Primary NLA can call
 `nla_model_policy` to change a `select` pool's policy, quality floor, or cost
-weight immediately for new tasks without restarting OpenCode. This override is
-runtime-only. To persist a role's default policy, use `nla_system` with
-`setting_set` and key `routing.selection_policy.<role>` for `go`, or
-`routing.selection_policy.<orchestra>.<role>` for another orchestra. Editing the
-pool file and calling `nla_models_reload` changes `go` instead. Task-specific
-preferences still take precedence, subject to high-risk safeguards.
+weight immediately for new tasks without restarting OpenCode. The complete
+preference set is saved in SQLite and restored after reload or restart. For a
+policy-only persistent change, `nla_system setting_set` also accepts
+`routing.selection_policy.<role>` for `go`, or
+`routing.selection_policy.<orchestra>.<role>` for another orchestra; an explicit
+policy-only change overrides the saved policy while retaining its quality floor
+and cost weight. Editing the pool file and calling `nla_models_reload` changes
+the `go` role pools. Task-specific preferences still take precedence, subject
+to high-risk safeguards.
 
 For a fixed pool, the `models` array bounds its attempts; an auto pool uses the
 candidate list resolved at task start. There is no separate `max_failovers` or
@@ -422,7 +426,10 @@ response text. Ask NLA for
 Writable operational settings are intentionally narrow: `operator_databases.enabled`
 (boolean) controls creation of additional databases and tables, and
 `routing.selection_policy.<select-role>` (`quality`, `balanced`, or `cost`)
-persists a role's default selection policy across restart. `operator.*` holds
+persists a role's default selection policy across restart;
+`routing.selection_preferences.<select-role>` stores policy, quality floor, and
+cost weight together when changed through `nla_model_policy` (named orchestras
+prefix the role with the orchestra name). `operator.*` holds
 non-secret notes only. `system.database.*` is read-only; unknown routing or
 security settings are rejected. A task-specific policy can still override the
 role default, subject to the high-risk quality safeguard.

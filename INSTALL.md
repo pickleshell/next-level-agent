@@ -105,7 +105,8 @@ Explorer, Implementer, and Reviewer use
 `selection_mode: "select"`, while the remaining roles use ordered `fallback`.
 The select examples use `quality` for Architect and Reviewer and `balanced`
 for Explorer and Implementer. `nla_models` reports the effective policies;
-`nla_model_policy` can change one select policy for new tasks without restart,
+`nla_model_policy` persists one select role's policy and preferences in SQLite
+for new tasks without restart,
 while file-backed changes become active through `nla_models_reload`.
 Provider access still depends on the operator's OpenCode Go package and account,
 so inspect `opencode models` before a long run. Ask NLA for `nla_models` to see
@@ -152,9 +153,11 @@ evaluation JSON stops startup before seeding; repair it and retry rather than
 discarding observations. The supported writable settings are
 `operator_databases.enabled` (boolean) and
 `routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`). The
-latter changes the default policy immediately and persists across restart;
-`nla_model_policy` remains a runtime-only preference. Unknown operational
-settings and secrets are rejected.
+latter changes the default policy immediately and persists across restart.
+`nla_model_policy` saves policy, quality floor, and cost weight together under
+`routing.selection_preferences.<select-role>` (or
+`routing.selection_preferences.<orchestra>.<select-role>` for a named orchestra).
+Unknown operational settings and secrets are rejected.
 
 After startup, ask the primary NLA to run `nla_system` with `status` and
 `schema` to confirm the database and its tables. To persist a policy without
