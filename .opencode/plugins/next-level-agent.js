@@ -16,6 +16,8 @@ import {
   thresholdState, writeNotebookPage,
 } from './nla-memory.mjs';
 import { intelligentCheckpoint } from './nla-compaction.mjs';
+import { enqueueNativeCompaction } from './nla-compaction-queue.mjs';
+import { configureRequestTimeouts } from './nla-request-timeouts.mjs';
 import { configuredUtilityPool, runUtilityModel, utilityHealthEndpoint } from './nla-utility-runtime.mjs';
 import {
   optimizeInvocation, requiredRoleTools, roleCapabilityCeiling, roleIsToolFree, ROLE_TOOL_CEILINGS, toolPermissionMap,
@@ -203,13 +205,13 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const completedResults = new Map();
   const primarySessions = new Map();
   const activeChildren = new Map();
+  const primaryToolCalls = new Map();
   const compactionState = new Map();
   const sessionRoots = new Map();
   const sessionParents = new Map();
   // Browser access is a runtime principal, not a prompt convention.
   const browserPrincipals = new Map();
   const trustedBrowserEvidence = new Map();
-  let watchdog = null;
   let capabilityCache = (() => {
     try { return parseCapabilityCache(fs.readFileSync(capabilityCachePath, 'utf8')); }
     catch { return parseCapabilityCache(''); }
@@ -241,11 +243,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const rememberCompletedResult = (sessionID, result) => {
     completedResults.set(sessionID, result);
     while (completedResults.size > 128) completedResults.delete(completedResults.keys().next().value);
-  };
-
-  const touch = (sessionID) => {
-    const state = trackedSessions.get(sessionID);
-    if (state) state.lastActivity = Date.now();
   };
 
   const failover = async (sessionID, reason) => {
@@ -320,7 +317,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         error.statusCode = continuationError.statusCode ?? continuationError.status;
         throw error;
       }
-      state.lastActivity = Date.now();
       state.busy = true;
       appendRunLog({
         event: 'model_fallback_started', session_id: sessionID, agent: state.role,
@@ -379,20 +375,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     }
     state.healthClaim = false;
     state.busy = false;
-  };
-
-  const startWatchdog = () => {
-    if (watchdog) return;
-    watchdog = setInterval(() => {
-      const now = Date.now();
-      for (const [sessionID, state] of trackedSessions) {
-        if (!state.busy || state.switching || !state.pool.enabled) continue;
-        const timeout = state.pool.idle_timeout_ms || 0;
-        if (timeout > 0 && now - state.lastActivity >= timeout) {
-          void failover(sessionID, 'NLA watchdog timeout: no OpenCode progress event');
-        }
-      }
-    }, 5000);
   };
 
   // The run log is evidence from OpenCode hooks, not model-authored prose.
@@ -567,9 +549,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           continue;
         }
 
-        let timer = null;
         let onAbort = null;
-        let stopRequired = false;
         let stopConfirmed = true;
         let attemptStartedAt = null;
         try {
@@ -642,18 +622,10 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             },
             throwOnError: true,
           });
-          const timeoutMs = coordinatorOnly ? Math.min(pool.idle_timeout_ms || 30000, 30000) : pool.idle_timeout_ms || 0;
-          const waits = [request, cancellation];
-          if (timeoutMs > 0) waits.push(
-                new Promise((_, reject) => {
-                  timer = setTimeout(() => {
-                    stopRequired = true;
-                    reject(new Error(`NLA pooled task timed out after ${timeoutMs}ms`));
-                  }, timeoutMs);
-                }));
-          const result = await Promise.race(waits);
+          // This promise spans the whole agent loop, including tools. Only
+          // OpenCode's provider transport may time out individual model calls.
+          const result = await Promise.race([request, cancellation]);
           if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
-          if (timer) clearTimeout(timer);
 
           if (result.data.info && result.data.info.error) {
             const modelError = result.data.info.error;
@@ -705,8 +677,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             },
           };
         } catch (error) {
-          if (timer) clearTimeout(timer);
-          if (stopRequired && !context.abort.aborted) {
+          // A timed-out transport must be stopped before dispatching fallback.
+          if (attemptStartedAt !== null && /timed out|timeout/i.test(error?.message || '') && !context.abort.aborted) {
             try {
               await stopChildSession(childID);
             } catch {
@@ -762,7 +734,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             previous_model: modelName, model: attempts[index + 1], failover: attempted,
           });
         } finally {
-          if (timer) clearTimeout(timer);
           if (onAbort) context.abort.removeEventListener('abort', onAbort);
           healthManager.release(modelName);
         }
@@ -1050,7 +1021,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaState = tool({
-    description: 'Replace the primary NLA session ledger with a complete structured snapshot. Call after classification, approvals, milestones, blockers, and before completion.',
+    description: 'Replace the primary NLA session ledger with a complete structured snapshot. Call after classification, approvals, milestones, blockers, and before completion. Also checks context pressure and schedules checkpointed compaction at a tool-batch boundary; native OpenCode continues automatically.',
     args: {
       snapshot: tool.schema.string().describe('Complete JSON object containing intent fields plus optional repository_state and verification_evidence bound to a HEAD'),
     },
@@ -1060,6 +1031,13 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       validateLedgerIngress(ledger, context.sessionID);
       const reconciled = reconcileWorkState(ledger, context.directory || directory);
       const file = saveLedger(stateRoot, reconciled);
+      const compact = compactionState.get(context.sessionID) || {};
+      if (compact.tokens >= softContextTokens && !compact.running && !compact.awaitingAfterUsage && !compact.blocked) {
+        compact.requested = true;
+        compact.trigger = 'state_context_pressure';
+        compactionState.set(context.sessionID, compact);
+        appendRunLog({ event: 'compaction_scheduled', session_id: context.sessionID, trigger: compact.trigger });
+      }
       appendRunLog({ event: 'session_ledger_saved', session_id: context.sessionID, workflow_stage: ledger.workflow_stage, tier: ledger.tier });
       return { title: 'NLA session ledger saved', output: `Saved private session ledger. Next step: ${reconciled.next_step || 'not recorded'}\n\nRepository reconciliation:\n${JSON.stringify(reconciled.repository_state, null, 2)}`, metadata: { file, repository: reconciled.repository_state, verification: reconciled.verification_status } };
     },
@@ -1414,7 +1392,67 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     },
   });
 
-  const performCompaction = async (sessionID, trigger) => {
+  // Restore once before native auto-continue; the event reuses the same promise.
+  const restoreCompactedSession = async (sessionID) => {
+    const current = compactionState.get(sessionID) || {};
+    compactionState.set(sessionID, current);
+    if (current.restorePromise) return current.restorePromise;
+    current.restorePromise = (async () => {
+      let checkpoint = null;
+      try {
+        checkpoint = current.checkpoint || loadLedger(stateRoot, sessionID);
+      } catch (error) {
+        current.blocked = true;
+        current.restoreError = String(error && error.message || error).slice(0, 300);
+        appendRunLog({ event: 'context_restore_failed', session_id: sessionID, reason: current.restoreError });
+      }
+      let restoredOk = false;
+      if (checkpoint) {
+        const primary = primarySessions.get(sessionID) || { agent: 'nla', directory: checkpoint.directory || directory, model: defaultModel };
+        try {
+          validateLedgerIngress(checkpoint, sessionID);
+          const restored = reconcileWorkState(checkpoint, primary.directory || directory);
+          saveLedger(stateRoot, restored);
+          await client.session.prompt({
+            path: { id: sessionID },
+            query: { directory: primary.directory || directory },
+            body: { noReply: true, system: restoredSystem(restored, sessionID), parts: [{ type: 'text', text: '[NLA internal checkpoint restored]' }] },
+            throwOnError: true,
+          });
+          appendRunLog({ event: 'context_restored', session_id: sessionID, next_step: String(checkpoint.next_step || '').slice(0, 180) });
+          restoredOk = true;
+        } catch (error) {
+          current.blocked = true;
+          current.restoreError = String(error && error.message || error).slice(0, 300);
+          appendRunLog({ event: 'context_restore_failed', session_id: sessionID, reason: current.restoreError });
+        }
+      } else if (!current.restoreError) {
+        current.blocked = true;
+        current.restoreError = 'No durable checkpoint is available after compaction';
+        appendRunLog({ event: 'context_restore_failed', session_id: sessionID, reason: current.restoreError });
+      }
+      current.running = false;
+      current.awaitingEvent = false;
+      if (restoredOk) {
+        current.requested = false;
+        current.awaitingAfterUsage = true;
+        current.blocked = false;
+        current.restoreError = undefined;
+        current.level = 'normal';
+        current.noticePending = false;
+      } else {
+        current.level = 'blocked';
+        current.noticePending = false;
+        blockRestore(sessionID, { message: current.restoreError, code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
+        appendRunLog({ event: 'context_restore_blocked', session_id: sessionID, reason: current.restoreError });
+      }
+      compactionState.set(sessionID, current);
+      return restoredOk;
+    })();
+    return current.restorePromise;
+  };
+
+  const performCompaction = async (sessionID, trigger, midTurn = false) => {
     const current = compactionState.get(sessionID) || {};
     if (current.running || current.blocked || hasSystemRestoreBlock(systemDatabase, stateRoot, sessionID)) return;
     if ((activeChildren.get(sessionID) || 0) > 0 || [...activeBrowserTasks].some(key => key.startsWith(`${sessionID}:`))) {
@@ -1439,6 +1477,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       }
 
     current.running = true;
+    current.restorePromise = null;
+    current.midTurn = midTurn;
     current.requested = false;
     current.compactionCount = (current.compactionCount || 0) + 1;
     current.tokensBeforeCompaction = current.tokens || 0;
@@ -1487,7 +1527,15 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       const model = primary.model || defaultModel;
       if (!model) throw new Error('No model is available for native session summarization');
       const body = { providerID: model.providerID, modelID: model.modelID };
-      await client.session.summarize({
+      if (midTurn) {
+        await enqueueNativeCompaction({ client, sessionID, directory: primary.directory || directory, model: body,
+          onError: error => {
+            if (!current.awaitingEvent) return;
+            blockRestore(sessionID, error);
+            appendRunLog({ event: 'compaction_failed', session_id: sessionID, reason: String(error?.message || error).slice(0, 300) });
+          },
+        });
+      } else await client.session.summarize({
         path: { id: sessionID },
         query: { directory: primary.directory || directory },
         body,
@@ -1495,6 +1543,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       });
       appendRunLog({ event: 'compaction_requested', session_id: sessionID, trigger, model: `${model.providerID}/${model.modelID}`, tokens_before: current.tokensBeforeCompaction, compaction_number: current.compactionCount });
     } catch (error) {
+      if (midTurn && current.awaitingEvent) blockRestore(sessionID, error);
       current.running = false;
       current.awaitingEvent = false;
       appendRunLog({ event: 'compaction_failed', session_id: sessionID, reason: String(error && error.message || error).slice(0, 300) });
@@ -1502,7 +1551,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaCompact = tool({
-    description: 'Schedule safe native OpenCode compaction for the primary NLA session. Saves a deterministic ledger, optionally improves it with the configured Compactor role, then runs native summarization and restore at the next safe idle boundary.',
+    description: 'Schedule safe native OpenCode compaction for the primary NLA session. Saves a deterministic ledger, optionally improves it with the configured Compactor role, then queues native summarization at a safe tool-batch boundary with automatic continuation. Idle remains a fallback.',
     args: {
       snapshot: tool.schema.string().describe('Complete current NLA ledger JSON, using the same schema as nla_state'),
       reason: tool.schema.string().max(240).optional().describe('Why compaction is needed'),
@@ -1517,7 +1566,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       current.trigger = args.reason || 'manual_model_request';
       compactionState.set(context.sessionID, current);
       appendRunLog({ event: 'compaction_scheduled', session_id: context.sessionID, trigger: current.trigger });
-      return { title: 'NLA compaction scheduled', output: 'Deterministic checkpoint saved. An available configured Compactor may improve it before native summarization and restore run after this response at the next safe idle boundary. Any Compactor failure falls back to this checkpoint. Do not start another task before the compaction events complete.' };
+      return { title: 'NLA compaction scheduled', output: 'Deterministic checkpoint saved. Compaction is queued at the next safe tool-batch boundary, followed by checkpoint restoration and native automatic continuation. An unavailable Compactor falls back to this checkpoint. Do not request the same compaction again.' };
     },
   });
 
@@ -1597,6 +1646,11 @@ ${toolMapping}
     // here are visible when skills are lazily discovered later.
     config: async (config) => {
       liveConfig = config;
+      configureRequestTimeouts(config, [
+        config.model,
+        ...Object.values(pools).flatMap(pool => Array.isArray(pool.models) ? pool.models : []),
+        ...listModelRegistry(systemDatabase).map(record => record.binding),
+      ]);
       applyCoordinatorModel();
       defaultAgent = config.default_agent || defaultAgent;
       defaultModel = typeof config.model === 'string' ? splitModel(config.model) : defaultModel;
@@ -1659,10 +1713,8 @@ ${toolMapping}
             failovers: 0,
             busy: true,
             switching: false,
-            lastActivity: Date.now(),
           });
           appendRunLog({ event: 'model_pool_attached', session_id: props.info.id, parent_session_id: props.info.parentID, agent: role, model: configuredModel, model_attribution: observedModel ? 'observed' : 'pool_default' });
-          startWatchdog();
         }
       }
       if (event.type === 'session.status' && props.sessionID) {
@@ -1670,17 +1722,23 @@ ${toolMapping}
         if (state) {
           if (props.status?.type === 'idle') finishTrackedSession(state);
           else if (!state.switching) state.busy = true;
-          touch(props.sessionID);
         }
       }
-      if (event.type === 'message.part.updated' && props.part && props.part.sessionID) touch(props.part.sessionID);
+      if (event.type === 'message.part.updated' && props.part && props.part.sessionID) {
+        // Failed tools do not necessarily emit tool.execute.after.
+        if (props.part.type === 'tool' && props.part.state?.status === 'error') {
+          const calls = primaryToolCalls.get(props.part.sessionID);
+          calls?.delete(props.part.callID);
+          if (calls && !calls.size) primaryToolCalls.delete(props.part.sessionID);
+        }
+      }
       if (event.type === 'message.updated' && props.info) recordMessageUsage(props.info);
       if (event.type === 'message.updated' && props.info && primarySessions.get(props.info.sessionID)?.agent === 'nla') {
         const sessionID = props.info.sessionID;
         const tokens = contextTokens(props.info);
         const level = thresholdState(tokens, softContextTokens, hardContextTokens);
         const current = compactionState.get(sessionID) || {};
-        current.tokens = tokens;
+        if (tokens > 0 && !props.info.summary && !current.running && !current.awaitingEvent) current.tokens = tokens;
         const primary = primarySessions.get(sessionID);
         const model = primary.model || defaultModel;
         const compactionSummaryInFlight = current.running || current.awaitingEvent;
@@ -1698,12 +1756,12 @@ ${toolMapping}
           current.lastLoggedTokens = tokens;
           current.awaitingAfterUsage = false;
         }
-        if (level !== 'normal' && current.level !== level) {
+        if (!compactionSummaryInFlight && !props.info.summary && tokens > 0 && level !== 'normal' && current.level !== level) {
           current.level = level;
           current.noticePending = true;
           appendRunLog({ event: 'context_threshold', session_id: sessionID, level, tokens, soft: softContextTokens, hard: hardContextTokens });
         }
-        if (level === 'hard') {
+        if (level === 'hard' && !compactionSummaryInFlight && !props.info.summary) {
           current.requested = true;
           current.trigger = 'automatic_hard_threshold';
         }
@@ -1725,61 +1783,14 @@ ${toolMapping}
           tokens_before: current.tokensBeforeCompaction,
           compaction_number: current.compactionCount || 1,
         });
-        let checkpoint = null;
-        try {
-          checkpoint = current.checkpoint || loadLedger(stateRoot, props.sessionID);
-        } catch (error) {
-          current.blocked = true;
-          current.restoreError = String(error && error.message || error).slice(0, 300);
-          appendRunLog({ event: 'context_restore_failed', session_id: props.sessionID, reason: current.restoreError });
-        }
-        let restoredOk = false;
-        if (checkpoint) {
-          const primary = primarySessions.get(props.sessionID) || { agent: 'nla', directory: checkpoint.directory || directory, model: defaultModel };
-          try {
-            validateLedgerIngress(checkpoint, props.sessionID);
-            const restored = reconcileWorkState(checkpoint, primary.directory || directory);
-            saveLedger(stateRoot, restored);
-            await client.session.prompt({
-              path: { id: props.sessionID },
-              query: { directory: primary.directory || directory },
-              body: { noReply: true, system: restoredSystem(restored, props.sessionID), parts: [{ type: 'text', text: '[NLA internal checkpoint restored]' }] },
-              throwOnError: true,
-            });
-            appendRunLog({ event: 'context_restored', session_id: props.sessionID, next_step: String(checkpoint.next_step || '').slice(0, 180) });
-            restoredOk = true;
-          } catch (error) {
-            current.blocked = true;
-            current.restoreError = String(error && error.message || error).slice(0, 300);
-            appendRunLog({ event: 'context_restore_failed', session_id: props.sessionID, reason: current.restoreError });
-          }
-        } else if (!current.restoreError) {
-          current.blocked = true;
-          current.restoreError = 'No durable checkpoint is available after compaction';
-          appendRunLog({ event: 'context_restore_failed', session_id: props.sessionID, reason: current.restoreError });
-        }
-        current.running = false;
-        current.awaitingEvent = false;
-        if (restoredOk) {
-          current.blocked = false;
-          current.restoreError = undefined;
-          current.level = 'normal';
-          current.noticePending = false;
-        } else {
-          current.level = 'blocked';
-          current.noticePending = false;
-          blockRestore(props.sessionID, { message: current.restoreError, code: 'NLA_CONTEXT_RESTORE_BLOCKED' });
-          appendRunLog({ event: 'context_restore_blocked', session_id: props.sessionID, reason: current.restoreError });
-        }
-        compactionState.set(props.sessionID, current);
-        touch(props.sessionID);
+        await restoreCompactedSession(props.sessionID);
       }
       if (event.type === 'session.error' && props.sessionID) void failover(props.sessionID, props.error);
       if (event.type === 'session.idle' && props.sessionID) {
+        primaryToolCalls.delete(props.sessionID);
         const state = trackedSessions.get(props.sessionID);
         if (state) {
           finishTrackedSession(state);
-          touch(props.sessionID);
         }
         const compact = compactionState.get(props.sessionID);
         if (compact && compact.requested && !compact.running) void performCompaction(props.sessionID, compact.trigger || 'scheduled');
@@ -1826,6 +1837,11 @@ ${toolMapping}
       assertExecutionAllowed(input.sessionID);
       const managedRole = trackedSessions.has(input.sessionID) || primarySessions.get(input.sessionID)?.agent === 'nla';
       if (input.tool === 'bash' && managedRole) assertSafeNlaShellCommand(output.args?.command);
+      if (primarySessions.get(input.sessionID)?.agent === 'nla') {
+        const calls = primaryToolCalls.get(input.sessionID) || new Set();
+        calls.add(input.callID);
+        primaryToolCalls.set(input.sessionID, calls);
+      }
       if (input.tool === 'task') {
         const args = output.args || {};
         const role = args.subagent_type || args.agent || args.type;
@@ -1846,6 +1862,13 @@ ${toolMapping}
     },
 
     'tool.execute.after': async (input) => {
+      const calls = primaryToolCalls.get(input.sessionID);
+      calls?.delete(input.callID);
+      if (calls && !calls.size) primaryToolCalls.delete(input.sessionID);
+      const compact = compactionState.get(input.sessionID);
+      if (primarySessions.get(input.sessionID)?.agent === 'nla' && compact?.requested && !compact.running && !primaryToolCalls.has(input.sessionID)) {
+        await performCompaction(input.sessionID, compact.trigger || 'tool_boundary', true);
+      }
       if (!['skill', 'task', 'nla_task', 'nla_state', 'nla_models', 'nla_models_reload', 'nla_usage', 'nla_model_policy', 'nla_model_health_reset', 'nla_system', 'nla_models_registry', 'nla_orchestra', 'nla_work_state', 'nla_notebook', 'nla_compact'].includes(input.tool)) return;
       appendRunLog({
         event: input.tool === 'skill' ? 'skill_finished' : 'subagent_finished',
@@ -1853,6 +1876,26 @@ ${toolMapping}
         call_id: input.callID,
         tool: input.tool,
       });
+    },
+
+    'experimental.session.compacting': async ({ sessionID }, output) => {
+      if (primarySessions.get(sessionID)?.agent !== 'nla') return;
+      assertExecutionAllowed(sessionID);
+      const current = compactionState.get(sessionID) || {};
+      if (!current.running) {
+        current.restorePromise = null;
+        current.checkpoint = null; // Native compaction must load the latest ledger.
+      }
+      compactionState.set(sessionID, current);
+      const ledger = current.checkpoint || loadLedger(stateRoot, sessionID);
+      if (ledger) {
+        validateLedgerIngress(ledger, sessionID);
+        output.context.push(restoredSystem(ledger, sessionID));
+      }
+    },
+    'experimental.compaction.autocontinue': async ({ sessionID }, output) => {
+      if (primarySessions.get(sessionID)?.agent !== 'nla') return;
+      if (!await restoreCompactedSession(sessionID)) output.enabled = false;
     },
 
     // Inject bootstrap into the first user message of each session.
@@ -1866,6 +1909,7 @@ ${toolMapping}
     // repeated disk work.
     'experimental.chat.messages.transform': async (_input, output) => {
       const browserChild = output.messages.find(m => m.info.role === 'user')?.info?.sessionID;
+      if (browserChild) assertExecutionAllowed(browserChild);
       if (browserCapability.children.has(browserChild)) return;
       const knownSession = _input && _input.sessionID && primarySessions.get(_input.sessionID);
       if (knownSession && knownSession.agent !== 'nla') return;
@@ -1892,8 +1936,6 @@ ${toolMapping}
 
     dispose: async () => {
       await browserCapability.dispose();
-      if (watchdog) clearInterval(watchdog);
-      watchdog = null;
       trackedSessions.clear();
       completedResults.clear();
       sessionParents.clear();
@@ -1901,6 +1943,7 @@ ${toolMapping}
       taskArgumentFailures.clear();
       primarySessions.clear();
       activeChildren.clear();
+      primaryToolCalls.clear();
       compactionState.clear();
       sessionRoots.clear();
       browserPrincipals.clear();
