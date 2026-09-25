@@ -19,7 +19,7 @@ const pool = {
     nla: { enabled: false, selection_mode: 'fallback', models: ['fixture/a'] },
     supervisor: { enabled: true, selection_mode: 'auto', models: ['fixture/a'] },
     scout: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
-    explorer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
+    explorer: { enabled: true, selection_mode: 'auto', models: [] },
     architect: {
       enabled: true,
       selection_mode: 'select',
@@ -59,9 +59,12 @@ try {
   const selectedCalls = [];
   let selectedChild = 0;
   let inventoryCalls = 0;
+  const abortedSessions = [];
+  let repairAction = 'omit_review_target';
   instance = await NextLevelAgentPlugin({
     directory: root,
     client: {
+      tool: { list: async () => ({ data: ['read', 'grep', 'glob'].map((id) => ({ id, parameters: { type: 'object' } })) }) },
       config: { providers: async () => {
         inventoryCalls++;
         return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c', 'coding', 'reasoning', 'impl', 'reviewer'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
@@ -70,9 +73,9 @@ try {
         create: async () => ({ data: { id: `child_select_${++selectedChild}` } }),
         prompt: async (request) => {
           selectedCalls.push({ agent: request.body.agent, model: request.body.model });
-          return { data: { parts: [{ type: 'text', text: 'selected result' }] } };
+          return { data: { parts: [{ type: 'text', text: request.body.parts[0].text.startsWith('Check a malformed delegation.') ? JSON.stringify({ action: repairAction }) : 'selected result' }] } };
         },
-        abort: async () => ({ data: true }),
+        abort: async (request) => { abortedSessions.push(request.path.id); return { data: true }; },
       },
     },
   });
@@ -151,6 +154,57 @@ try {
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'invalid review target role', prompt: 'must not dispatch', review_target_session_id: selected.metadata.sessionID }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal }), /review_target_session_id/);
   assert.equal(selectedCalls.length, callsBeforeInvalidReviewTarget, 'non-reviewer review target is rejected before model dispatch');
   assert.deepEqual(evaluationStore(), beforeInvalidReviewTarget, 'invalid review target role does not mutate evaluation state');
+  const blankTask = {
+    role: 'explorer', description: 'Repository discovery', prompt: 'Read-only inspect repository files',
+    selection_weights: '', context_window: '  ', selection_policy: '', minimum_score: '',
+    review_target_session_id: '', browser_task_id: '', browser: '',
+  };
+  const beforeBlankCalls = selectedCalls.length;
+  const blankResult = await instance.tool.nla_task.execute(blankTask, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(selectedCalls.length, beforeBlankCalls + 1, 'blank optional fields reach a real child dispatch');
+  assert.equal(blankResult.metadata.model, 'fixture/b', 'Explorer auto selection ranks the inventory after normalization');
+  assert.equal(blankTask.review_target_session_id, '', 'normalization must not mutate caller-owned arguments');
+  const dispatchesBeforeRejection = selectedCalls.length;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await assert.rejects(instance.tool.nla_task.execute({ ...blankTask, description: `changed title ${attempt}`, prompt: `changed private packet ${attempt}`, review_target_session_id: 'real-session-id' }, { sessionID: 'primary_select', directory: root }), (error) => {
+      assert.equal(error.code, 'NLA_TASK_ARGUMENTS_INVALID');
+      assert.equal(error.retryable, false);
+      return true;
+    });
+    assert.equal(abortedSessions.length, 0, 'argument errors never stop the coordinator');
+  }
+  assert.equal(selectedCalls.length, dispatchesBeforeRejection, 'invalid Reviewer ID never dispatches an Explorer model');
+  const repaired = await instance.tool.nla_task.execute({ ...blankTask, review_target_session_id: 'real-session-id' }, { sessionID: 'primary_select', directory: root });
+  assert.equal(repaired.metadata.role, 'explorer');
+  assert.deepEqual(selectedCalls.slice(-2).map(call => call.agent), ['supervisor', 'explorer'], 'coordinator-backed Supervisor approves repair before Explorer dispatch');
+  assert.equal(selectedCalls.at(-2).model.modelID, 'b', 'repair uses the observed coordinator, not Supervisor pool ranking');
+  assert.equal(abortedSessions.length, 0);
+  const rejectionEvents = fs.readFileSync(path.join(root, '.opencode', 'agent-run.log'), 'utf8').trim().split('\n').map(JSON.parse).filter((entry) => entry.event === 'task_arguments_rejected');
+  assert.deepEqual(rejectionEvents.slice(-3).map((entry) => entry.failure_count), [1, 2, 3]);
+  assert.ok(!JSON.stringify(rejectionEvents).includes('real-session-id') && !JSON.stringify(rejectionEvents).includes('private packet'), 'validation telemetry excludes parameter values and task content');
+  const recovered = await instance.tool.nla_task.execute(blankTask, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
+  assert.equal(recovered.metadata.model, 'fixture/b', 'corrected arguments recover without restart or health reset');
+  await assert.rejects(instance.tool.nla_task.execute({ ...blankTask, review_target_session_id: 'real-session-id' }, { sessionID: 'primary_select', directory: root }), (error) => error.code === 'NLA_TASK_ARGUMENTS_INVALID');
+  assert.equal(abortedSessions.length, 0, 'a valid call resets the rejection counter');
+  await instance['chat.message']({ sessionID: 'other_primary', agent: 'nla', directory: root, model: { providerID: 'fixture', modelID: 'b' } });
+  await assert.rejects(instance.tool.nla_task.execute({ ...blankTask, review_target_session_id: 'real-session-id' }, { sessionID: 'other_primary', directory: root }), (error) => error.code === 'NLA_TASK_ARGUMENTS_INVALID');
+  assert.equal(abortedSessions.length, 0, 'validation counters are isolated between sessions');
+  const beforeBrowserReject = selectedCalls.length;
+  const beforeRejectedScores = evaluationStore();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await assert.rejects(instance.tool.nla_task.execute({ ...blankTask, browser_task_id: 'owned-browser-task' }, { sessionID: 'other_primary', directory: root }), (error) => error.reason === 'browser_arguments_role_mismatch');
+  }
+  assert.equal(selectedCalls.length, beforeBrowserReject, 'nonempty Browser fields cannot dispatch another role');
+  assert.deepEqual(evaluationStore(), beforeRejectedScores, 'local argument failures never penalize model scores');
+  const stopEvents = fs.readFileSync(path.join(root, '.opencode', 'agent-run.log'), 'utf8').trim().split('\n').map(JSON.parse).filter((entry) => entry.event.startsWith('task_argument_loop_'));
+  assert.equal(stopEvents.length, 0, 'no session stop is requested for argument failures');
+  repairAction = 'blocked';
+  const beforeDeclined = selectedCalls.length;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    await assert.rejects(instance.tool.nla_task.execute({ ...blankTask, review_target_session_id: 'real-session-id' }, { sessionID: 'other_primary', directory: root }), /NLA_TASK_ARGUMENTS_INVALID/);
+  }
+  assert.equal(selectedCalls.length, beforeDeclined + 1, 'a declined repair is attempted once, not on every repeated call');
+  assert.equal(abortedSessions.length, 0, 'declined recovery leaves the session usable for corrected work');
   await instance.dispose();
   instance = null;
 
@@ -200,6 +254,8 @@ try {
     },
   });
   await instance['chat.message']({ sessionID: 'primary_review', agent: 'nla', directory: root });
+  const unscoredReview = await instance.tool.nla_task.execute({ role: 'reviewer', description: 'review without scoring target', prompt: 'review fixture', review_target_session_id: ' \t ' }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
+  assert.equal(unscoredReview.metadata.model, 'fixture/reviewer', 'blank review target means ordinary review without score attribution');
   const implementation = await instance.tool.nla_task.execute({ role: 'implementer', description: 'implementation fixture', prompt: 'bounded implementation' }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
   const targetID = implementation.metadata.sessionID;
   await instance.tool.nla_task.execute({ role: 'reviewer', description: 'review fixture', prompt: 'return strict review JSON', review_target_session_id: targetID }, { sessionID: 'primary_review', directory: root, abort: new AbortController().signal });
@@ -255,6 +311,50 @@ try {
   for (const binding of ['fixture/a', 'fixture/b', 'fixture/c']) await instance.tool.nla_model_health_reset.execute({ binding }, { sessionID: 'primary_protocol_failure', directory: root });
   await assert.rejects(instance.tool.nla_task.execute({ role: 'architect', description: 'protocol failure fixture', prompt: 'bounded task' }, { sessionID: 'primary_protocol_failure', directory: root, abort: new AbortController().signal }), /failed/);
   assert.deepEqual(evaluationStore(), beforeProtocolFailure, 'deterministic message-validation failure does not record model reliability');
+  await instance.dispose();
+  instance = null;
+
+  // A fixed pool can use the observed coordinator as a final reserve, without
+  // changing the delegated role, prompt or tool permissions.
+  for (const scenario of ['success', 'unknown', 'disabled', 'local', 'context', 'reserve-fails', 'preparation']) {
+    process.env.NLA_MEMORY_DIR = path.join(root, `reserve-${scenario}`);
+    const calls = [];
+    instance = await NextLevelAgentPlugin({ directory: root, client: {
+      config: { providers: async () => ({ data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c', 'coding', 'reasoning', 'impl', 'reviewer'].map(id => [id, { limit: { context: 131072 } }])) }] } }) },
+      tool: { list: async () => {
+        if (scenario === 'preparation') throw new Error('local tool catalog unavailable');
+        return { data: ['read', 'grep', 'glob', 'webfetch'].map(id => ({ id, parameters: { type: 'object' } })) };
+      } },
+      session: {
+        create: async () => ({ data: { id: `reserve-child-${scenario}` } }),
+        abort: async () => ({ data: true }),
+        prompt: async request => {
+          calls.push(request.body);
+          if (request.body.model.modelID !== 'b' || scenario === 'reserve-fails') throw new Error(scenario === 'unknown' ? 'unclassified model protocol failure' : '503 service unavailable');
+          return { data: { parts: [{ type: 'text', text: 'reserve success' }] } };
+        },
+      },
+    } });
+    const context = { sessionID: `reserve-primary-${scenario}`, directory: root, abort: new AbortController().signal };
+    await instance['chat.message']({ ...context, agent: 'nla', model: { providerID: 'fixture', modelID: 'b' } });
+    if (scenario === 'disabled') await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'off' }, context);
+    if (scenario === 'context') await instance.tool.nla_models_registry.execute({ action: 'import', json: JSON.stringify({ models: { 'fixture/b': { facts: { context_window: 1024 } } } }) }, context);
+    const args = { role: 'scout', description: 'Inspect a file', prompt: 'Read README only; make no changes.', ...(scenario === 'local' ? { selection_policy: 'local' } : {}), ...(scenario === 'context' ? { context_window: '20000' } : {}) };
+    if (['success', 'unknown'].includes(scenario)) {
+      const result = await instance.tool.nla_task.execute(args, context);
+      assert.equal(result.metadata.model, 'fixture/b');
+      assert.equal(result.metadata.coordinator_fallback, true);
+      assert.deepEqual(calls.map(call => call.model.modelID), ['a', 'b']);
+      assert.ok(calls.every(call => call.agent === 'scout' && call.parts[0].text === args.prompt));
+      assert.deepEqual(calls[1].tools, calls[0].tools, 'reserve retains role tool boundaries');
+    } else {
+      await assert.rejects(instance.tool.nla_task.execute(args, context));
+      assert.equal(calls.filter(call => call.model.modelID === 'b').length, scenario === 'reserve-fails' ? 1 : 0);
+      if (scenario === 'preparation') assert.equal(calls.length, 0);
+    }
+    await instance.dispose();
+    instance = null;
+  }
 } finally {
   await instance?.dispose();
   if (oldPool === undefined) delete process.env.NLA_MODEL_POOLS_PATH; else process.env.NLA_MODEL_POOLS_PATH = oldPool;

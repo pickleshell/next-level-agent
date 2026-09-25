@@ -7,6 +7,19 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Delegation argument recovery
+
+- Treat blank optional `nla_task` fields as absent so Explorer and other roles
+  reach model selection when a model supplies an empty Reviewer target.
+- Preserve Reviewer/Browser argument boundaries and tell the coordinator to
+  omit unused fields and correct invalid arguments before retrying.
+- Log role-argument validation failures without task content. Repeated misplaced
+  Reviewer targets receive one bounded Supervisor repair attempt using the
+  current coordinator model; argument errors never abort the primary session.
+- Use the observed coordinator model as a final agent-task reserve, at most
+  once, respecting registry/provider status, health, context and local policy.
+  Preserve role permissions and cancellation/unsafe-retry safeguards.
+
 ### Named orchestras and dynamic model pools
 
 - Preserve the original role and model configuration as the durable `go`

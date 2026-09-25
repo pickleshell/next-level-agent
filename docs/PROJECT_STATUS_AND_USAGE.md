@@ -622,6 +622,33 @@ NLA creates private state directories with mode `0700` and state files with mode
 
 ## Reading Telemetry
 
+`nla_task` treats empty or whitespace-only optional string arguments as absent.
+Omit unused fields when delegating. A nonempty `review_target_session_id` is
+Reviewer-only; nonempty `browser` and `browser_task_id` are Browser-only.
+Role-argument validation failures occur before model selection and are recorded
+as `task_arguments_rejected`, with a reason code and failure count, without
+argument values or task text. They do not affect model health or quality scores.
+
+After three consecutive misplaced Reviewer-target errors, NLA asks the actual
+coordinator model in a separate tool-free Supervisor session whether removing
+that field preserves the task. This repair has a 30-second maximum and runs once
+per consecutive error sequence. A strict JSON approval permits resubmission of
+the unchanged role and prompt without the Reviewer-only field. Browser contracts
+are never stripped. Failed or declined repair returns an explicit error without
+aborting the primary session. Corrected calls clear process-local counters.
+The coordinator must not repeat unchanged invalid calls; this is bounded repair,
+not a guarantee against every possible model-generated loop.
+
+Agent tasks also use the observed primary-session model as a final reserve after
+ordinary eligible candidates fail. It runs at most once per task, with the same
+role, prompt and tool boundaries. This is an explicit exception to fixed-pool
+membership, not a pool configuration change. Registry/provider switches, runtime
+inventory, health, required context and `local` policy still apply. Cancellation,
+unconfirmed child termination and unsafe Browser retries do not trigger reserve
+execution. Utility-runtime calls and failover of the coordinator itself are not
+covered. Events include `coordinator_fallback_started`,
+`task_argument_recovery_started`, `task_arguments_repaired`, and repair failures.
+
 Find failed model attempts:
 
 ```bash

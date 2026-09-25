@@ -179,6 +179,11 @@ not the default provider state of a fresh installation.
 
 ### Named orchestras and auto pools
 
+Agent tasks have one final reserve: the current coordinator model, if eligible.
+This does not change saved pools or role permissions; provider/model switches,
+health, context requirements and the `local` policy still apply. The reserve is
+tried at most once, including when it already belongs to the role's pool.
+
 An **orchestra** is a saved set of roles, model pools, and selection policies.
 The original Go-based configuration is saved as `go` on first startup. NLA
 stores orchestras and the active name in its private `system.sqlite`; switching
