@@ -234,6 +234,50 @@ For a small one-file correction, NLA should select Tier 1, make the bounded edit
 
 ## Evidence from a Real Compaction Run
 
+### Child context recovery (2026-09-25)
+
+Agent-role work has no lifetime timeout. Context/output limits are a separate
+condition: `finish: length` is incomplete even with partial text, and a typed
+`ContextOverflowError` is not a provider outage. NLA distinguishes known context
+exhaustion from an output limit using the effective context and usage; unknown
+limits are not guessed. Native OpenCode auto-compaction is the first line of
+recovery. If the child loop returns incomplete, NLA awaits one explicit
+`summarize(auto:false)`, verifies a fresh complete summary, and resumes the same
+assignment in the same child with the same role permissions. Empty final text
+gets one continuation without assuming context overflow. A repeated incomplete
+result or failed compaction can advance to the remaining eligible pool candidates
+only after confirmed child stop; it does not skip directly to a paid coordinator
+under `free`, and it does not lower reliability or start a cooldown.
+
+The existing durable OpenCode message/tool journal is the recovery evidence;
+NLA does not invent a new primary ledger for children or copy tool outputs into
+telemetry. The compaction prompt retains scope, constraints, changed-file/tool
+evidence, uncertainties and next step. Continuing models must inspect the actual
+worktree and distinguish recorded from reproduced tests. Final failure includes
+the child session ID and a warning about possible prior modifications.
+
+Verify local model limits separately: Ollama `/api/ps` reports the loaded
+`context_length`; `/api/show` may report a much larger architectural maximum.
+Set OpenCode `provider.ollama.models.<id>.limit.context` to the effective value
+and choose an output budget with headroom. For an effective 65536-token window,
+`limit: { context: 65536, input: 65536, output: 16384 }` is a conservative example,
+not a universal model specification. Keep registry `context_window` consistent.
+Do not add machine-specific bindings or these operator settings to public defaults.
+OpenCode 1.18.9 does not automatically detect overflow when context is zero.
+
+Regression tests cover partial-text truncation, reasoning-only/empty results,
+bounded recovery, failed compaction, confirmed-stop failover, cancellation and
+preserved changes. The isolated real-runtime smoke runs in two modes:
+
+```bash
+node tests/opencode/smoke-nla-child-recovery.mjs
+node tests/opencode/smoke-nla-child-recovery.mjs --unknown-context
+```
+
+Both verified `delegate → write → length → summary → recovered → final report`
+with OpenCode 1.18.9 and a local deterministic endpoint. This proves sequencing
+and artifact preservation, not model quality or independent acceptance.
+
 ### Tool-boundary compaction (2026-09-25)
 
 `nla_state` now schedules compaction when the latest known usage reaches

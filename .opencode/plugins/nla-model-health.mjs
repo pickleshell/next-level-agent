@@ -24,6 +24,7 @@ export function unavailablePoolError(selection, label, attempted = 0) {
 }
 
 export function classifyProviderError(error, now = Date.now()) {
+  if (error?.code === 'NLA_CHILD_INCOMPLETE') return { category: 'incomplete', reason: `child_${error.recoveryReason || 'incomplete'}`, retryAfterMs: 0 };
   const data = error?.data || error?.cause?.data || error || {};
   const text = String(data.message || error?.message || error || '');
   const lower = text.toLowerCase();

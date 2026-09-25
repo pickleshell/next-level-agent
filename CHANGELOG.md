@@ -7,6 +7,19 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Recover incomplete child results
+
+- Distinguish context/output exhaustion and missing final text from provider
+  failure; never treat truncated partial text as completed work.
+- Attempt one same-model recovery per pool candidate, validate fresh native
+  compaction summaries, and preserve the child journal and role/tool boundaries.
+- Try remaining eligible pool models after confirmed stop instead of skipping
+  straight to the coordinator; preserve free/local and Browser safety boundaries.
+- Do not penalize health/reliability for incomplete-result recovery. Final errors
+  identify the child session and possible prior file changes.
+- Document effective local context limits and add deterministic and real
+  OpenCode smoke regressions for native and explicit child recovery.
+
 ### Model-request timeout boundary
 
 - Remove wall-clock subagent deadlines and the session-inactivity watchdog;

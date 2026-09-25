@@ -18,6 +18,7 @@ import {
 import { intelligentCheckpoint } from './nla-compaction.mjs';
 import { enqueueNativeCompaction } from './nla-compaction-queue.mjs';
 import { configureRequestTimeouts } from './nla-request-timeouts.mjs';
+import { CHILD_RECOVERY_GUIDANCE, childRecoveryError, incompleteChildResult, recoverChildResult } from './nla-child-recovery.mjs';
 import { configuredUtilityPool, runUtilityModel, utilityHealthEndpoint } from './nla-utility-runtime.mjs';
 import {
   optimizeInvocation, requiredRoleTools, roleCapabilityCeiling, roleIsToolFree, ROLE_TOOL_CEILINGS, toolPermissionMap,
@@ -205,6 +206,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   const completedResults = new Map();
   const primarySessions = new Map();
   const activeChildren = new Map();
+  const childTaskRoles = new Map();
   const primaryToolCalls = new Map();
   const compactionState = new Map();
   const sessionRoots = new Map();
@@ -525,6 +527,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         throwOnError: true,
       });
       const childID = created.data.id;
+      childTaskRoles.set(childID, args.role);
       if (context.browserSession) browserCapability.bind(context.browserSession, childID);
       sessionRoots.set(childID, sessionRoots.get(context.sessionID) || context.sessionID);
       activeChildren.set(context.sessionID, (activeChildren.get(context.sessionID) || 0) + 1);
@@ -611,20 +614,44 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           attemptStartedAt = Date.now();
           if ((reserveAdded || coordinatorEscalated) && modelName === reserve) appendRunLog({ event: 'coordinator_fallback_started', session_id: childID, parent_session_id: context.sessionID, agent: args.role, model: modelName, attempt: attempted, reason: coordinatorOnly ? 'argument_recovery' : coordinatorEscalated ? 'model_protocol_failure' : 'role_pool_exhausted' });
           appendRunLog({ event: 'model_attempt_started', session_id: childID, parent_session_id: context.sessionID, agent: args.role, model: modelName, attempt: attempted });
-          const request = client.session.prompt({
+          const invoke = (continuation = false) => client.session.prompt({
             path: { id: childID },
             query: { directory: context.directory || directory },
             body: {
               agent: args.role,
               model,
               tools: invocationTools,
-              parts: [{ type: 'text', text: optimized.prompt }],
+              parts: [
+                { type: 'text', text: optimized.prompt },
+                ...(continuation ? [{ type: 'text', text: CHILD_RECOVERY_GUIDANCE }] : []),
+              ],
             },
             throwOnError: true,
           });
           // This promise spans the whole agent loop, including tools. Only
           // OpenCode's provider transport may time out individual model calls.
-          const result = await Promise.race([request, cancellation]);
+          const initial = await Promise.race([invoke(index > 0), cancellation]);
+          const contextWindow = pool.model_facts?.[modelName]?.context_window || 0;
+          if (context.browserSession && incompleteChildResult(initial, contextWindow)) throw childRecoveryError('browser_result_incomplete');
+          const result = await Promise.race([recoverChildResult({
+            initial, contextWindow, signal: context.abort,
+            invoke: () => invoke(true),
+            compact: async () => {
+              const messages = async () => {
+                const response = await client.session.messages({ path: { id: childID }, query: { directory: context.directory || directory, limit: 100 }, throwOnError: true, signal: AbortSignal.timeout(5000) });
+                if (!Array.isArray(response?.data)) throw new Error('Child message inventory unavailable');
+                return response.data;
+              };
+              const before = new Set((await messages()).filter(m => m.info?.summary).map(m => m.info.id));
+              if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
+              const summary = await client.session.summarize({ path: { id: childID }, query: { directory: context.directory || directory }, body: { ...model, auto: false }, throwOnError: true });
+              if (summary?.error || summary?.data !== true) throw new Error('Child compaction did not complete');
+              const after = await messages();
+              const fresh = after.filter(m => m.info?.summary && !before.has(m.info.id)).at(-1);
+              if (!fresh || fresh.info.error || fresh.info.finish === 'length' || !fresh.parts?.some(p => p.type === 'text' && p.text?.trim())) throw new Error('Child compaction has no verified complete summary');
+            },
+            report: (event, reason) => appendRunLog({ event, session_id: childID, parent_session_id: context.sessionID, agent: args.role, model: modelName, reason }),
+          }), cancellation]);
           if (context.abort.aborted) throw new Error('NLA pooled task aborted by caller');
 
           if (result.data.info && result.data.info.error) {
@@ -678,7 +705,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           };
         } catch (error) {
           // A timed-out transport must be stopped before dispatching fallback.
-          if (attemptStartedAt !== null && /timed out|timeout/i.test(error?.message || '') && !context.abort.aborted) {
+          if (attemptStartedAt !== null && (error?.code === 'NLA_CHILD_INCOMPLETE' || /timed out|timeout/i.test(error?.message || '')) && !context.abort.aborted) {
             try {
               await stopChildSession(childID);
             } catch {
@@ -718,7 +745,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             break;
           }
           if (attemptStartedAt !== null && stopConfirmed && runtimeFailureIsModelEvidence(classification)) recordRuntimeEvaluation(modelName, false, Date.now() - attemptStartedAt);
-          if (!['transient', 'defective', 'configuration'].includes(health.category)) {
+          if (!['transient', 'defective', 'configuration', 'incomplete'].includes(health.category)) {
             // A completed model call can fail with an unclassified protocol
             // error. Escalate once to the coordinator, never replay application
             // errors, preparation failures, cancellation or unsafe Browser work.
@@ -754,7 +781,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         }
       }
       if (!attempted && !lastError) throw unavailablePoolError(healthManager.candidates(pool.models, maxAttempts), `NLA pooled task ${args.role}`);
-      const failure = new Error(`NLA pooled task failed for ${args.role} after ${attempted} model attempt(s): ${reason}`);
+      const failure = new Error(`NLA pooled task failed for ${args.role} after ${attempted} model attempt(s): ${reason}. Child session: ${childID}. Prior tools may have changed files; inspect this session and the worktree before reporting progress or resuming. Missing final report does not mean no changes.`);
       failure.code = lastError?.code || (!attempted ? 'NLA_TASK_PREPARATION_FAILED' : undefined);
       if (!attempted) failure.message = `NLA pooled task preparation failed for ${args.role}; no model request was started: ${reason}`;
       failure.attempted = attempted;
@@ -763,10 +790,12 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
 
   const pooledTaskWithTracking = async (args, context, coordinatorOnly = false) => {
     let childCreated = false;
+    let childSessionID;
     try {
-      return await runPooledTask(args, { ...context, onChildCreated: (childID) => { childCreated = true; context.onChildCreated?.(childID); } }, coordinatorOnly);
+      return await runPooledTask(args, { ...context, onChildCreated: (childID) => { childCreated = true; childSessionID = childID; context.onChildCreated?.(childID); } }, coordinatorOnly);
     } finally {
       if (childCreated) {
+        childTaskRoles.delete(childSessionID);
         const count = Math.max(0, (activeChildren.get(context.sessionID) || 1) - 1);
         if (count) activeChildren.set(context.sessionID, count);
         else activeChildren.delete(context.sessionID);
@@ -1879,6 +1908,10 @@ ${toolMapping}
     },
 
     'experimental.session.compacting': async ({ sessionID }, output) => {
+      if (childTaskRoles.has(sessionID)) {
+        output.context.push(`NLA child role: ${childTaskRoles.get(sessionID)}. ${CHILD_RECOVERY_GUIDANCE} Preserve the original assignment and safety constraints, file changes, observed tool/test outcomes, uncertainties and next step. Do not claim unexecuted verification or erase partial progress.`);
+        return;
+      }
       if (primarySessions.get(sessionID)?.agent !== 'nla') return;
       assertExecutionAllowed(sessionID);
       const current = compactionState.get(sessionID) || {};
@@ -1943,6 +1976,7 @@ ${toolMapping}
       taskArgumentFailures.clear();
       primarySessions.clear();
       activeChildren.clear();
+      childTaskRoles.clear();
       primaryToolCalls.clear();
       compactionState.clear();
       sessionRoots.clear();
