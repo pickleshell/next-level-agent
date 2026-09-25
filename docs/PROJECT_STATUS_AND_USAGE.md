@@ -576,7 +576,7 @@ Primary NLA can inspect the table map and status with `nla_system` (`schema`,
 `status`), list or set supported non-secret settings, and create or list named
 operator databases and typed tables. The writable operational settings are
 `operator_databases.enabled` (boolean) and
-`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`), plus
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`, `free`), plus
 `routing.selection_preferences.<select-role>` with policy and minimum score
 (prefix the role with a named orchestra when not using `go`);
 `operator.*` is non-secret metadata. Unsupported operational settings are
@@ -622,6 +622,18 @@ NLA creates private state directories with mode `0700` and state files with mode
 
 ## Reading Telemetry
 
+The `free` policy is a hard boundary for select/auto role tasks: both registry
+prices must be numeric zero. Unknown or paid bindings are excluded from selection,
+auto materialization, failover and the coordinator reserve. A missing candidate
+raises `NLA_FREE_MODEL_UNAVAILABLE`; argument repair cannot use a paid coordinator.
+Free tasks use deterministic tool optimization rather than a separate utility
+model call. High-risk safeguards remain in force, without relaxing the price
+boundary. `nla_model_policy` persists `free` per orchestra/role; reload and restart
+preserve it. Pool-level boundaries cannot be loosened by task refinements, and
+combined local/free constraints intersect. Prices remain operator/inventory facts,
+not a live billing guarantee. Other roles and the main session retain their own
+policies; no live configuration is changed merely by installing this feature.
+
 `nla_task` treats empty or whitespace-only optional string arguments as absent.
 Omit unused fields when delegating. A nonempty `review_target_session_id` is
 Reviewer-only; nonempty `browser` and `browser_task_id` are Browser-only.
@@ -643,7 +655,7 @@ Agent tasks also use the observed primary-session model as a final reserve after
 ordinary eligible candidates fail. It runs at most once per task, with the same
 role, prompt and tool boundaries. This is an explicit exception to fixed-pool
 membership, not a pool configuration change. Registry/provider switches, runtime
-inventory, health, required context and `local` policy still apply. Cancellation,
+inventory, health, required context and `local`/`free` policies still apply. Cancellation,
 unconfirmed child termination and unsafe Browser retries do not trigger reserve
 execution. Utility-runtime calls and failover of the coordinator itself are not
 covered. Events include `coordinator_fallback_started`,

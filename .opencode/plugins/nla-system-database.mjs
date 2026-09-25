@@ -26,7 +26,7 @@ const SYSTEM_DATABASE_NAME = 'system';
 const USER_COLUMN_TYPES = new Set(['TEXT', 'INTEGER', 'REAL', 'BLOB']);
 const SESSION_ID = /^[A-Za-z0-9_-]{8,160}$/;
 const SECRET_KEY = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|private[_-]?key|recovery[_-]?code)/i;
-const SELECT_POLICIES = new Set(['quality', 'balanced', 'cost', 'local']);
+const SELECT_POLICIES = new Set(['quality', 'balanced', 'cost', 'local', 'free']);
 const ORCHESTRA_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -356,7 +356,7 @@ function validateSetting(key, value) {
   if (key === 'operator_databases.enabled') {
     if (typeof value !== 'boolean') throw new SystemDatabaseError(`${key} must be true or false`);
   } else if (/^routing\.selection_policy\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
-    if (!SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`${key} must be quality, balanced, cost, or local`);
+    if (!SELECT_POLICIES.has(value)) throw new SystemDatabaseError(`${key} must be quality, balanced, cost, local, or free`);
   } else if (/^routing\.selection_preferences\.[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_]*)?$/.test(key)) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).sort().join(',') !== 'minimum_score,selection_policy'

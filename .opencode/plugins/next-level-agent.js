@@ -24,7 +24,7 @@ import {
   capabilityHash, parseCapabilityCache, resolveRoleCapabilityProfile, serializeCapabilityCache,
 } from './nla-capability-cache.mjs';
 import { formatModelPools, modelPoolSummary, resolveModelPools } from './nla-model-pools.mjs';
-import { isLocalModelBinding, materializeAutoPool, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
+import { matchesPolicyBoundary, materializeAutoPool, rankModelCandidates, routableModelPool, selectionMode, selectionPreferences } from './nla-model-selection.mjs';
 import { assessTask } from './nla-task-assessor.mjs';
 import { createModelInventorySync } from './nla-model-inventory.mjs';
 import { runtimeEvaluationScores } from './nla-model-evaluations.mjs';
@@ -495,9 +495,9 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       let reserve = null;
       if (coordinator && inventory?.has(coordinator) && listModelRegistry(systemDatabase).some(record => record.binding === coordinator)) {
         const reserveProfile = mode !== 'fallback' ? taskProfile : assessTask({ role: args.role, description: args.description, prompt: args.prompt, refinement: { context_window: args.context_window, selection_policy: args.selection_policy } });
-        const policy = pool.selection_policy === 'local' || reserveProfile.policy === 'local' ? 'local' : 'quality';
+        const policy = ['local', 'free'].includes(pool.selection_policy) ? pool.selection_policy : ['local', 'free'].includes(reserveProfile.policy) ? reserveProfile.policy : 'quality';
         const reservePool = poolWithSystemFacts(systemDatabase, { ...pool, models: [coordinator], selection_mode: 'select', selection_policy: policy });
-        const ranked = rankModelCandidates({ role: args.role, pool: reservePool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, taskProfile: { ...reserveProfile, policy } });
+        const ranked = rankModelCandidates({ role: args.role, pool: reservePool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, taskProfile: { ...reserveProfile, policy: ['local', 'free'].includes(reserveProfile.policy) ? reserveProfile.policy : policy } });
         if (ranked.models.includes(coordinator)) reserve = coordinator;
       }
       const attempts = coordinatorOnly ? [] : [...selection.models];
@@ -506,6 +506,11 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       const maxAttempts = attempts.length;
       let attempted = 0;
       if (!attempts.length) {
+        if (mode !== 'fallback' && (selection.policy === 'free' || taskProfile.policy === 'free')) {
+          const error = new Error(`No available free model for role ${args.role}; paid or unknown-price fallback is disabled by the free policy`);
+          error.code = 'NLA_FREE_MODEL_UNAVAILABLE';
+          throw error;
+        }
         if (mode !== 'fallback' && selection.policy === 'local') {
           const error = new Error(`No available local Ollama model for role ${args.role}; cloud fallback is disabled by the local policy`);
           error.code = 'NLA_LOCAL_MODEL_UNAVAILABLE';
@@ -599,7 +604,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             roleProfile,
             model,
             policy: compactorPool?.prompt_optimization,
-            runCompactor: configuredUtilityPool(compactorPool)
+            runCompactor: configuredUtilityPool(compactorPool) && selection.policy !== 'free' && taskProfile.policy !== 'free'
               ? async (prompt) => runUtilityModel({ role: 'compactor', pool: compactorPool, prompt, healthManager, signal: context.abort })
               : null,
           });
@@ -813,6 +818,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       state.recoveryTried = true;
       appendRunLog({ event: 'task_argument_recovery_started', ...telemetry });
       try {
+        // Argument repair is itself a model call: preserve the original task's
+        // hard boundaries even though repair runs under the Supervisor role.
+        const repairPool = pools[args.role];
+        const repairBinding = modelBinding(primarySessions.get(sessionRoots.get(context.sessionID) || context.sessionID)?.model);
+        const repairFacts = listModelRegistry(systemDatabase).find(record => record.binding === repairBinding)?.facts;
+        if (![repairPool?.selection_policy, args.selection_policy].every(policy => matchesPolicyBoundary(repairBinding, repairFacts, policy))) {
+          throw new Error('Coordinator argument repair violates the task policy');
+        }
         // Do not discard a real cross-role field silently. Ask the coordinator
         // model in a separate Supervisor session whether omission preserves the
         // exact task. No role, prompt, Browser permission or target is rewritten.
@@ -946,14 +959,14 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   };
 
   const nlaTask = tool({
-    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select ranks configured models; auto ranks enabled inventory models. The current coordinator model is a final reserve, once, subject to status, health, context and local policy. Omit unused optional fields. Correct argument errors before retrying; repeated errors get one bounded repair attempt using the coordinator model without aborting the session.',
+    description: 'Run one bounded NLA subagent task through its configured model pool. fallback preserves order; select ranks configured models; auto ranks enabled inventory models. The current coordinator model is a final reserve, once, subject to status, health, context and local/free policy. Omit unused optional fields. Correct argument errors before retrying; repeated errors get one bounded repair attempt using the coordinator model without aborting the session.',
     args: {
       role: tool.schema.string().describe('Configured NLA subagent role, for example explorer, architect, implementer, or reviewer'),
       description: tool.schema.string().max(120).describe('Short task title'),
       prompt: tool.schema.string().describe('Complete bounded task packet for the subagent'),
       selection_weights: tool.schema.string().optional().describe('Optional model-proposed refinement for the runtime task assessor: strict JSON with only coding, reasoning, tool_use, reliability, and latency weights from 0 to 10'),
       context_window: tool.schema.string().optional().describe('Optional model-proposed minimum context window; runtime may raise it and select excludes models without sufficient declared context'),
-      selection_policy: tool.schema.string().optional().describe('Optional model-proposed select policy: quality, balanced, cost, or local; high-risk tasks force quality except when local is required'),
+      selection_policy: tool.schema.string().optional().describe('Optional select policy: quality, balanced, cost, local, or free. local requires Ollama; free requires explicit zero input/output prices. High risk preserves both hard boundaries; no paid reserve for free.'),
       minimum_score: tool.schema.string().optional().describe('Optional cost-policy quality floor from 0 to 10'),
       review_target_session_id: tool.schema.string().optional().describe('Reviewer only; omit for all other roles and for reviews without a scoring target. Exact completed Implementer child session ID from prior nla_task metadata.sessionID. When supplied, the Reviewer must return only strict JSON with verdict (pass, fail, or needs_changes) and coding, reasoning, and tool_use scores from 1 to 10; no target prompt, response, secrets, or other target internals are provided or accepted.'),
       browser_task_id: tool.schema.string().optional().describe('Explicit logical Browser task continuation ID returned by runtime. Omit for new work; provide the original complete browser contract when continuing. This is not a live browser session_id.'),
@@ -1069,7 +1082,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         const record = registered.get(binding);
         const status = record?.status || 'enabled';
         const provider_status = record?.provider_status || providerRecords.find((item) => item.provider === binding.split('/')[0])?.status || 'enabled';
-        return { ...state, status: switchStatus(status), provider_status: switchStatus(provider_status), eligible: state.eligible && status === 'enabled' && provider_status === 'enabled' && (pool.selection_policy !== 'local' || isLocalModelBinding(binding)), endpoint };
+        return { ...state, status: switchStatus(status), provider_status: switchStatus(provider_status), eligible: state.eligible && status === 'enabled' && provider_status === 'enabled' && matchesPolicyBoundary(binding, record?.facts, pool.selection_policy), endpoint };
       }));
       const disabled = records.filter((record) => record.status === 'disabled').map((record) => record.binding);
       const auto = Object.entries(pools).filter(([, pool]) => selectionMode(pool) === 'auto').map(([role, pool]) => {
@@ -1145,7 +1158,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     description: 'Persist one select/auto pool policy and cost-policy quality floor in the private system database. Applies to new tasks immediately and survives OpenCode restart. Primary NLA only.',
     args: {
       role: tool.schema.string().describe('Exact configured role name'),
-      policy: tool.schema.string().describe('quality, balanced, cost, or local (Ollama only; no cloud fallback)'),
+      policy: tool.schema.string().describe('quality, balanced, cost, local (Ollama only), or free (explicit zero input/output prices; no paid fallback)'),
       minimum_score: tool.schema.string().optional().describe('Cost-policy quality floor from 0 to 10; default 7.5'),
     },
     execute: async (args, context) => {
@@ -1154,7 +1167,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (!pool) throw new Error(`Unknown configured role: ${args.role}`);
       if (selectionMode(pool) === 'fallback') throw new Error(`Role ${args.role} uses fallback; runtime selection policy applies only to select/auto pools`);
       // This is an operator change to the effective pool, not a task-level
-      // refinement. It must be able to replace an existing local policy.
+      // refinement. It must be able to replace an existing local/free policy.
       const preferences = selectionPreferences({ ...pool, selection_policy: undefined }, { policy: args.policy, minimum_score: args.minimum_score });
       saveSelectionPreferences(systemDatabase, args.role, activeOrchestra.name, {
         selection_policy: preferences.policy, minimum_score: preferences.minimum_score,
@@ -1536,6 +1549,7 @@ When skills request actions, substitute OpenCode equivalents:
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
 	- Inspect or import model registry records, or turn one exact model on/off for new tasks → \`nla_models_registry\` (action \`status_set\`, status \`on\` or \`off\`). Inspect providers with \`provider_list\` or \`provider_show\`; toggle a provider independently with \`provider_status_set\`. Neither switch erases model evaluations or role pools
 	- Inspect, propose, save, and activate named orchestras → \`nla_orchestra\`; \`go\` preserves the original roles. \`selection_mode: "auto"\` with \`models: []\` chooses from all enabled, inventoried models; listed models are soft preferences, not a whitelist. Present a proposal before creating or activating a new orchestra. Active child tasks keep their existing pool snapshot.
+	- Set role selection policy → \`nla_model_policy\`: quality, balanced, cost, local, or free. Free requires explicit zero input/output registry prices and never uses a paid reserve. Local restricts to Ollama. These are hard boundaries, not preferences; inspect prices and availability rather than assuming missing prices mean free.
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)
 	- Reconcile detailed Work State with current Git → \`nla_work_state\`
 	- Read or update durable memory → \`nla_notebook\` (primary NLA only)

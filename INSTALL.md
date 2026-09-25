@@ -169,7 +169,11 @@ effect in `select` routing and survive `nla_models_reload`. A malformed legacy
 evaluation JSON stops startup before seeding; repair it and retry rather than
 discarding observations. The supported writable settings are
 `operator_databases.enabled` (boolean) and
-`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`).
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`, `free`).
+`free` confines `select`/`auto` tasks to models with explicit numeric zero input
+and output prices in the registry, including any coordinator reserve. Missing
+prices do not qualify. Keep price facts accurate; catalog placeholders are not
+proof of free access. Change it live with `nla_model_policy` and `policy="free"`.
 This setting changes the default policy immediately and persists across restart.
 `local` confines `select`/`auto` tasks to `ollama/*` bindings and fails without
 cloud fallback when no local model is eligible. Confirm that the configured

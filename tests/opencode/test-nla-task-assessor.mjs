@@ -30,6 +30,10 @@ assert.ok(critical.weights.reasoning >= 9, 'high-risk reasoning floor is mandato
 assert.ok(critical.weights.latency <= 5, 'high-risk work cannot prioritize latency over safety');
 const criticalLocal = assessTask({ role: 'implementer', description: 'Production authentication migration', prompt: 'Review rollback safety.', refinement: { selection_policy: 'local' } });
 assert.equal(criticalLocal.policy, 'local', 'high-risk tasks retain an explicit local-only boundary');
+const criticalFree = assessTask({ role: 'implementer', description: 'Production authentication migration', prompt: 'Review rollback safety.', refinement: { selection_policy: 'free' } });
+assert.equal(criticalFree.policy, 'free');
+assert.equal(criticalFree.weights.reliability, 10);
+assert.equal(assessTask({ role: 'implementer', refinement: { selection_policy: 'free', context_window: 'invalid' } }).policy, 'free', 'invalid refinements cannot erase a free boundary');
 assert.equal(criticalLocal.weights.reliability, 10);
 assert.ok(criticalLocal.weights.reasoning >= 9);
 

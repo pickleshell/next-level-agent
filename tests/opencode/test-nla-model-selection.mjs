@@ -105,6 +105,23 @@ qualityGap.models['fixture/cheap'].scores = { coding: 6, reasoning: 6, tool_use:
 assert.equal(rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'balanced' }, evaluations: qualityGap, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) }).models[0], 'fixture/best', 'balanced does not trade away a clear suitability advantage for price');
 const costFirst = rankModelCandidates({ role: 'implementer', pool: { ...pool, selection_policy: 'cost', minimum_score: 7.5 }, evaluations, healthManager: health({ 'fixture/down': { state: 'quarantined', eligible: false } }) });
 assert.deepEqual(costFirst.models, ['fixture/cheap', 'fixture/best'], 'cost policy enforces quality floor before sorting by price');
+const freeFacts = {
+  'fixture/free': { input_cost: 0, output_cost: 0 },
+  'ollama/free': { input_cost: 0, output_cost: 0 },
+  'fixture/paid': { input_cost: 0, output_cost: 1 },
+  'fixture/partial': { input_cost: 0 },
+  'fixture/unknown': {},
+  'fixture/null': { input_cost: null, output_cost: null },
+  'fixture/string': { input_cost: '0', output_cost: '0' },
+};
+const freePool = { selection_mode: 'select', selection_policy: 'free', models: Object.keys(freeFacts), model_facts: freeFacts };
+validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'auto', selection_policy: 'free', models: [] } } });
+assert.throws(() => validateModelPools({ roles: { explorer: { enabled: true, selection_mode: 'fallback', selection_policy: 'free', models: ['fixture/free'] } } }), /requires select or auto/);
+assert.deepEqual(rankModelCandidates({ role: 'explorer', pool: freePool, taskProfile: { policy: 'quality' } }).models, ['fixture/free', 'ollama/free']);
+assert.deepEqual(rankModelCandidates({ pool: freePool, attempted: ['fixture/free', 'ollama/free'] }).models, [], 'free never falls back to paid or unknown prices');
+assert.deepEqual(rankModelCandidates({ pool: freePool, taskProfile: { policy: 'local' } }).models, ['ollama/free'], 'local and free restrictions intersect');
+const freeAuto = materializeAutoPool({ selection_mode: 'auto', selection_policy: 'free', models: ['fixture/paid'] }, Object.entries(freeFacts).map(([binding, facts]) => ({ binding, facts, status: 'enabled' })), new Set(Object.keys(freeFacts)));
+assert.deepEqual(freeAuto.models, ['fixture/free', 'ollama/free']);
 const localPool = { selection_mode: 'select', selection_policy: 'local', models: ['fixture/strong', 'ollama/qwen', 'ollama/backup'], model_facts: {
   'fixture/strong': { context_window: 131072, input_cost: 0 },
   'ollama/qwen': { context_window: 131072, input_cost: 0 },

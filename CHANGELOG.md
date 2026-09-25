@@ -7,6 +7,17 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Free-only model selection
+
+- Add `free` alongside quality, balanced, cost and local for select/auto pools.
+  Only explicit numeric zero input/output prices qualify; rank eligible models
+  by quality and never fall back to a paid or unknown-price coordinator.
+- Preserve the boundary during high-risk assessment and argument recovery;
+  skip utility-model prompt optimization for free tasks. Empty eligible pools
+  return `NLA_FREE_MODEL_UNAVAILABLE` without making a model request.
+- Support live policy changes, SQLite persistence, introspection and regression
+  tests. Existing model settings, providers and scores are unchanged.
+
 ### Delegation argument recovery
 
 - Treat blank optional `nla_task` fields as absent so Explorer and other roles
