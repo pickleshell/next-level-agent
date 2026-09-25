@@ -652,6 +652,24 @@ consume a model-request timeout. This integration is verified with OpenCode
 1.18.9; rerun the request-boundary smoke test after runtime upgrades.
 Utility-model calls remain single requests with their own `request_timeout_ms`.
 
+**Context exhaustion is not provider unavailability.** Native OpenCode
+compaction needs a known model `limit.context`; for local Ollama models use
+the effective server allocation, not merely the model's advertised maximum.
+If a child still ends with `finish: length`, NLA does not accept even a nonempty
+partial answer as success. It attempts one validated native compaction and
+continuation on that model; a response with no final text gets one explicit
+continuation. If recovery remains incomplete, the next eligible pool model is
+tried, preserving the child session and respecting `free`/`local` boundaries.
+This does not penalize provider health or reliability. Cancellation and unsafe
+Browser side effects still block continuation/failover.
+
+The durable OpenCode child journal retains tool calls and partial work. Recovery
+prompts preserve the assignment and constraints and require inspection of current
+files and test evidence before continuing. An exhausted task reports the child
+session ID and warns that missing final text does **not** mean no files changed.
+Independent review remains required where the workflow calls for it; neither
+compaction nor a recovered model response is an acceptance verdict.
+
 `nla_models` includes health for every configured binding, including available
 ones. Primary-only `nla_model_health_reset` accepts only an exact configured
 binding and its introspected endpoint identity; unknown or in-flight targets
