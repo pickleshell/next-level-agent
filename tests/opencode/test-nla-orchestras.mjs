@@ -86,7 +86,11 @@ try {
     const paused = await restarted.tool.nla_models.execute({}, primary);
     assert.ok(paused.metadata.providers.some((record) => record.provider === 'openai' && record.status === 'off'));
     assert.match(paused.output, /openai=off/);
-    await assert.rejects(restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'command-code', status: 'off' }, primary), /active coordinator provider/);
+    await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'command-code', status: 'off' }, primary);
+    await restarted.tool.nla_models_registry.execute({ action: 'status_set', binding: 'command-code/gpt-5.6-luna', status: 'on' }, primary);
+    const explicit = await restarted.tool.nla_models.execute({}, primary);
+    assert.ok(explicit.metadata.health.some((row) => row.binding === 'command-code/gpt-5.6-luna' && row.eligible), 'fixed pool ignores provider off');
+    await restarted.tool.nla_models_registry.execute({ action: 'status_set', binding: 'command-code/gpt-5.6-luna', status: 'off' }, primary);
     const providerOn = await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'openai', status: 'on' }, primary);
     assert.equal(JSON.parse(providerOn.output).status, 'on');
     assert.equal(listProviderRegistry(file, 'openai')[0].status, 'enabled', 'on/off tool inputs retain legacy SQLite storage');

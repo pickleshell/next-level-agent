@@ -7,6 +7,15 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Provider switches scoped to auto pools
+
+- Provider `off` excludes models only from `auto` selection, including its
+  emergency reserve. Explicit `select` and `fallback` pools and the fixed
+  coordinator ignore provider status.
+- Individual model switches, inventory, health and policy checks still apply.
+  Provider switching never deletes model facts, evaluations or pool membership.
+- Update routing, orchestra activation, introspection, tool guidance and tests.
+
 ### Free-only model selection
 
 - Add `free` alongside quality, balanced, cost and local for select/auto pools.
