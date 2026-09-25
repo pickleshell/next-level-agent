@@ -316,7 +316,7 @@ try {
 
   // A fixed pool can use the observed coordinator as a final reserve, without
   // changing the delegated role, prompt or tool permissions.
-  for (const scenario of ['success', 'unknown', 'disabled', 'local', 'free', 'context', 'reserve-fails', 'preparation']) {
+  for (const scenario of ['success', 'provider-off', 'unknown', 'disabled', 'local', 'free', 'context', 'reserve-fails', 'preparation']) {
     process.env.NLA_MEMORY_DIR = path.join(root, `reserve-${scenario}`);
     const calls = [];
     instance = await NextLevelAgentPlugin({ directory: root, client: {
@@ -338,6 +338,7 @@ try {
     const context = { sessionID: `reserve-primary-${scenario}`, directory: root, abort: new AbortController().signal };
     await instance['chat.message']({ ...context, agent: 'nla', model: { providerID: 'fixture', modelID: 'b' } });
     if (scenario === 'disabled') await instance.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/b', status: 'off' }, context);
+    if (scenario === 'provider-off') await instance.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'fixture', status: 'off' }, context);
     if (scenario === 'free') {
       await instance.tool.nla_models_registry.execute({ action: 'import', json: JSON.stringify({ models: { 'fixture/b': { facts: { input_cost: 1, output_cost: 1, context_window: 131072 } } } }) }, context);
       await instance.tool.nla_model_policy.execute({ role: 'explorer', policy: 'free' }, context);
@@ -354,7 +355,7 @@ try {
     }
     if (scenario === 'context') await instance.tool.nla_models_registry.execute({ action: 'import', json: JSON.stringify({ models: { 'fixture/b': { facts: { context_window: 1024 } } } }) }, context);
     const args = { role: 'scout', description: 'Inspect a file', prompt: 'Read README only; make no changes.', ...(scenario === 'local' ? { selection_policy: 'local' } : {}), ...(scenario === 'context' ? { context_window: '20000' } : {}) };
-    if (['success', 'unknown'].includes(scenario)) {
+    if (['success', 'provider-off', 'unknown'].includes(scenario)) {
       const result = await instance.tool.nla_task.execute(args, context);
       assert.equal(result.metadata.model, 'fixture/b');
       assert.equal(result.metadata.coordinator_fallback, true);

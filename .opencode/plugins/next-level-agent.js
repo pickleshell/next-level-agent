@@ -496,7 +496,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
       if (coordinator && inventory?.has(coordinator) && listModelRegistry(systemDatabase).some(record => record.binding === coordinator)) {
         const reserveProfile = mode !== 'fallback' ? taskProfile : assessTask({ role: args.role, description: args.description, prompt: args.prompt, refinement: { context_window: args.context_window, selection_policy: args.selection_policy } });
         const policy = ['local', 'free'].includes(pool.selection_policy) ? pool.selection_policy : ['local', 'free'].includes(reserveProfile.policy) ? reserveProfile.policy : 'quality';
-        const reservePool = poolWithSystemFacts(systemDatabase, { ...pool, models: [coordinator], selection_mode: 'select', selection_policy: policy });
+        const reservePool = poolWithSystemFacts(systemDatabase, { ...pool, models: [coordinator], selection_mode: mode === 'auto' ? 'auto' : 'select', selection_policy: policy });
         const ranked = rankModelCandidates({ role: args.role, pool: reservePool, evaluations: loadSystemEvaluations(systemDatabase), healthManager, taskProfile: { ...reserveProfile, policy: ['local', 'free'].includes(reserveProfile.policy) ? reserveProfile.policy : policy } });
         if (ranked.models.includes(coordinator)) reserve = coordinator;
       }
@@ -1082,7 +1082,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         const record = registered.get(binding);
         const status = record?.status || 'enabled';
         const provider_status = record?.provider_status || providerRecords.find((item) => item.provider === binding.split('/')[0])?.status || 'enabled';
-        return { ...state, status: switchStatus(status), provider_status: switchStatus(provider_status), eligible: state.eligible && status === 'enabled' && provider_status === 'enabled' && matchesPolicyBoundary(binding, record?.facts, pool.selection_policy), endpoint };
+        return { ...state, status: switchStatus(status), provider_status: switchStatus(provider_status), eligible: state.eligible && status === 'enabled' && (selectionMode(pool) !== 'auto' || provider_status === 'enabled') && matchesPolicyBoundary(binding, record?.facts, pool.selection_policy), endpoint };
       }));
       const disabled = records.filter((record) => record.status === 'disabled').map((record) => record.binding);
       const auto = Object.entries(pools).filter(([, pool]) => selectionMode(pool) === 'auto').map(([role, pool]) => {
@@ -1251,7 +1251,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
   });
 
   const nlaModelsRegistry = tool({
-    description: 'Inspect/import models and turn providers or individual models on/off for new NLA tasks. Provider and model switches are independent; neither erases facts, scores, or pools. Import accepts json or a project-local source_path. Legacy enabled/disabled tool inputs remain accepted. Primary NLA only.',
+    description: 'Inspect/import models. Provider on/off gates only auto pools; select/fallback and the fixed coordinator ignore it. Individual model on/off gates every mode. Provider and model switches are independent; neither erases facts, scores, or pools. Import accepts json or a project-local source_path. Legacy enabled/disabled tool inputs remain accepted. Primary NLA only.',
     args: {
       action: tool.schema.enum(['list', 'show', 'import', 'status_set', 'provider_list', 'provider_show', 'provider_status_set']).describe('Requested model or provider registry action'),
       binding: tool.schema.string().max(256).optional().describe('Exact provider/model binding for show'),
@@ -1274,7 +1274,6 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
         result = listProviderRegistry(systemDatabase, args.provider)[0] || null;
       } else if (args.action === 'provider_status_set') {
         if (!args.provider || !args.status) throw new Error('provider_status_set requires provider and status');
-        if (storedStatus(args.status) === 'disabled' && activeOrchestra.config.roles.nla.models[0].startsWith(`${args.provider}/`)) throw new Error('Cannot turn off the active coordinator provider; activate an orchestra with another coordinator first');
         result = setProviderStatus(systemDatabase, args.provider, storedStatus(args.status));
       } else if (args.action === 'status_set') {
         if (!args.binding || !args.status) throw new Error('status_set requires binding and status');
@@ -1306,7 +1305,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
     const registry = listModelRegistry(systemDatabase);
     const coordinator = config.roles.nla.models[0];
     const coordinatorRecord = registry.find((record) => record.binding === coordinator);
-    if (!inventory.has(coordinator) || coordinatorRecord?.status !== 'enabled' || coordinatorRecord?.provider_status !== 'enabled') throw new Error(`Orchestra ${name} coordinator model or provider is not enabled in the provider inventory: ${coordinator}`);
+    if (!inventory.has(coordinator) || coordinatorRecord?.status !== 'enabled') throw new Error(`Orchestra ${name} coordinator model is not enabled in the provider inventory: ${coordinator}`);
     for (const [role, configured] of Object.entries(config.roles)) {
       if (!configured.enabled || role === 'nla') continue;
       const concrete = materializeAutoPool(configured, registry, inventory);
@@ -1340,8 +1339,8 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
           current: activeOrchestra.name,
           base: activeOrchestra.config,
           available_models: listModelRegistry(systemDatabase)
-            .filter((record) => record.status === 'enabled' && record.provider_status === 'enabled' && inventory?.has(record.binding))
-            .map(({ binding, facts, scores }) => ({ binding, facts, scores })),
+            .filter((record) => record.status === 'enabled' && inventory?.has(record.binding))
+            .map(({ binding, facts, scores, provider_status }) => ({ binding, facts, scores, provider_status: switchStatus(provider_status), auto_eligible: provider_status !== 'disabled' })),
           instruction: 'Draft a new named orchestra from these exact bindings. Save its operator policy in guidance, e.g. use Command Code by default, prefer free or economical models when capable, reserve OpenAI for tasks where a stronger model improves quality or lowers risk, and treat 20–30% OpenAI usage as a soft guide. For select/auto roles, preferred_providers: ["command-code", "openai"] breaks quality ties toward Command Code. Use selection_mode: auto with models: [] for unrestricted dynamic selection, or list preferred bindings in models; all enabled inventory models remain eligible. Present the proposal before create/activate.',
         };
       } else if (['create', 'update', 'pool_set'].includes(args.action)) {
@@ -1547,7 +1546,7 @@ When skills request actions, substitute OpenCode equivalents:
 	- Change a select/auto pool policy for new tasks without restart → \`nla_model_policy\`; persist via \`nla_system\` setting_set using \`routing.selection_policy.<role>\` for go or \`routing.selection_policy.<orchestra>.<role>\` for other orchestras
 	- Inspect persistent settings or safely create operator databases/tables → \`nla_system\`; it does not execute arbitrary SQL
 	- Inspect the authoritative system-data map before changing persistent state → \`nla_system\` action \`schema\`; workflow checkpoints and fail-closed restore blocks are DB-owned
-	- Inspect or import model registry records, or turn one exact model on/off for new tasks → \`nla_models_registry\` (action \`status_set\`, status \`on\` or \`off\`). Inspect providers with \`provider_list\` or \`provider_show\`; toggle a provider independently with \`provider_status_set\`. Neither switch erases model evaluations or role pools
+	- Inspect or import model registry records, or turn one exact model on/off for new tasks → \`nla_models_registry\` (action \`status_set\`, status \`on\` or \`off\`). Inspect providers with \`provider_list\` or \`provider_show\`; toggle a provider for auto pools only (select/fallback ignore provider status) with \`provider_status_set\`. Neither switch erases model evaluations or role pools
 	- Inspect, propose, save, and activate named orchestras → \`nla_orchestra\`; \`go\` preserves the original roles. \`selection_mode: "auto"\` with \`models: []\` chooses from all enabled, inventoried models; listed models are soft preferences, not a whitelist. Present a proposal before creating or activating a new orchestra. Active child tasks keep their existing pool snapshot.
 	- Set role selection policy → \`nla_model_policy\`: quality, balanced, cost, local, or free. Free requires explicit zero input/output registry prices and never uses a paid reserve. Local restricts to Ollama. These are hard boundaries, not preferences; inspect prices and availability rather than assuming missing prices mean free.
 	- Delegate browser research or interaction → \`nla_task\` with role browser and the browser task contract (goal, origins, permissions, success_criteria, optional session_id/keep_session)

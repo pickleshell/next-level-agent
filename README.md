@@ -158,17 +158,19 @@ Provider and model status are independent in SQLite. Primary NLA can use
 `nla_models_registry provider_list` / `provider_show` to inspect providers and
 `provider_status_set` with `provider` and `status=on|off` to pause or
 resume one provider. `status_set` with an exact `binding=provider/model` still
-controls one model with the same `on|off` values. New tasks require both switches
-to be `on`; switching a provider never changes its models' statuses, facts,
+controls one model with the same `on|off` values. Only `auto` requires both switches
+to be `on`. Explicit `select` and `fallback` pools ignore provider status;
+individual model status, inventory, health and policy checks still apply.
+Switching a provider never changes its models' statuses, facts,
 scores, or pool membership.
-`nla_models` shows provider status alongside model health. A provider serving
-the active coordinator cannot be disabled until another orchestra is activated.
+`nla_models` shows provider status alongside model health. Turning off the
+coordinator's provider excludes it from auto selection, not fixed coordinator use.
 Running tasks retain their pool snapshot. These controls affect NLA routing,
 not direct OpenCode provider access. Older `enabled|disabled` tool arguments
 still work, and existing SQLite/config values keep their legacy representation;
 NLA displays them as `on|off`.
 
-To pause OpenCode Go without losing its model setup, keep individual
+To pause OpenCode Go in auto pools without losing its model setup, keep individual
 `opencode-go/*` models `on` and set only the `opencode-go` provider to
 `off` with `nla_models_registry` action `provider_status_set`. Check the
 result with `provider_show` and `nla_models`. Later, setting that provider back
@@ -180,7 +182,7 @@ not the default provider state of a fresh installation.
 ### Named orchestras and auto pools
 
 Agent tasks have one final reserve: the current coordinator model, if eligible.
-This does not change saved pools or role permissions; provider/model switches,
+This does not change saved pools or role permissions; model switches (and provider switches for auto tasks),
 health, context requirements and the `local`/`free` policies still apply. The reserve is
 tried at most once, including when it already belongs to the role's pool.
 
@@ -389,9 +391,9 @@ flowchart TB
     MODE -->|select| S[Only listed models]
     MODE -->|auto| A[Provider inventory<br/>listed models are preferences]
     INV[OpenCode provider inventory] --> A
-    F --> EF[Provider and model on;<br/>runtime health]
+    F --> EF[Model on;<br/>runtime health]
     S --> ER[Candidate eligibility<br/>status, health, availability,<br/>context and local/free policy]
-    A --> ER
+    A --> PG[Provider on] --> ER
     DB -->|statuses and health| EF
     DB -->|statuses, facts, health| ER
     EF --> O[Keep configured order]
