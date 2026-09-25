@@ -181,7 +181,7 @@ not the default provider state of a fresh installation.
 
 Agent tasks have one final reserve: the current coordinator model, if eligible.
 This does not change saved pools or role permissions; provider/model switches,
-health, context requirements and the `local` policy still apply. The reserve is
+health, context requirements and the `local`/`free` policies still apply. The reserve is
 tried at most once, including when it already belongs to the role's pool.
 
 An **orchestra** is a saved set of roles, model pools, and selection policies.
@@ -359,6 +359,22 @@ Every role pool declares one of three modes:
   eligible, the task stops without cloud fallback. This policy applies to
   `select` and `auto`, not `fallback`. Confirm that the Ollama endpoint is
   actually self-hosted; a provider name alone cannot prove network locality.
+- `free` considers only models with both `input_cost: 0` and `output_cost: 0`
+  explicitly recorded in the model registry, then ranks them by task quality.
+  Applies to `select` and `auto`. Missing, null, string or nonzero prices are
+  excluded. No paid/unknown-price fallback, including the coordinator reserve
+  or argument repair; no eligible candidate returns `NLA_FREE_MODEL_UNAVAILABLE`.
+  High-risk assessment cannot relax this boundary. A local model also needs
+  explicit zero prices to qualify; `free` can include both local and cloud models.
+
+Ask NLA to “set the Explorer policy to free”, or use
+`nla_model_policy(role="explorer", policy="free")`. The policy persists in SQLite
+and applies to new tasks; existing tasks keep their snapshot. `cost` means
+cheaper qualified models, whereas `free` excludes all nonzero prices.
+This is routing by recorded prices, not a billing guarantee: verify registry
+prices, especially zero defaults from subscription/provider catalogs. Hardware,
+subscription and external tool costs are not covered. The policy is per role,
+not a promise that the primary session or every other role is free.
 
 The configuration and routing paths are separate: the pool JSON seeds or
 reloads `go`, while SQLite holds named orchestras and the active selection.
@@ -374,7 +390,7 @@ flowchart TB
     MODE -->|auto| A[Provider inventory<br/>listed models are preferences]
     INV[OpenCode provider inventory] --> A
     F --> EF[Provider and model on;<br/>runtime health]
-    S --> ER[Candidate eligibility<br/>status, health, availability,<br/>context and local policy]
+    S --> ER[Candidate eligibility<br/>status, health, availability,<br/>context and local/free policy]
     A --> ER
     DB -->|statuses and health| EF
     DB -->|statuses, facts, health| ER
@@ -392,7 +408,7 @@ packet, risk indicators, complexity, tool dependence, and context size. The
 coordinator may refine the five selection weights, context requirement, and
 policy, but it never chooses a model directly. Runtime validates the refinement,
 forces `quality` plus reliability and reasoning floors for high-risk work (or
-retains a requested `local` boundary with those same score safeguards), and
+retains a requested `local` or `free` boundary with those same score safeguards), and
 falls back to the deterministic profile when no refinement is supplied. The
 resulting profile and selected binding are recorded as redacted operational
 telemetry without task or response content.
@@ -407,7 +423,7 @@ policy-only persistent change, `nla_system setting_set` also accepts
 policy-only change overrides the saved policy while retaining its quality floor.
 Editing the pool file and calling `nla_models_reload` changes
 the `go` role pools. Task-specific preferences still take precedence, subject
-to high-risk safeguards and any pool-level `local` boundary.
+to high-risk safeguards and any pool-level `local`/`free` boundary.
 
 For a fixed pool, the `models` array bounds its attempts; an auto pool uses the
 candidate list resolved at task start. There is no separate `max_failovers` or
@@ -492,14 +508,14 @@ response text. Ask NLA for
 
 Writable operational settings are intentionally narrow: `operator_databases.enabled`
 (boolean) controls creation of additional databases and tables, and
-`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, or `local`)
+`routing.selection_policy.<select-role>` (`quality`, `balanced`, `cost`, `local`, or `free`)
 persists a role's default selection policy across restart;
 `routing.selection_preferences.<select-role>` stores policy and quality floor
 together when changed through `nla_model_policy` (named orchestras
 prefix the role with the orchestra name). `operator.*` holds
 non-secret notes only. `system.database.*` is read-only; unknown routing or
 security settings are rejected. A task-specific policy can still override the
-role default, subject to high-risk safeguards and a pool-level `local` boundary.
+role default, subject to high-risk safeguards and a pool-level `local`/`free` boundary.
 
 Use [`config/model-registry.example.json`](config/model-registry.example.json)
 as the import shape. `0` means a score is unevaluated; imported scores seed a

@@ -103,9 +103,9 @@ export function assessTask({ role, description, prompt, refinement = {} } = {}) 
       minimum_score: refinement.minimum_score,
     }) : {};
     let policy = refinement.selection_policy || baseline.policy;
-    // Local remains a hard provider boundary even for high-risk work; the
+    // Local/free remain hard boundaries even for high-risk work; the
     // high-risk reasoning/reliability floors still apply within that boundary.
-    if (LEVEL[baseline.risk] >= LEVEL.high && policy !== 'local') policy = 'quality';
+    if (LEVEL[baseline.risk] >= LEVEL.high && !['local', 'free'].includes(policy)) policy = 'quality';
     const contextWindow = Math.max(baseline.context_window || 0, proposedContext || 0) || null;
 
     return {
@@ -122,6 +122,7 @@ export function assessTask({ role, description, prompt, refinement = {} } = {}) 
   } catch {
     return {
       ...baseline,
+      ...(['local', 'free'].includes(refinement.selection_policy) ? { policy: refinement.selection_policy } : {}),
       source: 'deterministic_fallback',
       reasons: [...baseline.reasons, 'invalid model refinement ignored'],
     };

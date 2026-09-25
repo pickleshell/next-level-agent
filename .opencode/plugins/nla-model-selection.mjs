@@ -1,5 +1,12 @@
 export const MODEL_SCORE_KEYS = ['coding', 'reasoning', 'tool_use', 'reliability', 'latency'];
-export const SELECTION_POLICIES = ['quality', 'balanced', 'cost', 'local'];
+export const SELECTION_POLICIES = ['quality', 'balanced', 'cost', 'local', 'free'];
+export function isFreeModelFacts(facts) {
+  return facts?.input_cost === 0 && facts?.output_cost === 0;
+}
+export function matchesPolicyBoundary(binding, facts, policy) {
+  return (policy !== 'local' || isLocalModelBinding(binding))
+    && (policy !== 'free' || isFreeModelFacts(facts));
+}
 // Ollama is the self-hosted provider in the current NLA runtime. A local
 // policy is a hard routing boundary, never a preference or cloud fallback.
 const LOCAL_PROVIDERS = new Set(['ollama']);
@@ -37,8 +44,8 @@ export function selectionMode(pool = {}) {
 }
 
 export function selectionPolicy(pool = {}, taskProfile = {}) {
-  const value = pool.selection_policy === 'local' ? 'local' : taskProfile.policy || pool.selection_policy || 'quality';
-  if (!SELECTION_POLICIES.includes(value)) throw new ModelSelectionError('selection_policy must be quality, balanced, cost, or local');
+  const value = ['local', 'free'].includes(pool.selection_policy) ? pool.selection_policy : taskProfile.policy || pool.selection_policy || 'quality';
+  if (!SELECTION_POLICIES.includes(value)) throw new ModelSelectionError('selection_policy must be quality, balanced, cost, local, or free');
   return value;
 }
 
@@ -113,7 +120,7 @@ export function materializeAutoPool(pool, registry, inventory) {
   if (selectionMode(pool) !== 'auto') return pool;
   if (!(inventory instanceof Set)) throw new ModelSelectionError('Auto pool requires a fresh OpenCode provider inventory');
   const eligible = registry.filter((record) => record.status === 'enabled' && record.provider_status !== 'disabled'
-    && inventory.has(record.binding) && (pool.selection_policy !== 'local' || isLocalModelBinding(record.binding)));
+    && inventory.has(record.binding) && matchesPolicyBoundary(record.binding, record.facts, pool.selection_policy));
   const available = new Set(eligible.map((record) => record.binding));
   const preferred = Array.isArray(pool.models) ? pool.models.filter((binding) => available.has(binding)) : [];
   const preferredSet = new Set(preferred);
@@ -173,7 +180,7 @@ function compareQuality(left, right) {
 }
 
 function rankByPolicy(candidates, preferences) {
-  if (preferences.policy === 'quality' || preferences.policy === 'local') return candidates.sort(compareQuality);
+  if (['quality', 'local', 'free'].includes(preferences.policy)) return candidates.sort(compareQuality);
   if (preferences.policy === 'balanced') {
     // The assessor/coordinator chooses the policy. Balanced keeps models close
     // to the best task fit, then prefers the cheaper of those viable choices.
@@ -211,7 +218,8 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     if (!health.eligible) reasons.push(health.state || 'unavailable');
     if (facts.status !== undefined && facts.status !== 'enabled') reasons.push('disabled');
     if (facts.provider_status === 'disabled') reasons.push('provider_disabled');
-    if (preferences.policy === 'local' && !isLocalModelBinding(binding)) reasons.push('not_local');
+    if ([preferences.policy, taskProfile.policy].includes('local') && !isLocalModelBinding(binding)) reasons.push('not_local');
+    if ([preferences.policy, taskProfile.policy].includes('free') && !isFreeModelFacts(facts)) reasons.push('not_free');
     if (!staticAvailability(facts, now)) reasons.push('static_unavailable');
     if (taskProfile.context_window && (!Number.isFinite(Number(facts.context_window)) || facts.context_window < Number(taskProfile.context_window))) reasons.push('insufficient_context');
     const scores = evaluatedScores(evaluations, binding);

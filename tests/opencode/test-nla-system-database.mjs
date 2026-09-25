@@ -148,7 +148,9 @@ try {
   setSystemSetting(file, 'routing.selection_policy.implementer', '"balanced"');
   assert.throws(() => setSystemSetting(file, 'system.database.version', '5'), /read-only/);
   assert.throws(() => setSystemSetting(file, 'routing.health_persistence', 'false'), /unsupported/);
-  assert.throws(() => setSystemSetting(file, 'routing.selection_policy.implementer', '"random"'), /quality, balanced, cost, or local/);
+  assert.equal(setSystemSetting(file, 'routing.selection_policy.explorer', '"free"').value, 'free');
+  assert.equal(configuredSelectionPolicy(file, 'explorer'), 'free');
+  assert.throws(() => setSystemSetting(file, 'routing.selection_policy.implementer', '"random"'), /quality, balanced, cost, local, or free/);
   assert.throws(() => setSystemSetting(file, 'api_key', '"secret"'), /Setting key|secret/i);
   assert.throws(() => setSystemSetting(file, 'operator.notes', '{"nested":{"api_key":"secret"}}'), /secret field/);
 
