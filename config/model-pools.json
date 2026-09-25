@@ -6,32 +6,28 @@
       "selection_mode": "fallback",
       "models": [
         "opencode-go/gpt-5.6-luna"
-      ],
-      "idle_timeout_ms": 0
+      ]
     },
     "router": {
       "enabled": true,
       "selection_mode": "fallback",
       "models": [
         "opencode-go/gpt-5.6-luna"
-      ],
-      "idle_timeout_ms": 90000
+      ]
     },
     "supervisor": {
       "enabled": true,
       "selection_mode": "fallback",
       "models": [
         "opencode-go/gpt-5.6-luna"
-      ],
-      "idle_timeout_ms": 180000
+      ]
     },
     "scout": {
       "enabled": true,
       "selection_mode": "fallback",
       "models": [
         "opencode-go/gpt-5.6-luna"
-      ],
-      "idle_timeout_ms": 180000
+      ]
     },
     "explorer": {
       "enabled": true,
@@ -43,7 +39,6 @@
         "opencode-go/minimax-m3",
         "opencode-go/glm-5.3"
       ],
-      "idle_timeout_ms": 900000,
       "selection_policy": "balanced"
     },
     "architect": {
@@ -56,7 +51,6 @@
         "opencode-go/glm-5.3",
         "opencode-go/qwen3.8-max"
       ],
-      "idle_timeout_ms": 300000,
       "selection_policy": "quality"
     },
     "implementer": {
@@ -91,7 +85,6 @@
         "opencode-go/grok-4.6",
         "opencode-go/gpt-5.6-luna"
       ],
-      "idle_timeout_ms": 300000,
       "model_facts": {
         "opencode-go/glm-5.3-flash": {
           "id": "opencode-go/glm-5.3-flash",
@@ -268,7 +261,6 @@
         "opencode-go/glm-5.3",
         "opencode-go/qwen3.8-max"
       ],
-      "idle_timeout_ms": 180000,
       "selection_policy": "quality"
     },
     "compactor": {
@@ -285,7 +277,6 @@
       "models": [
         "opencode-go/gpt-5.6-luna"
       ],
-      "idle_timeout_ms": 900000,
       "output_format": "json"
     }
   }

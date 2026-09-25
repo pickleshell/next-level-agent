@@ -280,7 +280,7 @@ try {
   for (const [key, value] of [['NLA_MODEL_POOLS_PATH', savedEnv.pool], ['NLA_MEMORY_DIR', savedEnv.memory]]) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   fs.rmSync(fixture, { recursive: true, force: true });
 }
-console.log('NLA task, introspection, primary reset and watchdog health integration passed');
+console.log('NLA task, introspection, primary reset and native-error health integration passed');
 
 // Exercise events delivered before promptAsync resolves, and real cancellation
 // while prompt is pending. No provider or OpenCode service is contacted.
@@ -388,7 +388,7 @@ for (const outcome of ['reject', 'error-result', 'false-result', 'confirmed']) {
       },
       prompt: async (request) => {
         calls.push(request.body.model.modelID);
-        if (calls.length === 1) return new Promise(() => {});
+        if (calls.length === 1) throw new Error('Model request timed out waiting for response headers');
         assert.equal(stopped, true, 'fallback requires confirmed stop');
         return { data: { parts: [{ type: 'text', text: 'done' }] } };
       },

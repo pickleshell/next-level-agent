@@ -7,6 +7,25 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Model-request timeout boundary
+
+- Remove wall-clock subagent deadlines and the session-inactivity watchdog;
+  legacy pool `idle_timeout_ms` no longer aborts healthy model/tool loops.
+- Configure OpenCode request-header and SSE chunk waits with five-minute
+  defaults, preserving explicit provider transport settings. No default absolute
+  request deadline; no subagent timeout. Utility single-request limits remain.
+- Cover long tool loops, cancellation, and confirmed-stop failover regressions.
+
+### Mid-turn checkpointed compaction
+
+- Check context pressure when `nla_state` saves a checkpoint; retain the hard
+  context monitor as a backup trigger.
+- Queue native compaction at general tool-batch boundaries without aborting
+  sessions or waiting on the same session loop; keep idle as a fallback.
+- Restore once before native automatic continuation; block on failed restore
+  or uncertain queue submission. Preserve Supervisor audit and child/Browser guards.
+- Add deterministic regressions and an isolated OpenCode 1.18.9 smoke test.
+
 ### Provider switches scoped to auto pools
 
 - Provider `off` excludes models only from `auto` selection, including its
