@@ -23,6 +23,17 @@ const health = (states = {}) => ({
 });
 
 const productionSeed = JSON.parse(fs.readFileSync('config/model-evaluations.json', 'utf8'));
+for (const mode of ['auto', 'select', 'fallback']) {
+  const fixture = { selection_mode: mode, models: ['paused/model', 'paused/off'], model_facts: {
+    'paused/model': { status: 'enabled', provider_status: 'disabled' },
+    'paused/off': { status: 'disabled', provider_status: 'disabled' },
+  } };
+  const expected = mode === 'auto' ? [] : ['paused/model'];
+  assert.deepEqual(routableModelPool(fixture).models, expected, `${mode}: provider off gates only auto`);
+  assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: fixture }).models, expected);
+  assert.deepEqual(rankModelCandidates({ role: 'implementer', pool: fixture, healthManager: health({ 'paused/model': { state: 'cooling', eligible: false } }) }).models, [], 'health still applies');
+}
+assert.deepEqual(materializeAutoPool({ selection_mode: 'auto', models: ['paused/model'] }, [{ binding: 'paused/model', status: 'enabled', provider_status: 'disabled', facts: {} }], new Set(['paused/model'])).models, [], 'auto preferences do not bypass provider off');
 assert.equal(Object.keys(productionSeed.models).length, 27, 'production seed covers the complete example Implementer pool');
 assert.ok(Object.keys(productionSeed.models).every((binding) => binding.startsWith('opencode-go/')), 'production seed contains only OpenCode Go bindings');
 assert.ok(Object.values(productionSeed.models).every(({ scores }) => scores.reliability === 0 && scores.latency === 0), 'environment-specific scores start unevaluated');

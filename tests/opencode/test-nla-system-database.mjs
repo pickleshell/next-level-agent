@@ -182,7 +182,7 @@ try {
   const pausedModel = listModelRegistry(file, 'fixture/imported')[0];
   assert.equal(pausedModel.status, 'enabled', 'provider pause does not mutate model status');
   assert.equal(pausedModel.provider_status, 'disabled');
-  assert.deepEqual(routableModelPool(poolWithSystemFacts(file, { models: ['fixture/imported'] })).models, [], 'fixed pools exclude a disabled provider');
+  assert.deepEqual(routableModelPool(poolWithSystemFacts(file, { models: ['fixture/imported'] })).models, ['fixture/imported'], 'fixed pools ignore a disabled provider');
   assert.deepEqual(materializeAutoPool({ selection_mode: 'auto', models: [] }, listModelRegistry(file), new Set(['fixture/imported'])).models, [], 'auto excludes a disabled provider');
   importModelRegistry(file, JSON.stringify({ models: { 'fixture/imported': { facts: { context_window: 65536 } } } }));
   assert.equal(listProviderRegistry(file, 'fixture')[0].status, 'disabled', 'model import does not re-enable a provider');

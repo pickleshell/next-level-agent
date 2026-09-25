@@ -88,9 +88,11 @@ defaults to `enabled`. The private SQLite model registry owns this override;
 `model_facts.<binding>.status`, but later operator changes remain authoritative.
 The separate `provider_registry` stores each provider's `status` as `enabled`
 or `disabled`. `provider_status_set` changes only that record; no model status,
-facts, scores, or pool configuration is rewritten. A model is eligible only
-when both statuses are enabled. The active coordinator's provider cannot be
-disabled until another orchestra is activated. These gates affect NLA routing,
+facts, scores, or pool configuration is rewritten. Only `auto` requires both
+statuses enabled, including for its final coordinator reserve. Explicit `select`
+and `fallback` pools ignore provider status; individual model status, inventory,
+health, context and policy boundaries still apply. The fixed coordinator is not
+blocked by its provider switch. These gates affect NLA routing,
 not direct OpenCode calls or an already running coordinator response.
 Operator tools accept and display `on`/`off` for both switches. Existing
 `enabled`/`disabled` values remain the storage and pool-file representation

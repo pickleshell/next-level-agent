@@ -110,7 +110,7 @@ export function routableModelPool(pool) {
   if (!pool || !Array.isArray(pool.models)) return pool;
   return { ...pool, models: pool.models.filter((binding) => {
     const status = modelFacts(pool, binding).status;
-    return (status === undefined || status === 'enabled') && modelFacts(pool, binding).provider_status !== 'disabled';
+    return (status === undefined || status === 'enabled') && (selectionMode(pool) !== 'auto' || modelFacts(pool, binding).provider_status !== 'disabled');
   }) };
 }
 
@@ -217,7 +217,7 @@ export function rankModelCandidates({ role, pool = {}, evaluations, healthManage
     if (attemptedSet.has(binding)) reasons.push('attempted');
     if (!health.eligible) reasons.push(health.state || 'unavailable');
     if (facts.status !== undefined && facts.status !== 'enabled') reasons.push('disabled');
-    if (facts.provider_status === 'disabled') reasons.push('provider_disabled');
+    if (selectionMode(pool) === 'auto' && facts.provider_status === 'disabled') reasons.push('provider_disabled');
     if ([preferences.policy, taskProfile.policy].includes('local') && !isLocalModelBinding(binding)) reasons.push('not_local');
     if ([preferences.policy, taskProfile.policy].includes('free') && !isFreeModelFacts(facts)) reasons.push('not_free');
     if (!staticAvailability(facts, now)) reasons.push('static_unavailable');

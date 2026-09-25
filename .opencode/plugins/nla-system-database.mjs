@@ -451,7 +451,7 @@ export function systemSchema() {
     system_settings: 'Typed settings: operator_databases.enabled and routing.selection_policy.<role> for go, or routing.selection_policy.<orchestra>.<role>. system.database.* is read-only; operator.* is metadata.',
     model_evaluations: 'Empirical selector scores for each exact model binding.',
     model_registry: 'Operator facts and durable enabled/disabled status for each exact model binding.',
-    provider_registry: 'Independent durable enabled/disabled status for each provider; disabled providers exclude their models from new NLA tasks without changing model facts or evaluations.',
+    provider_registry: 'Independent durable enabled/disabled status for each provider; disabled providers exclude their models only from auto pools; explicit select/fallback pools ignore provider status without changing model facts or evaluations.',
     model_notes: 'Optional operator annotations for registered models.',
     model_health: 'Persisted temporary cooldown and quarantine state.',
     model_usage_events: 'Privacy-preserving per-completed-request token, cache, cost, model, role, and finish metadata; never prompt or response text.',

@@ -584,7 +584,10 @@ rejected. `nla_models_registry` lists, shows, and imports exact model bindings
 with facts, initial scores, and notes from interactive JSON or a project-local
 file. It separately lists, shows, and changes provider status with
 `provider_list`, `provider_show`, and `provider_status_set`; `status_set` remains
-the per-model control. Importing an unassigned model does not put it into a role pool. Neither
+the per-model control. Provider status gates only `auto`, including its coordinator
+reserve. Explicit `select`/`fallback` and fixed coordinator bindings ignore provider
+status; individual model switches and health/policy checks still apply in every mode.
+Importing an unassigned model does not put it into a role pool. Neither
 tool exposes arbitrary SQL or row-level CRUD for operator tables.
 
 `model_usage_events` stores one row per completed OpenCode assistant message
@@ -654,7 +657,7 @@ not a guarantee against every possible model-generated loop.
 Agent tasks also use the observed primary-session model as a final reserve after
 ordinary eligible candidates fail. It runs at most once per task, with the same
 role, prompt and tool boundaries. This is an explicit exception to fixed-pool
-membership, not a pool configuration change. Registry/provider switches, runtime
+membership, not a pool configuration change. Model switches (provider switches only for auto tasks), runtime
 inventory, health, required context and `local`/`free` policies still apply. Cancellation,
 unconfirmed child termination and unsafe Browser retries do not trigger reserve
 execution. Utility-runtime calls and failover of the coordinator itself are not

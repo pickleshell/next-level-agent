@@ -125,7 +125,9 @@ to run `nla_models_registry` with `action=provider_status_set`,
 status `on`; if any were previously `off`, turn on those exact
 bindings separately with `action=status_set`. Verify with `provider_show` and
 `nla_models`. To resume Go, change only the provider to `status=on`.
-The provider gate applies to new NLA tasks, not direct OpenCode requests or
+The provider gate applies only to new `auto` tasks. Explicit `select`/`fallback`
+pools and the fixed coordinator ignore provider status; individual model status
+and health checks still apply. It does not affect direct OpenCode requests or
 already running child tasks.
 
 A fresh NLA state creates a private SQLite system database at
