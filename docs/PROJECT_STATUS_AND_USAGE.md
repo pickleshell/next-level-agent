@@ -234,6 +234,30 @@ For a small one-file correction, NLA should select Tier 1, make the bounded edit
 
 ## Evidence from a Real Compaction Run
 
+### Tool-boundary compaction (2026-09-25)
+
+`nla_state` now schedules compaction when the latest known usage reaches
+`NLA_CONTEXT_SOFT_TOKENS` (default 50000). The existing hard threshold (70000)
+also schedules it. Usage comes from completed provider accounting, not a live
+tokenizer of the current streaming response, so it can lag by one model step.
+The generic `tool.execute.after` path waits for the tracked tool batch and
+active children/Browser tasks, then prepares the Supervisor/Compactor checkpoint.
+Native `/summarize` is submitted with `auto: true`; the hook awaits the durable
+compaction-part acknowledgement (bounded to five seconds), not the complete
+session loop. Failed/uncertain queue submission is fail-closed once dispatch
+was attempted. A synchronous native auto-continue hook restores validated state
+before continuation; the later compacted event does not inject a second restore.
+Model/permission/tool execution is not aborted for compaction.
+
+Deterministic tests cover soft/hard scheduling, non-NLA/MCP tool boundaries,
+parallel tools, duplicate suppression, stale post-compact usage, queue failures
+and restore failure. The opt-in smoke `smoke-nla-compaction-boundary.mjs` passed
+with the installed OpenCode 1.18.9 and a local HTTP model fixture:
+read → nla_state → Supervisor → native summary → continued response, from one
+user request. This proves runtime sequencing, not real-model summary quality.
+Persistent TUI/server remains recommended; upgrading OpenCode requires repeating
+the smoke because the restoration hook is experimental.
+
 A real persistent OpenCode test demonstrated the following sequence:
 
 - one primary NLA session remained the root throughout the task;
@@ -375,7 +399,7 @@ bindings and authorization/configuration failures are quarantined instead of
 being treated as transient overload. Numeric and HTTP-date `Retry-After` values
 can extend, but not shorten, the configured cooldown. Caller cancellation does
 not poison health. Claims are exclusive per binding and released on local
-failure; watchdog continuations retain their claim until idle/error, not merely
+failure; native-error continuations retain their claim until idle/error, not merely
 until the asynchronous request is accepted. Utility endpoint identities include
 the runtime/API and complete URL and are hashed before introspection. Reset is
 primary-only, validates configured bindings, and rejects in-flight targets.
@@ -421,8 +445,7 @@ machine-specific role bindings.
     "models": [
       "preferred/provider-model",
       "fallback/provider-model"
-    ],
-    "idle_timeout_ms": 300000
+    ]
   }
 }
 ```
@@ -433,7 +456,8 @@ Rules:
 - the first entry is preferred;
 - the following entries are ordered fallbacks;
 - every listed model may be attempted in order until one succeeds;
-- each role has its own timeout;
+- subagents have no lifetime/inactivity timeout; legacy `idle_timeout_ms` is ignored;
+- individual model requests use OpenCode transport `headerTimeout` and SSE `chunkTimeout` (300000 ms defaults); explicit provider settings are preserved, and tools do not consume these timers;
 - the same child session is retained across a supported failover;
 - the visible primary NLA session does not silently switch models;
 - every attempt, failure, fallback, and success is logged.

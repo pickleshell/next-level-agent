@@ -624,15 +624,15 @@ boundary until a subsequent NLA-controlled continuation.
 `Retry-After` accepts both seconds and HTTP-date values and cannot shorten the
 configured cooldown. Caller cancellation is not a provider failure. Binding
 claims are exclusive even for healthy calls: an in-flight binding is skipped,
-and cancellation or local preparation failure releases its claim. The watchdog
-uses the same health manager for NLA-controlled continuations and retains the
+and cancellation or local preparation failure releases its claim. Native-error
+failover uses the same health manager for NLA-controlled continuations and retains the
 claim until idle or error; asynchronous request acceptance is not recovery.
 Terminal events received during continuation dispatch are reconciled after the
 dispatch settles, with failures taking precedence over idle. A rejected
 continuation advances through the remaining eligible models within the budget.
 Cancelling an active `nla_task` requests child-session abort, releases its health
 claim and rejects the task; a late response cannot turn cancellation into success.
-After a child timeout, fallback waits up to five seconds for a successful abort
+After a model-request timeout, fallback waits up to five seconds for a successful abort
 response. A failed, negative or unconfirmed stop blocks fallback with
 `NLA_CHILD_STOP_UNCONFIRMED`. This prevents a new attempt from overlapping the
 old attempt in the same child session. Utility tasks and invocation-time
@@ -640,6 +640,17 @@ Compactor requests also receive caller cancellation; cancellation interrupts
 both the request and response-body wait and cannot be returned as success.
 Utility bindings include runtime, API, and the full endpoint identity (hashed
 to keep URL credentials out of diagnostics), not just the hostname.
+
+**Subagents have no lifetime or inactivity timeout.** One assignment can contain
+many model requests and long-running tools. The legacy pool `idle_timeout_ms`
+is ignored. Request timeouts belong to the OpenCode provider transport: NLA
+defaults `provider.<id>.options.headerTimeout` and `chunkTimeout` to 300000 ms
+(waiting for headers and for the next SSE chunk), with no absolute request
+deadline (`timeout: false`). Explicit operator transport settings are preserved.
+Streaming progress resets the chunk wait; time spent running tools does not
+consume a model-request timeout. This integration is verified with OpenCode
+1.18.9; rerun the request-boundary smoke test after runtime upgrades.
+Utility-model calls remain single requests with their own `request_timeout_ms`.
 
 `nla_models` includes health for every configured binding, including available
 ones. Primary-only `nla_model_health_reset` accepts only an exact configured
@@ -721,6 +732,22 @@ NLA clarification
 ```
 
 Controlled context recovery:
+
+`nla_state` saves a checkpoint and checks the latest reported context usage.
+At the soft threshold (50,000 tokens by default) it schedules controlled
+compaction; the hard-threshold monitor (70,000) remains a backup trigger.
+After the current tool batch finishes, NLA audits the checkpoint and queues
+native OpenCode compaction with automatic continuation. This applies to all
+tools, including reads, shell and MCP, not only `nla_task`. Active children and
+Browser tasks defer the request. Restoration completes before native continuation;
+failed restoration blocks execution. The queue is acknowledged without waiting
+for the same running session to finish, avoiding a tool-loop deadlock.
+
+No new user prompt is required. Idle-boundary compaction remains a fallback.
+Mid-turn queue/restore ordering is tested on OpenCode 1.18.9; re-run
+`node tests/opencode/smoke-nla-compaction-boundary.mjs` after runtime upgrades.
+That opt-in smoke uses an isolated OpenCode server and a local deterministic
+model endpoint, not your configured cloud models or working sessions.
 
 ```text
 NLA saves the deterministic ledger

@@ -224,14 +224,14 @@ provenance. Native OpenCode summarization and restore then proceed with
 whichever checkpoint was selected.
 
 Compactor uses the existing role/model-pool boundary; its role prompt is in
-`opencode.json`, while its ordered provider models and timeout are configured in
-`config/model-pools.json`. For example:
+`opencode.json`, while its ordered provider models are configured in
+`config/model-pools.json`. Agent work has no lifetime timeout; individual model
+requests use OpenCode provider transport timeouts. For example:
 
 ```json
 "compactor": {
   "enabled": true,
-  "models": ["provider/preferred-model", "provider/fallback-model"],
-  "idle_timeout_ms": 90000
+  "models": ["provider/preferred-model", "provider/fallback-model"]
 }
 ```
 
