@@ -6,6 +6,20 @@ For architecture and roles, start with the main [README](../README.md). For the 
 
 ## Status
 
+Every public `nla_task` delegation now requires a persisted Supervisor approval
+of the complete task packet before worker dispatch. Separate acceptance criteria
+are delivered to the worker. Incomplete tasks return to the coordinator for
+revision; internal Supervisor checks avoid recursion. This is enforced at the
+tool boundary, not merely a prompt recommendation. See
+[task admission](NLA_EXECUTION_CONTROL.md#task-review-before-dispatch).
+
+Role step reports now use `nla_report`: runtime journals the claim before
+Supervisor assessment, acknowledges ordinary progress without another model
+call, and gates deviations with guidance, confirmed same-role failover or
+handoff back to NLA. This is bounded event-driven supervision, not continuous
+model polling. See [execution control](NLA_EXECUTION_CONTROL.md) for limits,
+idempotence, restart and evidence semantics.
+
 **Current maturity: Alpha, active development**
 
 The canonical NLA release is `0.1.0-alpha.2`, tagged
@@ -64,6 +78,15 @@ API keys and provider credentials do not belong in this repository, model-pool c
 
 ## Runtime truth
 
+Execution tracking now uses SQLite schema v5: `task_runs`, `task_attempts`,
+`task_events`, `task_reviews`, and `runtime_events`, alongside existing state.
+Read [Durable execution control](NLA_EXECUTION_CONTROL.md) before interpreting
+progress, report readiness, review status or quality updates. `nla_status` reads
+current/history state; `node scripts/nla-events.mjs --follow` follows task events
+and `--runtime --follow` follows lifecycle events. Existing JSONL is retained;
+new JSONL writes require `NLA_LEGACY_RUN_LOG=1` for compatibility. Restart
+OpenCode to load the new tools and migration.
+
 On first startup, the model-pool resolver seeds the `go` orchestra using a
 request/runtime override when supplied, `NLA_MODEL_POOLS_PATH`, or the
 repository default. Overrides are complete pool files and invalid overrides
@@ -79,6 +102,13 @@ source. Named orchestras, their active selection, and all other role pools are
 durable in `system.sqlite`. `nla_orchestra` lists, shows, proposes, creates,
 updates, changes one role pool with `pool_set`, and activates them. Switching
 affects new tasks; existing child tasks keep their resolved model list.
+An optional orchestra `notice` stores up to 1,000 characters of soft model-choice
+advice for the coordinator. `nla_orchestra(action="notice_set", notice="...")`
+updates the active orchestra on the fly, or accepts `name` for another one;
+empty text clears it. It survives restart and is refreshed in the next
+coordinator request without changing role pools, policies or eligibility.
+Legacy `guidance` applies only if `notice` is absent. A `go` source reload keeps
+the saved notice unless the source explicitly supplies a replacement notice.
 `selection_mode: "auto"` is available for agent pools with `models: []` or a
 list of preferred bindings. Unlike `select`, it considers every enabled registry
 record in the current OpenCode provider inventory at task start; listed models
@@ -234,6 +264,27 @@ For a small one-file correction, NLA should select Tier 1, make the bounded edit
 
 ## Evidence from a Real Compaction Run
 
+### Managed child directory and tool contract (2026-09-26)
+
+`nla_task` accepts an absolute existing `directory` for cross-worktree tasks.
+Without it the child inherits the current project; a path mentioned in prose
+does not change the working directory. The coordinator is instructed to pass
+this field when delegating into a different checkout.
+
+Managed children receive their role, actual directory and selected tools, not
+the primary coordinator's skill-loading bootstrap. Project instructions remain
+active. Unavailable-tool errors add corrective guidance; three distinct failures
+in one attempt cause confirmed-stop failover, preserving the child journal and
+local/free restrictions. Duplicate events and ordinary file/test errors do not
+count; this does not impose a subagent lifetime timeout or quarantine a provider.
+
+Regression: `node tests/opencode/test-nla-child-contract.mjs` (also in `test:nla`).
+Live isolated check: `node tests/opencode/smoke-nla-child-contract.mjs`.
+The latter uses real OpenCode with deterministic localhost models and a separate
+Git fixture project: three rejected skill calls, confirmed failover, successful
+relative glob, preserved project `AGENTS.md` and unchanged fixture file. It does
+not measure the quality of a real Ollama model or run the Core acceptance task.
+
 ### Child context recovery (2026-09-25)
 
 Agent-role work has no lifetime timeout. Context/output limits are a separate
@@ -354,7 +405,9 @@ for small/local models, but may also reduce latency and input cost for cloud
 models. `nla_task` now computes the shortlist before creating a tool-using
 OpenCode child prompt and passes `{"*": false, ...shortlistAllows}` through
 OpenCode's native per-prompt tool map. The bounded prompt remains unchanged.
-Tool-free roles and explicitly tool-free steps receive only the wildcard deny.
+Work-tool-free roles receive no work tools; managed reporting roles may still
+receive the separate `nla_report` control channel. Explicitly tool-free steps
+and internal tool-free gates receive only the wildcard deny.
 
 Role capability discovery has a small persistent cache at
 `.opencode/nla-role-capabilities.json` in the target project. It stores tool IDs
@@ -677,6 +730,12 @@ and lock; it was not moved into SQLite.
 Notebook contains compact durable knowledge and retrieval cues. It must not contain transcripts, secrets, raw logs, or speculative completion claims.
 
 ### Runtime telemetry
+
+The default live log is now `runtime_events` in `system.sqlite`.
+Use `node /path/to/next-level-agent/scripts/nla-events.mjs --runtime --follow`.
+The path below and the historical `tail`/`rg` examples require the optional
+`NLA_LEGACY_RUN_LOG=1` compatibility mirror for new events. Existing files are
+not deleted or imported. `nla_status log` reads SQLite without a model call.
 
 ```text
 <project>/.opencode/agent-run.log

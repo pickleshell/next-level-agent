@@ -24,6 +24,14 @@ export function unavailablePoolError(selection, label, attempted = 0) {
 }
 
 export function classifyProviderError(error, now = Date.now()) {
+  if (error?.code === 'NLA_SUPERVISOR_SWITCH') return { category: 'incomplete', reason: 'supervisor_requested_switch', retryAfterMs: 0 };
+  if (error?.code === 'NLA_SUPERVISOR_REQUIRED') return { category: 'non_provider', reason: 'supervisor_reconciliation_required', retryAfterMs: 0 };
+  if (error?.code === 'NLA_EXECUTION_STORAGE_FAILED') return { category: 'non_provider', reason: 'execution_storage_unavailable', retryAfterMs: 0 };
+  if (error?.code === 'NLA_CHILD_REPORT_INVALID') return { category: 'incomplete', reason: 'child_report_invalid', retryAfterMs: 0 };
+  if (error?.code === 'NLA_CHILD_PROGRESS_REVIEW') return { category: 'incomplete', reason: 'progress_review_required', retryAfterMs: 0 };
+  // Task-local protocol failure: continue with another candidate without
+  // quarantining an otherwise reachable provider or inventing quality scores.
+  if (error?.code === 'NLA_CHILD_TOOL_LOOP') return { category: 'incomplete', reason: 'child_tool_protocol_loop', retryAfterMs: 0 };
   if (error?.code === 'NLA_CHILD_INCOMPLETE') return { category: 'incomplete', reason: `child_${error.recoveryReason || 'incomplete'}`, retryAfterMs: 0 };
   const data = error?.data || error?.cause?.data || error || {};
   const text = String(data.message || error?.message || error || '');

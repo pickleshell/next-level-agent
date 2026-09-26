@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
+import { NextLevelAgentPlugin } from './fixture-task-admission.mjs';
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-ollama-continuation-'));
 const previous = {
@@ -71,7 +71,7 @@ try {
 
   await plugin['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: fixture });
   const result = await plugin.tool.nla_task.execute(
-    { role: 'explorer', description: 'tool continuation regression', prompt: 'Inspect with tools and report.' },
+    { result_contract: 'legacy', role: 'explorer', description: 'tool continuation regression', prompt: 'Inspect with tools and report.' },
     { sessionID: 'primary_123', directory: fixture, abort: new AbortController().signal },
   );
 

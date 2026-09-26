@@ -279,7 +279,7 @@ async function main() {
       allowed_origins: [origin], timeout_ms: 30000, action_timeout_ms: 3000, max_sessions: 2, session_ttl_ms: 60000 });
     // Inherit login identity for existing Go credentials, not arbitrary runtime/model overrides.
     environment = Object.fromEntries(['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'TMPDIR', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
-    Object.assign(environment, { NLA_HOME: repo, NLA_MEMORY_DIR: memory,
+    Object.assign(environment, { NLA_HOME: repo, NLA_MEMORY_DIR: memory, NLA_LEGACY_RUN_LOG: '1',
       ASSISTANT_NOTEBOOK_DIR: path.join(memory, 'assistant-notebook'),
       OPENCODE_CONFIG: path.join(root, 'opencode.json'), OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
       NLA_MODEL_POOLS_PATH: path.join(root, 'pools.json'), NLA_BROWSER_CONFIG_PATH: path.join(root, 'browser.json'),

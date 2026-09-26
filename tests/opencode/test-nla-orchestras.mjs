@@ -5,12 +5,13 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
-import { validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
+import { validateModelPools, resolveModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
 import { createModelInventorySync } from '../../.opencode/plugins/nla-model-inventory.mjs';
 import { materializeAutoPool, rankModelCandidates } from '../../.opencode/plugins/nla-model-selection.mjs';
 import {
   activateOrchestra, configuredSelectionPreferences, getOrchestra, initializeOrchestras, initializeSystemDatabase,
   listModelRegistry, listOrchestras, listProviderRegistry, saveOrchestra, setModelStatus,
+  orchestraNotice, setOrchestraNotice, reloadGoOrchestra,
   saveSelectionPreferences, setSystemSetting, synchronizeConfiguredModelRegistry, synchronizeRuntimeModelFacts, updateOrchestra,
 } from '../../.opencode/plugins/nla-system-database.mjs';
 
@@ -52,6 +53,24 @@ try {
   assert.deepEqual(activateOrchestra(file, 'command-openai'), { active: 'command-openai' });
   assert.equal(getOrchestra(file).name, 'command-openai', 'active orchestra survives reopening the database');
   assert.equal(getOrchestra(file).config.guidance, proposal.guidance);
+  assert.equal(orchestraNotice(getOrchestra(file).config), proposal.guidance, 'legacy guidance remains readable');
+  const notice = 'Please use mostly free and cheap models for explorer role.';
+  const noticeFile = path.join(root, 'notice-pools.json');
+  fs.writeFileSync(noticeFile, JSON.stringify({ ...go, notice }));
+  assert.equal(resolveModelPools({ explicitPath: noticeFile }).notice, notice, 'file resolver preserves orchestra notice');
+  const rolesBeforeNotice = getOrchestra(file).config.roles;
+  setOrchestraNotice(file, 'command-openai', notice);
+  assert.equal(getOrchestra(file).config.notice, notice);
+  assert.equal(orchestraNotice(getOrchestra(file).config), notice, 'notice takes precedence');
+  assert.deepEqual(getOrchestra(file).config.roles, rolesBeforeNotice, 'notice cannot mutate pools');
+  assert.throws(() => setOrchestraNotice(file, 'command-openai', 'x'.repeat(1001)), /notice/);
+  assert.throws(() => setOrchestraNotice(file, 'command-openai', 'password=secretvalue'), /secret/i);
+  assert.throws(() => saveOrchestra(file, 'invalid-notice', { ...proposal, notice: false }), /notice/);
+  setOrchestraNotice(file, 'go', notice);
+  reloadGoOrchestra(file, go);
+  assert.equal(getOrchestra(file, 'go').config.notice, notice, 'go reload preserves runtime notice when source omits it');
+  reloadGoOrchestra(file, { ...go, notice: '' });
+  assert.equal(getOrchestra(file, 'go').config.notice, '', 'explicit source notice replaces saved text');
   setSystemSetting(file, 'routing.selection_policy.command-openai.reviewer', JSON.stringify('cost'));
   assert.deepEqual(configuredSelectionPreferences(file, 'reviewer', 'command-openai'), { selection_policy: 'cost' });
   const preferences = { selection_policy: 'balanced', minimum_score: 8 };
@@ -77,6 +96,23 @@ try {
     assert.equal(reviewer.selection_policy, 'quality');
     assert.equal(reviewer.cost_weight, undefined, 'new process does not expose a cost weight');
     const primary = { sessionID: 'primary_restart', directory: root };
+    assert.match(restored.output, /Notice: Please use mostly free/);
+    const messages = { messages: [{ info: { role: 'user', sessionID: primary.sessionID }, parts: [{ type: 'text', text: 'Inspect the task' }] }] };
+    await restarted['experimental.chat.messages.transform']({ sessionID: primary.sessionID }, messages);
+    assert.ok(JSON.stringify(messages).includes(notice), 'persisted notice reaches coordinator after restart');
+    await restarted.tool.nla_orchestra.execute({ action: 'notice_set', notice: 'Favor economical Explorer models when suitable.' }, primary);
+    await restarted['experimental.chat.messages.transform']({ sessionID: primary.sessionID }, messages);
+    const notices = messages.messages[0].parts.filter(p => p.text?.startsWith('<NLA_ACTIVE_ORCHESTRA '));
+    assert.equal(notices.length, 1, 'refresh never duplicates recommendations');
+    assert.match(notices[0].text, /Favor economical/);
+    assert.ok(!JSON.stringify(messages).includes(notice), 'old notice removed from reused message array');
+    assert.deepEqual(getOrchestra(file).config.roles, rolesBeforeNotice);
+    await restarted.tool.nla_orchestra.execute({ action: 'notice_set', notice: '' }, primary);
+    assert.equal(orchestraNotice(getOrchestra(file).config), '', 'empty notice suppresses legacy guidance');
+    await restarted.tool.nla_orchestra.execute({ action: 'notice_set', name: 'go', notice: 'Inactive orchestra advice' }, primary);
+    await restarted['experimental.chat.messages.transform']({ sessionID: primary.sessionID }, messages);
+    assert.ok(!JSON.stringify(messages).includes('Inactive orchestra advice'), 'inactive orchestra edits do not leak into active context');
+    await assert.rejects(restarted.tool.nla_orchestra.execute({ action: 'notice_set', notice: 'not allowed' }, { sessionID: 'foreign_child' }), /primary/);
     const providers = await restarted.tool.nla_models_registry.execute({ action: 'provider_list' }, primary);
     assert.ok(JSON.parse(providers.output).some((record) => record.provider === 'openai' && record.status === 'on'));
     const providerOff = await restarted.tool.nla_models_registry.execute({ action: 'provider_status_set', provider: 'openai', status: 'off' }, primary);

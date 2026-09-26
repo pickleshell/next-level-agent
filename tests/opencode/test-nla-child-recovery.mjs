@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+process.env.NLA_LEGACY_RUN_LOG = '1'; // Compatibility-log assertions below.
 import { incompleteChildResult, recoverChildResult } from '../../.opencode/plugins/nla-child-recovery.mjs';
 import { classifyProviderError, ModelHealthManager } from '../../.opencode/plugins/nla-model-health.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
+import { NextLevelAgentPlugin } from './fixture-task-admission.mjs';
 const partial = { data: { info: { finish: 'length', tokens: { total: 65536 } }, parts: [{ type: 'text', text: 'partial is not success' }] } };
 const ok = { data: { info: { finish: 'stop' }, parts: [{ type: 'text', text: 'verified final report' }] } };
 assert.equal(incompleteChildResult(partial, 65536), 'context_limit');
@@ -80,7 +81,7 @@ for (const scenario of ['recover', 'repeat-limit', 'summary-failed', 'stop-uncon
     } });
     const context = { sessionID: 'primary_recovery', directory: dir, abort: new AbortController().signal };
     await plugin['chat.message']({ sessionID: context.sessionID, agent: 'nla', directory: dir });
-    const task = plugin.tool.nla_task.execute({ role: 'implementer', description: 'Bounded code change', prompt: 'Implement and verify the scoped change.' }, context);
+    const task = plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'implementer', description: 'Bounded code change', prompt: 'Implement and verify the scoped change.' }, context);
     if (['stop-unconfirmed','exhausted'].includes(scenario)) await assert.rejects(task, /Prior tools may have changed files/);
     else assert.equal((await task).output, 'verified final report');
     assert.deepEqual(calls, ['recover','empty','stop-unconfirmed'].includes(scenario) ? ['a','a'] : scenario === 'summary-failed' ? ['a','b'] : scenario === 'exhausted' ? ['a','a','b','b'] : ['a','a','b']);
@@ -89,11 +90,11 @@ for (const scenario of ['recover', 'repeat-limit', 'summary-failed', 'stop-uncon
     assert.doesNotMatch(log, /model_cooldown_started|unknown_provider_failure/);
     assert.equal(fs.readFileSync(artifact, 'utf8'), 'partial change preserved');
     if (scenario === 'recover') {
-      await plugin.tool.nla_task.execute({ role: 'reviewer', description: 'Independent review', prompt: 'Review the retained artifact and evidence.', review_target_session_id: 'child_recovery' }, context);
-      assert.match(fs.readFileSync(path.join(dir, '.opencode/agent-run.log'), 'utf8'), /review_evaluation_recorded/);
+      await plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'reviewer', description: 'Independent review', prompt: 'Review the retained artifact and evidence.', review_target_session_id: 'child_recovery' }, context);
+      assert.match(fs.readFileSync(path.join(dir, '.opencode/agent-run.log'), 'utf8'), /revision_unverified_or_changed/);
       const db = new DatabaseSync(path.join(dir, 'memory/system.sqlite'), { readOnly: true });
       const scores = db.prepare('SELECT coding, reasoning, tool_use FROM model_evaluations WHERE binding=?').get('fixture/a');
-      assert.deepEqual({ ...scores }, { coding: 9, reasoning: 8, tool_use: 9 }); db.close();
+      assert.deepEqual({ ...scores }, { coding: 0, reasoning: 0, tool_use: 0 }, 'no quality attribution without a verifiable repository revision'); db.close();
     }
   } finally {
     await plugin?.dispose();

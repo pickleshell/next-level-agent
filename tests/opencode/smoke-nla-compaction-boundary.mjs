@@ -53,6 +53,7 @@ try {
     XDG_CONFIG_HOME: path.join(root, 'config'), XDG_DATA_HOME: path.join(root, 'data'), XDG_STATE_HOME: path.join(root, 'state'),
     OPENCODE_CONFIG: path.join(root, 'opencode.json'), OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_AUTOUPDATE: 'true',
     NLA_MEMORY_DIR: path.join(root, 'memory'), NLA_MODEL_POOLS_PATH: path.join(root, 'pools.json'), NLA_CONTEXT_SOFT_TOKENS: '1000', NLA_CONTEXT_HARD_TOKENS: '2000',
+    NLA_LEGACY_RUN_LOG: '1',
   }, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = ''; server.stdout.on('data', c => { stdout += c; }); server.stderr.on('data', c => { stderr += c; });
   const deadline = Date.now() + 45000;

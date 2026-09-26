@@ -139,7 +139,7 @@ function readPoolFile(configPath, resolution) {
     ...normalizeAutoPool(pool),
     ...(Object.keys(sharedFacts).length && Array.isArray(pool.models) ? { model_facts: Object.fromEntries(pool.models.filter((binding) => sharedFacts[binding]).map((binding) => [binding, sharedFacts[binding]])) } : {}),
   }]));
-  return { version: parsed.version ?? 1, roles, source: configPath, resolution };
+  return { version: parsed.version ?? 1, roles, ...(parsed.notice !== undefined ? { notice: parsed.notice } : {}), ...(parsed.guidance !== undefined ? { guidance: parsed.guidance } : {}), source: configPath, resolution };
 }
 
 // Accept old persisted settings without perpetuating deprecated routing fields.

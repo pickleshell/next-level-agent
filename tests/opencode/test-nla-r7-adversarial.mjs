@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
+import { NextLevelAgentPlugin } from './fixture-task-admission.mjs';
 import { normalizeLedger, saveLedger } from '../../.opencode/plugins/nla-memory.mjs';
 import { hasSystemRestoreBlock } from '../../.opencode/plugins/nla-system-database.mjs';
 
@@ -31,7 +31,7 @@ try {
     },
   });
   await prepPlugin['chat.message']({ sessionID: 'r7-parent', agent: 'nla', directory: root });
-  await assert.rejects(prepPlugin.tool.nla_task.execute({ role: 'explorer', description: 'prep failure', prompt: 'inspect' }, { sessionID: 'r7-parent', directory: root, abort: new AbortController().signal }));
+  await assert.rejects(prepPlugin.tool.nla_task.execute({ result_contract: "legacy", role: 'explorer', description: 'prep failure', prompt: 'inspect' }, { sessionID: 'r7-parent', directory: root, abort: new AbortController().signal }));
   assert.equal(aborts, 1, 'preparation failure must abort the created child exactly once');
   await prepPlugin.dispose();
 
