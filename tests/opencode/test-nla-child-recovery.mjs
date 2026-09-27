@@ -82,7 +82,11 @@ for (const scenario of ['recover', 'repeat-limit', 'summary-failed', 'stop-uncon
     await plugin['chat.message']({ sessionID: context.sessionID, agent: 'nla', directory: dir });
     const task = plugin.tool.nla_task.execute({ role: 'implementer', description: 'Bounded code change', prompt: 'Implement and verify the scoped change.' }, context);
     if (['stop-unconfirmed','exhausted'].includes(scenario)) await assert.rejects(task, /Prior tools may have changed files/);
-    else assert.equal((await task).output, 'verified final report');
+    else {
+      const result = await task;
+      assert.equal(result.output, 'verified final report\n\nChild session ID: child_recovery');
+      assert.equal(result.metadata.sessionID, 'child_recovery');
+    }
     assert.deepEqual(calls, ['recover','empty','stop-unconfirmed'].includes(scenario) ? ['a','a'] : scenario === 'summary-failed' ? ['a','b'] : scenario === 'exhausted' ? ['a','a','b','b'] : ['a','a','b']);
     if (scenario === 'empty') assert.equal(summaries, 0);
     const log = fs.readFileSync(path.join(dir, '.opencode/agent-run.log'), 'utf8');

@@ -667,6 +667,8 @@ The durable OpenCode child journal retains tool calls and partial work. Recovery
 prompts preserve the assignment and constraints and require inspection of current
 files and test evidence before continuing. An exhausted task reports the child
 session ID and warns that missing final text does **not** mean no files changed.
+Every successful `nla_task` result also exposes the child session ID in both its
+metadata and visible output, so the exact child can be inspected or resumed.
 Independent review remains required where the workflow calls for it; neither
 compaction nor a recovered model response is an acceptance verdict.
 

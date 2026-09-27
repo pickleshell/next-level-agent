@@ -254,7 +254,9 @@ NLA does not invent a new primary ledger for children or copy tool outputs into
 telemetry. The compaction prompt retains scope, constraints, changed-file/tool
 evidence, uncertainties and next step. Continuing models must inspect the actual
 worktree and distinguish recorded from reproduced tests. Final failure includes
-the child session ID and a warning about possible prior modifications.
+the child session ID and a warning about possible prior modifications. Successful
+`nla_task` results expose the same identifier in result metadata and as a visible
+`Child session ID:` line for direct inspection and recovery.
 
 Verify local model limits separately: Ollama `/api/ps` reports the loaded
 `context_length`; `/api/show` may report a much larger architectural maximum.
