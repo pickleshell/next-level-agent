@@ -3,14 +3,6 @@ name: next-level-agent
 description: Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions
 ---
 
-### Task admission
-
-Every public `nla_task` call is reviewed by Supervisor before dispatch. Supply
-the complete goal, inputs/references, exact workspace, constraints, dependencies
-and acceptance criteria. A `revise` response means correct the packet and
-resubmit; do not repeat it unchanged or bypass `nla_task`. Ask the user only for
-genuinely missing information or authority. Supervisor approval does not grant
-new permissions and does not replace independent review of the result.
 <SUBAGENT-STOP>
 If you were dispatched as a subagent to execute a specific task, ignore this skill.
 </SUBAGENT-STOP>
@@ -81,40 +73,6 @@ override notebook notes. Update only durable verified decisions, preferences,
 milestones, blockers, artifact references, and next steps. Never store secrets,
 transcripts, large logs, or speculative reasoning.
 
-### Execution observation and result evidence
-
-The active orchestra's `notice` is soft model-selection advice, injected on
-each coordinator request. Apply it with judgment inside the configured pool,
-policy, eligibility and task requirements; do not change settings merely to
-obey a preference. Use compatible task-profile refinements where useful and
-explain material tradeoffs. It grants no permissions and guarantees no spending
-ratio. `nla_orchestra(action="notice_set", notice="...")` updates the active
-orchestra (or use `name`); an empty string clears it. Legacy `guidance` is used
-only when `notice` is absent.
-
-Use `nla_status` to inspect tasks, attempts, progress warnings and review results;
-`history=true` includes durable records from earlier sessions. SQLite owns these
-records and model evaluations; Notebook is not a replacement execution log.
-Delegate cross-worktree tasks with explicit `directory` and include bounded
-`acceptance_criteria` in the packet and tool argument. Keep the default evidence
-report contract. A ready report is not acceptance; checks may be reported-only.
-For unresolved repetition or uncertain tool effects, use Supervisor with a
-bounded status packet. Do not add a new observer role or use elapsed time alone
-to declare failure. Reviewer's exact target is supplied explicitly or inferred
-only when one pending Implementer exists. Never guess between multiple targets.
-Inspect detailed task status before relying on a prior PASS: changed code makes
-review evidence stale. Storage failures and recovery-required states must be
-reconciled before replaying actions.
-
-Managed work roles receive `nla_report` for meaningful step boundaries and
-deviations. Runtime saves claims, not verified facts. Ordinary start/completed
-reports continue within the delegated scope without an LLM approval call;
-issues and proposed plan changes invoke Supervisor. Inspect durable
-`role_report_decision` events when a task returns a blocker or handoff. NLA owns
-replanning and dispatches any recommended role through `nla_task` only after
-reconciling prior effects and confirming existing authorization. Do not relaunch
-the same stopped work blindly. Reviewer remains responsible for result quality.
-
 ### Session ledger
 
 Use `nla_state` to replace the complete private workflow ledger after
@@ -125,15 +83,8 @@ files, verification evidence, blockers, pending gate, and exact next step.
 
 ### Supervisor gates
 
-Supervisor audits execution health using bounded status evidence and read-only
-diagnostic tools. It never edits files, executes shell commands, dispatches
-agents, changes settings, or accesses the notebook.
-
-For execution incidents, use `nla-supervisor-diagnostics` to prepare a bounded
-status/evidence packet. The runtime supplies that skill's instructions directly
-to Supervisor children. They may inspect `nla_status`, `nla_models` and relevant
-files with `read`/`grep`/`glob`; automatic progress, argument-repair and compaction
-gates remain tool-free. Preserve each gate's requested response format.
+Supervisor audits a bounded ledger and never edits files, dispatches agents, or
+accesses the notebook.
 
 - Tier 3: invoke Supervisor through `nla_task` at the design gate, execution
   gate, material milestones or anomalies, before compaction, and before

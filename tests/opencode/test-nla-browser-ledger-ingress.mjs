@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { NextLevelAgentPlugin } from './fixture-task-admission.mjs';
+import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { BROWSER_TOOLS } from '../../.opencode/plugins/nla-browser.mjs';
 import { hasSystemRestoreBlock, loadSystemLedger } from '../../.opencode/plugins/nla-system-database.mjs';
 
@@ -88,7 +88,6 @@ async function fixture(run) {
     }));
     const requiredRoles = Object.fromEntries(['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']
       .map((role) => [role, { enabled: role !== 'nla', models: ['fixture/browser'] }]));
-    requiredRoles.supervisor.models = ['fixture/admission'];
     fs.writeFileSync(env.NLA_MODEL_POOLS_PATH, JSON.stringify({ roles: { ...requiredRoles,
       // Health claims serialize each model binding; two fake bindings allow
       // the concurrency regression to exercise independent Browser tasks.
@@ -123,7 +122,7 @@ async function fixture(run) {
       root, context, chat, recreate, initialize, authentic, args, contracts,
       setChildAction(action) { childAction = action; },
       async execute(contract, taskID) {
-        const response = await plugin.tool.nla_task.execute({ result_contract: "legacy",
+        const response = await plugin.tool.nla_task.execute({
           ...args('pass'), browser: JSON.stringify(contract),
           ...(taskID === undefined ? {} : { browser_task_id: taskID }),
         }, context());
@@ -225,7 +224,7 @@ test('Browser ledger ingress adversarial integration', { concurrency: false }, a
     const contractsBefore = f.contracts.length;
     const controller = new AbortController();
     controller.abort();
-    const cancelled = await f.plugin.tool.nla_task.execute({ result_contract: "legacy",
+    const cancelled = await f.plugin.tool.nla_task.execute({
       ...f.args('partial'), browser: JSON.stringify(contract), browser_task_id: first.browser_task_id,
     }, { ...f.context(), abort: controller.signal });
     const outcome = JSON.parse(cancelled.output);
@@ -282,7 +281,7 @@ test('Browser ledger ingress adversarial integration', { concurrency: false }, a
     await f.chat();
     const before = f.ledgerBytes();
     const children = f.children;
-    const wrong = await f.plugin.tool.nla_task.execute({ result_contract: "legacy",
+    const wrong = await f.plugin.tool.nla_task.execute({
       ...f.args('partial'), browser: JSON.stringify(tasks[1]), browser_task_id: results[0].browser_task_id,
     }, f.context());
     assert.equal(JSON.parse(wrong.output).reason, 'NLA_BROWSER_RECOVERY_BLOCKED');

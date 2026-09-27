@@ -157,14 +157,10 @@ shows the accepted import shape. A JSON file must be inside the active project;
 the same object may instead be supplied interactively to NLA.
 
 Completed model requests are also recorded in the `model_usage_events` system
-table and redacted lifecycle events in `runtime_events`. Ask NLA for
+table and mirrored to the existing project JSONL run log. Ask NLA for
 `nla_usage summary` or `nla_usage recent` to inspect the current workflow tree.
 For live operator observation, use
-`node /path/to/next-level-agent/scripts/nla-events.mjs --runtime --follow | jq -c 'select(.kind == "model_usage")'`.
-For task progress use `nla_status` or omit `--runtime` from the reader. The old
-JSONL mirror requires `NLA_LEGACY_RUN_LOG=1`; existing files are not deleted.
-See [execution control](docs/NLA_EXECUTION_CONTROL.md) for report/review contracts,
-schema-v5 backup and restart recovery.
+`tail -f /absolute/path/to/project/.opencode/agent-run.log | jq -c 'select(.event == "model_usage")'`.
 These records contain only model/role/session identifiers, token/cache counts,
 cost, and finish reason; prompts and model responses are not stored.
 
@@ -254,8 +250,8 @@ A healthy session should:
 - show `nla` as the primary agent;
 - print the Next Level Agent activation banner;
 - invoke the `next-level-agent` bootstrap skill before the first answer;
-- expose `nla_task`, `nla_state`, `nla_notebook`, `nla_usage`, `nla_status`, and `nla_compact`;
-- persist lifecycle telemetry in the private SQLite database after activity.
+- expose `nla_task`, `nla_state`, `nla_notebook`, `nla_usage`, and `nla_compact`;
+- write lifecycle telemetry to `<project>/.opencode/agent-run.log` after activity.
 
 Use a harmless first request, for example:
 

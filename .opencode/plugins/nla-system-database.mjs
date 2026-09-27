@@ -14,7 +14,7 @@ const SQLiteDatabase = globalThis.Bun
   ? (await import('bun:sqlite')).Database
   : (await import('node:sqlite')).DatabaseSync;
 
-export const SYSTEM_DATABASE_VERSION = 5;
+export const SYSTEM_DATABASE_VERSION = 4;
 
 export class SystemDatabaseError extends Error {
   constructor(message) { super(message); this.name = 'SystemDatabaseError'; }
@@ -45,14 +45,11 @@ function ensurePrivateFile(file) {
   try { fs.chmodSync(file, 0o600); } catch {}
 }
 
-function openDatabase(file, readOnly = false) {
-  if (!readOnly) ensurePrivateDirectory(path.dirname(file));
-  const native = readOnly
-    ? new SQLiteDatabase(file, globalThis.Bun ? { readonly: true } : { readOnly: true })
-    : new SQLiteDatabase(file);
-  if (!readOnly) ensurePrivateFile(file);
-  native.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  if (!readOnly) native.exec('PRAGMA journal_mode = DELETE;');
+function openDatabase(file) {
+  ensurePrivateDirectory(path.dirname(file));
+  const native = new SQLiteDatabase(file);
+  ensurePrivateFile(file);
+  native.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA busy_timeout = 5000;');
   if (!globalThis.Bun) return native;
   // Normalize Bun's query() API to the small DatabaseSync subset used below.
   return {
@@ -84,15 +81,6 @@ function transaction(db, callback) {
 function closeDatabase(db) {
   try { db.close(); } catch {}
 }
-
-// Internal storage seam for execution tracking; no arbitrary SQL is exposed
-// through agent tools. Readers never create/migrate/chmod the database.
-export function withSystemDatabase(file, callback, { write = false } = {}) {
-  const db = openDatabase(file, !write);
-  try { return write ? transaction(db, () => callback(db)) : callback(db); }
-  finally { closeDatabase(db); }
-}
-export { assertNoSecrets };
 
 function validBinding(binding) {
   try { return parseModelBinding(binding).binding; }
@@ -240,38 +228,6 @@ function migrate(db) {
     SELECT DISTINCT substr(binding, 1, instr(binding, '/') - 1), 'enabled', ?
     FROM model_registry WHERE instr(binding, '/') > 1`).run(now());
   const applied = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(SYSTEM_DATABASE_VERSION);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS runtime_events (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT, root_session_id TEXT,
-      kind TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS runtime_events_root ON runtime_events(root_session_id, sequence);
-    CREATE TABLE IF NOT EXISTS task_runs (
-      task_id TEXT PRIMARY KEY, owner_session_id TEXT NOT NULL, root_session_id TEXT NOT NULL,
-      child_session_id TEXT UNIQUE, role TEXT NOT NULL, orchestra TEXT NOT NULL,
-      directory TEXT NOT NULL, description TEXT NOT NULL, criteria_json TEXT NOT NULL,
-      status TEXT NOT NULL, report_json TEXT, revision TEXT, review_target TEXT,
-      process_epoch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS task_runs_root ON task_runs(root_session_id, created_at);
-    CREATE TABLE IF NOT EXISTS task_attempts (
-      attempt_id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES task_runs(task_id),
-      ordinal INTEGER NOT NULL, binding TEXT NOT NULL, status TEXT NOT NULL, reason TEXT,
-      started_at TEXT NOT NULL, ended_at TEXT, UNIQUE(task_id, ordinal)
-    );
-    CREATE TABLE IF NOT EXISTS task_events (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE,
-      task_id TEXT NOT NULL REFERENCES task_runs(task_id), attempt_id TEXT REFERENCES task_attempts(attempt_id),
-      kind TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS task_events_task ON task_events(task_id, sequence);
-    CREATE TABLE IF NOT EXISTS task_reviews (
-      target_task_id TEXT PRIMARY KEY REFERENCES task_runs(task_id),
-      reviewer_task_id TEXT NOT NULL REFERENCES task_runs(task_id),
-      verdict TEXT NOT NULL, scores_json TEXT NOT NULL, evaluation_status TEXT NOT NULL,
-      reason TEXT NOT NULL, revision TEXT, created_at TEXT NOT NULL
-    );
-  `);
   if (!applied) db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(SYSTEM_DATABASE_VERSION, now());
 }
 
@@ -319,12 +275,6 @@ export function initializeSystemDatabase({ stateRoot, seedPath, legacyEvaluation
   const db = openDatabase(file);
   try {
     if (db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') throw new SystemDatabaseError('System database integrity check failed');
-    const hasSchema = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get();
-    const oldVersion = hasSchema ? Number(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version || 0) : 0;
-    if (oldVersion > 0 && oldVersion < SYSTEM_DATABASE_VERSION) {
-      const backup = `${file}.before-v${SYSTEM_DATABASE_VERSION}`;
-      if (!fs.existsSync(backup)) { db.prepare('VACUUM INTO ?').run(backup); ensurePrivateFile(backup); }
-    }
     transaction(db, () => {
       migrate(db);
       ensureDefaultSettings(db);
@@ -505,11 +455,6 @@ export function systemSchema() {
     model_notes: 'Optional operator annotations for registered models.',
     model_health: 'Persisted temporary cooldown and quarantine state.',
     model_usage_events: 'Privacy-preserving per-completed-request token, cache, cost, model, role, and finish metadata; never prompt or response text.',
-    task_runs: 'Durable delegated tasks, role, directory, compact acceptance contract, report and revision; no transcript.',
-    task_attempts: 'Model attempts belonging to each task, status and bounded failure reason.',
-    task_events: 'Ordered deduplicated execution metadata; no tool arguments/output, prompts or reasoning. Read with nla_status or scripts/nla-events.mjs.',
-    task_reviews: 'One attributed independent verdict per task; score update and receipt committed atomically.',
-    runtime_events: 'Redacted NLA lifecycle, routing, usage and failure log; SQLite is authoritative, JSONL is a compatibility mirror.',
     session_ledgers: 'Authoritative NLA workflow checkpoints used for restore and compaction.',
     restore_blocks: 'Fail-closed markers that deny unsafe continuation after restore failure.',
     database_catalog: 'Named operator databases outside NLA architectural tables.',
@@ -523,29 +468,11 @@ function validOrchestraName(name) {
   return name;
 }
 
-export function orchestraNotice(config) {
-  return config.notice !== undefined ? config.notice : config.guidance || '';
-}
-
-export function setOrchestraNotice(file, name, notice) {
-  validOrchestraName(name);
-  if (typeof notice !== 'string' || notice.length > 1000) throw new SystemDatabaseError('Orchestra notice must be a string up to 1000 characters');
-  assertNoSecrets(notice, 'Orchestra notice');
-  return withSystemDatabase(file, db => {
-    const row = db.prepare('SELECT config_json FROM orchestras WHERE name=?').get(name);
-    if (!row) throw new SystemDatabaseError(`Unknown orchestra: ${name}`);
-    const config = validOrchestraConfig({ ...JSON.parse(row.config_json), notice });
-    db.prepare('UPDATE orchestras SET config_json=?,updated_at=? WHERE name=?').run(jsonText(config), now(), name);
-    return { name, notice };
-  }, { write: true });
-}
-
 function validOrchestraConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new SystemDatabaseError('Orchestra config must be an object');
   if (config.version !== undefined && config.version !== 1) throw new SystemDatabaseError('Unsupported orchestra config version');
-  if (config.notice !== undefined && (typeof config.notice !== 'string' || config.notice.length > 1000)) throw new SystemDatabaseError('Orchestra notice must be a string up to 1000 characters');
   if (config.guidance !== undefined && (typeof config.guidance !== 'string' || config.guidance.length > 1000)) throw new SystemDatabaseError('Orchestra guidance must be a string up to 1000 characters');
-  const normalized = { version: config.version ?? 1, roles: config.roles && Object.fromEntries(Object.entries(config.roles).map(([role, pool]) => [role, normalizeAutoPool(pool)])), ...(config.guidance ? { guidance: config.guidance } : {}), ...(config.notice !== undefined ? { notice: config.notice } : {}) };
+  const normalized = { version: config.version ?? 1, roles: config.roles && Object.fromEntries(Object.entries(config.roles).map(([role, pool]) => [role, normalizeAutoPool(pool)])), ...(config.guidance ? { guidance: config.guidance } : {}) };
   validateModelPools(normalized, 'orchestra');
   for (const role of ['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']) {
     if (!normalized.roles[role]) throw new SystemDatabaseError(`Orchestra is missing required role: ${role}`);
@@ -612,9 +539,6 @@ export function reloadGoOrchestra(file, config) {
   try {
     return transaction(db, () => {
       migrate(db);
-      const existing = db.prepare('SELECT config_json FROM orchestras WHERE name=?').get('go');
-      const prior = existing ? JSON.parse(existing.config_json) : {};
-      if (!Object.hasOwn(config, 'notice') && Object.hasOwn(prior, 'notice')) valid.notice = prior.notice;
       db.prepare('UPDATE orchestras SET config_json = ?, updated_at = ? WHERE name = ?').run(jsonText(valid), now(), 'go');
       return { name: 'go', roles: Object.keys(valid.roles).length };
     });
@@ -734,11 +658,6 @@ export function systemDatabaseStatus(file) {
       model_notes: Number(db.prepare('SELECT COUNT(*) AS count FROM model_notes').get().count),
       health_records: Number(db.prepare('SELECT COUNT(*) AS count FROM model_health').get().count),
       model_usage_events: Number(db.prepare('SELECT COUNT(*) AS count FROM model_usage_events').get().count),
-      task_runs: Number(db.prepare('SELECT COUNT(*) AS count FROM task_runs').get().count),
-      task_attempts: Number(db.prepare('SELECT COUNT(*) AS count FROM task_attempts').get().count),
-      task_events: Number(db.prepare('SELECT COUNT(*) AS count FROM task_events').get().count),
-      task_reviews: Number(db.prepare('SELECT COUNT(*) AS count FROM task_reviews').get().count),
-      runtime_events: Number(db.prepare('SELECT COUNT(*) AS count FROM runtime_events').get().count),
       session_ledgers: Number(db.prepare('SELECT COUNT(*) AS count FROM session_ledgers').get().count),
       restore_blocks: Number(db.prepare('SELECT COUNT(*) AS count FROM restore_blocks').get().count),
       databases: db.prepare('SELECT name, purpose, created_at, updated_at FROM database_catalog ORDER BY name').all(),

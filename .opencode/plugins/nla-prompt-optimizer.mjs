@@ -1,9 +1,8 @@
-const TOOL_FREE_ROLES = new Set(['router', 'architect', 'compactor']);
+const TOOL_FREE_ROLES = new Set(['router', 'supervisor', 'architect', 'compactor']);
 
 // This is a capability ceiling, not a routing table. Router chooses the role;
 // Compactor may only narrow the tools that role is ever allowed to receive.
 export const ROLE_TOOL_CEILINGS = Object.freeze({
-  supervisor: Object.freeze(['nla_status', 'nla_models', 'read', 'grep', 'glob']),
   scout: Object.freeze(['webfetch', 'read', 'grep']),
   explorer: Object.freeze(['read', 'grep', 'glob']),
   implementer: Object.freeze(['read', 'grep', 'edit', 'write', 'bash']),
@@ -22,7 +21,6 @@ const TOOL_SIGNALS = Object.freeze({
 });
 
 const REQUIRED_BY_ROLE = Object.freeze({
-  supervisor: ['nla_status', 'nla_models'],
   scout: ['webfetch', 'read'],
   explorer: ['read', 'grep'],
   implementer: ['read', 'edit'],

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-process.env.NLA_LEGACY_RUN_LOG = '1'; // Compatibility-log assertions below.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { modelPoolSummary, preflightModelPools, validateModelPools } from '../../.opencode/plugins/nla-model-pools.mjs';
 import { ModelHealthManager, classifyProviderError, retryAfterMs } from '../../.opencode/plugins/nla-model-health.mjs';
 import { runUtilityModel, utilityHealthEndpoint } from '../../.opencode/plugins/nla-utility-runtime.mjs';
-import { NextLevelAgentPlugin, availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from './fixture-task-admission.mjs';
+import { NextLevelAgentPlugin, availablePoolModels, effectiveModelPools, formatModelPools, modelCooldownMs, modelPoolsPath, retryableProviderError } from '../../.opencode/plugins/next-level-agent.js';
 
 const completeFixtureRoles = (roles, primary) => Object.fromEntries(
   ['nla', 'router', 'supervisor', 'scout', 'explorer', 'architect', 'implementer', 'reviewer', 'compactor']
@@ -172,7 +171,7 @@ try {
     const fixtureRoles = {
       nla: { enabled: false, selection_mode: 'fallback', models: ['fixture/a'] },
       router: { enabled: true, selection_mode: 'fallback', models: ['fixture/a', 'fixture/b', 'fixture/c'], idle_timeout_ms: 0 },
-      supervisor: { enabled: true, selection_mode: 'fallback', models: ['fixture/admission'] },
+      supervisor: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
       scout: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
       explorer: { enabled: true, selection_mode: 'fallback', models: ['fixture/a'] },
       architect: { enabled: true, selection_mode: 'select', models: ['fixture/a', 'fixture/b', 'fixture/c'], cooldown_ms: 123456, idle_timeout_ms: 0 },
@@ -190,7 +189,7 @@ try {
   plugin = await NextLevelAgentPlugin({ directory: fixture, client: { config: {
     providers: async () => {
       if (inventoryFails) throw new Error('fixture inventory unavailable');
-      return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c', 'reloaded', 'admission'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
+      return { data: { providers: [{ id: 'fixture', models: Object.fromEntries(['a', 'b', 'c', 'reloaded'].map((id) => [id, { limit: { context: 131072 } }])) }] } };
     },
   }, session: {
     create: async () => ({ data: { id: `child-${++serial}` } }),
@@ -214,7 +213,7 @@ try {
   );
   await plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'npm test -- --runInBand' } });
   const context = { sessionID: 'primary_123', directory: fixture, abort: new AbortController().signal };
-  const result = await plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'architect', description: 'fixture', prompt: 'do bounded task' }, context);
+  const result = await plugin.tool.nla_task.execute({ role: 'architect', description: 'fixture', prompt: 'do bounded task' }, context);
   assert.deepEqual(actual, ['a', 'b', 'c']);
   assert.equal(result.metadata.attempt, 3);
   const inspection = await plugin.tool.nla_models.execute({}, context);
@@ -232,10 +231,10 @@ try {
   assert.equal(inspection.metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
   actual.length = 0;
   await plugin.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/c', status: 'disabled' }, context);
-  await assert.rejects(plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'router', description: 'disabled fallback', prompt: 'next' }, context), (error) => error.code === 'NLA_MODEL_POOL_UNAVAILABLE' && error.attempted === 0);
+  await assert.rejects(plugin.tool.nla_task.execute({ role: 'router', description: 'disabled fallback', prompt: 'next' }, context), (error) => error.code === 'NLA_MODEL_POOL_UNAVAILABLE' && error.attempted === 0);
   assert.deepEqual(actual, [], 'fallback never dispatches an operator-disabled model');
   await plugin.tool.nla_models_registry.execute({ action: 'status_set', binding: 'fixture/c', status: 'enabled' }, context);
-  await plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'router', description: 'next', prompt: 'next' }, context);
+  await plugin.tool.nla_task.execute({ role: 'router', description: 'next', prompt: 'next' }, context);
   assert.deepEqual(actual, ['c'], 'health shared across roles');
   await assert.rejects(plugin.tool.nla_model_health_reset.execute({ binding: 'unknown/secret' }, context), /Unknown configured/);
   await assert.rejects(plugin.tool.nla_model_health_reset.execute({ binding: 'fixture/a' }, { ...context, sessionID: 'other' }), /primary/i);
@@ -249,7 +248,7 @@ try {
   assert.deepEqual(continued, ['c'], 'watchdog continuation skips shared cooling binding');
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'probe-in-flight');
   actual.length = 0;
-  await assert.rejects(plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'router', description: 'busy', prompt: 'busy' }, context), (error) => error.code === 'NLA_MODEL_POOL_UNAVAILABLE' && error.attempted === 0);
+  await assert.rejects(plugin.tool.nla_task.execute({ role: 'router', description: 'busy', prompt: 'busy' }, context), (error) => error.code === 'NLA_MODEL_POOL_UNAVAILABLE' && error.attempted === 0);
   assert.deepEqual(actual, [], 'no early probe when cooling or in-flight');
   await plugin.event({ event: { type: 'session.idle', properties: { sessionID: 'native' } } });
   assert.equal((await plugin.tool.nla_models.execute({}, context)).metadata.health.find((item) => item.binding === 'fixture/c').state, 'available');
@@ -328,7 +327,7 @@ for (const mode of ['reject', 'response-error', 'early-idle', 'early-status-idle
     const ctx = { sessionID: 'primary_123', directory: dir, abort: controller.signal };
     const tick = () => new Promise((resolve) => setImmediate(resolve));
     if (mode.startsWith('cancel')) {
-      const task = instance.tool.nla_task.execute({ result_contract: "legacy", role: 'architect', description: 'cancel fixture', prompt: 'bounded task' }, ctx);
+      const task = instance.tool.nla_task.execute({ role: 'architect', description: 'cancel fixture', prompt: 'bounded task' }, ctx);
       const rejected = assert.rejects(task, /caller_or_application_error/);
       await tick();
       controller.abort();
@@ -338,7 +337,7 @@ for (const mode of ['reject', 'response-error', 'early-idle', 'early-status-idle
       assert.equal((await instance.tool.nla_models.execute({}, ctx)).metadata.health[0].state, 'available');
       finish({ data: { parts: [{ type: 'text', text: 'late success' }] } });
       await tick();
-      assert.ok(!fs.readFileSync(path.join(dir, '.opencode', 'agent-run.log'), 'utf8').split('\n').filter(line => line.includes('model_attempt_succeeded') && !line.includes('"agent":"supervisor"')).length);
+      assert.ok(!fs.readFileSync(path.join(dir, '.opencode', 'agent-run.log'), 'utf8').includes('model_attempt_succeeded'));
     } else {
       await instance['tool.execute.before']({ tool: 'task', sessionID: 'primary_123' }, { args: { subagent_type: 'architect' } });
       await instance.event({ event: { type: 'session.created', properties: { info: { id: 'native_123', parentID: 'primary_123' } } } });
@@ -395,7 +394,7 @@ for (const outcome of ['reject', 'error-result', 'false-result', 'confirmed']) {
       },
     } } });
     await instance['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: dir });
-    const task = instance.tool.nla_task.execute({ result_contract: "legacy", role: 'architect', description: 'stop fixture', prompt: 'task' }, { sessionID: 'primary_123', directory: dir, abort: new AbortController().signal });
+    const task = instance.tool.nla_task.execute({ role: 'architect', description: 'stop fixture', prompt: 'task' }, { sessionID: 'primary_123', directory: dir, abort: new AbortController().signal });
     const observed = outcome === 'confirmed' ? task : assert.rejects(task, /caller_or_application_error/);
     await stopping;
     assert.deepEqual(calls, ['a'], 'no fallback while stop is pending');
@@ -460,7 +459,7 @@ for (const validCatalog of [true, false]) {
     } });
     await instance['chat.message']({ sessionID: 'primary_123', agent: 'nla', directory: dir });
     const ctx = { sessionID: 'primary_123', directory: dir, abort: new AbortController().signal };
-    const task = instance.tool.nla_task.execute({ result_contract: "legacy", role: 'implementer', description: 'patch fixture', prompt: 'Implement a new file and run tests.' }, ctx);
+    const task = instance.tool.nla_task.execute({ role: 'implementer', description: 'patch fixture', prompt: 'Implement a new file and run tests.' }, ctx);
     if (validCatalog) await task;
     else await assert.rejects(task, error => error.code === 'NLA_TASK_PREPARATION_FAILED' && error.attempted === 0 && !/cooling or in-flight/.test(error.message));
     assert.equal(requests, validCatalog ? 1 : 0);

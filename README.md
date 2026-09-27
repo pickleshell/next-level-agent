@@ -33,7 +33,6 @@ The priorities are correctness, evidence, minimal necessary process, bounded con
 - **Risk-based routing.** Small tasks stay with NLA. Larger or riskier tasks receive only the roles and gates they need.
 - **Architecture before implementation.** Important designs and Tier 3 tasks go through Architect and user approval before code changes begin.
 - **Independent checks.** Reviewer checks the result, while Supervisor checks workflow state, approvals, context pressure, and evidence.
-- **Execution supervision.** Roles report progress; Supervisor investigates deviations and guides recovery. Runtime journals decisions and guards continuation—without requiring model approval for every tool call. See [Execution supervision](#execution-supervision).
 - **Role-specific model pools.** Each child role can use ordered fallback, ranked selection from a fixed list, or dynamic selection across the enabled inventory with optional model preferences.
 - **Efficient context use.** Child agents receive focused task packets instead of the full conversation. Completed state is kept in structured memory rather than repeatedly copied into prompts.
 - **Coordinator memory.** A private ledger and Assistant Notebook preserve decisions, verified facts, blockers, and the next step across a long task.
@@ -72,7 +71,7 @@ flowchart TB
     B -. evidence .-> N
 
     F[Operator model facts] --> DB
-    DB[(system.sqlite<br/>orchestras, model registry,<br/>evaluations, health, ledgers,<br/>tasks, events, reviews)]
+    DB[(system.sqlite<br/>orchestras, model registry,<br/>evaluations, health, ledgers)]
     DB -->|active orchestra,<br/>facts, scores, health| S
     S --> P{Role pool mode}
     P -->|select| MS[Rank by quality,<br/>balance, or cost]
@@ -381,32 +380,6 @@ not a promise that the primary session or every other role is free.
 
 The configuration and routing paths are separate: the pool JSON seeds or
 reloads `go`, while SQLite holds named orchestras and the active selection.
-
-An orchestra can also carry a short **`notice`**: soft model-selection advice
-for the coordinator, not another routing policy. For example, with Explorer
-configured as `auto` + `balanced`:
-
-```json
-"notice": "Please use mostly free and cheap models for explorer role."
-```
-
-NLA weighs that preference against the task without changing the configured
-pool/policy, bypassing eligibility or weakening quality/safety requirements.
-The selector does not numerically score this prose; it informs the coordinator's
-judgment and compatible task-profile refinements. It is not a price guarantee.
-Ask NLA to update the notice, or call:
-
-```text
-nla_orchestra(action="notice_set", notice="Please use mostly free and cheap models for explorer role.")
-```
-
-Omitting `name` targets the active orchestra. The text is stored in SQLite and
-refreshed in the coordinator's next model request without a restart; existing
-child tasks retain their assignment. `notice=""` clears it. Maximum length is
-1,000 characters; do not include secrets. Legacy `guidance` remains supported
-when `notice` is absent. For `go`, reloading a pool file without `notice`
-preserves the saved notice; an explicit source `notice` replaces it.
-
 Each new task resolves one role pool into its own candidate snapshot:
 
 ```mermaid
@@ -474,10 +447,6 @@ NLA imports it once instead; repository updates never replace local evidence.
 
 ### Persistent system database
 
-Task runs, model attempts, execution events and independent review receipts
-remain in SQLite across sessions. See [Execution supervision](#execution-supervision)
-for how NLA uses this evidence to monitor work and guide recovery.
-
 `system.sqlite` is NLA's relational state layer. Versioned migrations create
 system settings, named orchestras and their active selection, empirical model evaluations, model registry facts and notes,
 model health, privacy-preserving per-request usage accounting, authoritative workflow ledgers, fail-closed restore blocks, and
@@ -531,14 +500,13 @@ stays in its independently verified filesystem store because its lock, witness,
 and evidence artifacts are part of the Browser security boundary.
 
 Every completed OpenCode assistant request with provider accounting gets one
-durable `model_usage_events` row and a matching `model_usage` lifecycle event in
-SQLite. A later, more complete accounting update replaces that
+durable `model_usage_events` row and a matching `model_usage` JSONL event in
+the project run log. A later, more complete accounting update replaces that
 row rather than duplicating it. Both contain only session/role/model
 identifiers, token/cache counts, cost, and finish reason — never prompt or
 response text. Ask NLA for
 `nla_usage summary` during a workflow, or inspect the live stream with
-`node scripts/nla-events.mjs --runtime --follow | jq -c 'select(.kind == "model_usage")'`.
-The old JSONL mirror is opt-in with `NLA_LEGACY_RUN_LOG=1`; existing logs remain.
+`tail -f .opencode/agent-run.log | jq -c 'select(.event == "model_usage")'`.
 
 Writable operational settings are intentionally narrow: `operator_databases.enabled`
 (boolean) controls creation of additional databases and tables, and
@@ -593,15 +561,6 @@ models. The bounded task packet is currently passed through unchanged; runtime
 optimization prunes tool schemas but does not yet perform general prompt-text
 rewriting.
 
-For another checkout/worktree, pass its absolute `directory` to `nla_task`.
-NLA validates it before dispatch; relative child searches run there, not in the
-coordinator's home directory. Managed children receive a role/tool contract,
-not the coordinator's skill-loading bootstrap. A rejected unavailable-tool call
-adds corrective guidance; three distinct such errors in one model attempt trigger
-confirmed-stop failover through the remaining eligible candidates. Ordinary
-test/file errors do not trigger this guard, and there is no subagent lifetime
-timeout. Task packets, safety constraints and prior child history are preserved.
-
 Prompt optimization must preserve the task, safety constraints, permissions,
 acceptance criteria, and provenance. It may narrow capabilities but may not
 grant a tool that the target role is not allowed to use. A tool-free step gets
@@ -649,8 +608,7 @@ the same NLA process. The default cooldown is 30 seconds; a pool may override
 it with cooldown_ms, or the process-wide default may be changed with
 NLA_MODEL_COOLDOWN_MS. Successful recovery clears the entry. Cooldown
 decisions and expiry timestamps are written to the private agent-run log.
-Unexpired cooldown/quarantine observations are restored from SQLite on restart;
-process-local in-flight claims are not persisted as permanently busy bindings.
+The list is intentionally not persistent: restarting NLA resets it.
 
 Rate limits, overloads, transient network failures, and bounded timeouts are
 cooling failures. A retired or missing model binding, or a provider
@@ -766,43 +724,6 @@ Bounded utility success is not evidence that the same model is suitable for a
 full OpenCode child-agent loop.
 
 The table describes the intended NLA role contracts. Some least-privilege boundaries are still enforced through role instructions rather than the complete hard permission matrix proposed in Draft 0.4. See the [implementation status audit](docs/DRAFT_0_4_IMPLEMENTATION_STATUS.md) for the exact boundary.
-
-## Execution supervision
-
-**Supervisor reviews tasks before launch and watches execution; Reviewer checks the result; NLA owns the goal.**
-The programmatic Execution Monitor observes tool activity and detects repeated
-work. Supervisor investigates incidents with read-only task, model and file
-tools, guided by the automatically supplied `nla-supervisor-diagnostics` skill.
-It is event-driven oversight, not a model continuously polling logs.
-
-- **Task review before launch.** Every public `nla_task` delegation first receives
-  a tool-free Supervisor review of its complete packet: goal, inputs, workspace,
-  scope, constraints and acceptance criteria. A persisted approval is bound to
-  that exact packet; incomplete tasks return to NLA for correction, not to a
-  worker. Failure to obtain approval blocks dispatch. Internal Supervisor checks
-  do not recursively review themselves.
-- **Short progress reports.** Roles use `nla_report` at meaningful step boundaries
-  to report starts, completions, problems or proposed plan changes. Ordinary
-  progress needs no extra model approval.
-- **Decisions before continuation.** Runtime saves the report before Supervisor
-  assesses a deviation, then saves the decision before releasing the worker.
-  Supervisor can provide guidance, request a safe same-role model switch, or
-  recommend a handoff to NLA. The coordinator remains the only task dispatcher.
-- **Guarded recovery.** Model switching requires confirmed stop; uncertain tool
-  effects require reconciliation before replay. Supervisor cannot edit files,
-  run shell commands, change settings or grant new permissions. Short automatic
-  gate checks remain tool-free.
-- **Visible, durable evidence.** `nla_status` shows tasks, attempts, reports and
-  decisions, including prior-session history. A SQLite-backed console reader
-  follows events without calling a model. Runtime owns the journal, not Supervisor.
-
-Reports are claims, not proof of success; independent review and verification
-remain necessary. Reporting is a control channel in addition to the optimized
-work-tool shortlist; explicitly tool-free steps omit it. There is no subagent
-lifetime timeout, and already-started actions are not retroactively rolled back.
-
-See [Durable execution control](docs/NLA_EXECUTION_CONTROL.md) for response
-contracts, recovery limits, restart behavior and console commands.
 
 ## Workflow
 

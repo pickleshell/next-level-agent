@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-process.env.NLA_LEGACY_RUN_LOG = '1'; // Compatibility-log assertions below.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NextLevelAgentPlugin } from './fixture-task-admission.mjs';
+import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
 import { configureRequestTimeouts } from '../../.opencode/plugins/nla-request-timeouts.mjs';
 
 const config = { provider: { custom: { options: { headerTimeout: 1234, chunkTimeout: false, timeout: 9999, apiKey: 'fixture' } } } };
@@ -39,7 +38,7 @@ try {
     },
   } } });
   await plugin['chat.message']({ sessionID: 'primary_boundary', agent: 'nla', directory: dir });
-  const result = await plugin.tool.nla_task.execute({ result_contract: "legacy", role: 'architect', description: 'Read architecture', prompt: 'Inspect repository files read-only.' }, { sessionID: 'primary_boundary', directory: dir, abort: new AbortController().signal });
+  const result = await plugin.tool.nla_task.execute({ role: 'architect', description: 'Read architecture', prompt: 'Inspect repository files read-only.' }, { sessionID: 'primary_boundary', directory: dir, abort: new AbortController().signal });
   assert.match(result.output, /completed after multiple/);
   assert.equal(calls, 1);
   assert.equal(aborts, 0, 'legacy idle timeout must never abort a working subagent');
