@@ -96,6 +96,17 @@ accesses the notebook.
 
 NLA executes the verdict. Supervisor does not control the session directly.
 
+### Planner and Test Writer
+
+For approved substantial work, use the `planner` role to turn requirements and
+architecture into a dependency graph with independently verifiable tasks and
+safe parallel groups. NLA remains responsible for dispatch and integration.
+
+Use `test_writer` before implementation when acceptance criteria can be tested
+through public contracts. It writes only tests and test-owned fixtures and must
+produce valid RED evidence. The Implementer owns production code; Reviewer
+independently checks the resulting implementation and evidence.
+
 ### Context compaction
 
 When the plugin reports context pressure or continuity is at risk, stop

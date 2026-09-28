@@ -52,7 +52,7 @@ API keys and provider credentials do not belong in this repository, model-pool c
 | --- | --- |
 | Orchestrator / coordinator | The primary NLA agent: owns the user goal, approvals, delegation, shared state, and final acceptance. It is not a model pool or an orchestra. |
 | Orchestra | A named, durable set of role pools and policies. Exactly one is active for new NLA tasks. `go` is seeded from the pool file; other named orchestras live in the private system database. |
-| Role | A bounded responsibility such as Explorer, Architect, Implementer, or Reviewer. A child role receives a task packet and uses its own model pool. |
+| Role | A bounded responsibility such as Explorer, Architect, Planner, Test Writer, Implementer, or Reviewer. A child role receives a task packet and uses its own model pool. |
 | Model pool | The candidate models and routing rules assigned to one role in an orchestra. A pool has a `selection_mode` and, for `select` or `auto`, a selection policy. |
 | `fallback` | Tries the pool's fixed `models` array in order after a retryable failure. |
 | `select` | Filters and ranks only the pool's listed models using role/task requirements, model facts, scores, policy, and health; a failed choice can be followed by another eligible candidate. |
@@ -254,7 +254,9 @@ NLA does not invent a new primary ledger for children or copy tool outputs into
 telemetry. The compaction prompt retains scope, constraints, changed-file/tool
 evidence, uncertainties and next step. Continuing models must inspect the actual
 worktree and distinguish recorded from reproduced tests. Final failure includes
-the child session ID and a warning about possible prior modifications.
+the child session ID and a warning about possible prior modifications. Successful
+`nla_task` results expose the same identifier in result metadata and as a visible
+`Child session ID:` line for direct inspection and recovery.
 
 Verify local model limits separately: Ollama `/api/ps` reports the loaded
 `context_length`; `/api/show` may report a much larger architectural maximum.

@@ -98,6 +98,7 @@ try {
   const selected = await instance.tool.nla_task.execute({ role: 'architect', description: 'selection fixture', prompt: 'bounded task', context_window: '20000' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(inventoryCalls, 1, 'resolved inventory is cached across chat and task');
   assert.equal(selected.metadata.model, 'fixture/b', 'nla_task select uses the highest-ranked model');
+  assert.match(selected.output, new RegExp(`Child session ID: ${selected.metadata.sessionID}`), 'successful role task output exposes its created child session ID');
   const coding = await instance.tool.nla_task.execute({ role: 'router', description: 'coding weights', prompt: 'bounded task', selection_weights: '{"coding":10}' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   const reasoning = await instance.tool.nla_task.execute({ role: 'router', description: 'reasoning weights', prompt: 'bounded task', selection_weights: '{"reasoning":10}' }, { sessionID: 'primary_select', directory: root, abort: new AbortController().signal });
   assert.equal(coding.metadata.model, 'fixture/coding', 'task-specific coding weights reach the selector');

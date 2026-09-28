@@ -5,7 +5,9 @@ const TOOL_FREE_ROLES = new Set(['router', 'supervisor', 'architect', 'compactor
 export const ROLE_TOOL_CEILINGS = Object.freeze({
   scout: Object.freeze(['webfetch', 'read', 'grep']),
   explorer: Object.freeze(['read', 'grep', 'glob']),
+  planner: Object.freeze(['read', 'grep', 'glob']),
   implementer: Object.freeze(['read', 'grep', 'edit', 'write', 'bash']),
+  test_writer: Object.freeze(['read', 'grep', 'edit', 'write', 'bash']),
   reviewer: Object.freeze(['read', 'grep', 'glob', 'bash']),
   browser: Object.freeze(['nla_browser_session', 'nla_browser_observe', 'nla_browser_action', 'nla_browser_check']),
 });
@@ -23,7 +25,9 @@ const TOOL_SIGNALS = Object.freeze({
 const REQUIRED_BY_ROLE = Object.freeze({
   scout: ['webfetch', 'read'],
   explorer: ['read', 'grep'],
+  planner: ['read', 'grep'],
   implementer: ['read', 'edit'],
+  test_writer: ['read', 'edit'],
   reviewer: ['read', 'grep'],
   browser: ['nla_browser_session', 'nla_browser_observe', 'nla_browser_action', 'nla_browser_check'],
 });
@@ -33,14 +37,14 @@ export function roleIsToolFree(role) {
 }
 
 export function roleCapabilityCeiling(role, catalog) {
-  if (role === 'implementer' && Array.isArray(catalog) && catalog.some(tool => tool.id === 'apply_patch')) {
+  if (['implementer', 'test_writer'].includes(role) && Array.isArray(catalog) && catalog.some(tool => tool.id === 'apply_patch')) {
     return ['read', 'grep', 'apply_patch', 'bash'];
   }
   return ROLE_TOOL_CEILINGS[role];
 }
 
 export function requiredRoleTools(role, profile = ROLE_TOOL_CEILINGS[role]) {
-  if (role === 'implementer' && profile?.includes('apply_patch')) return ['read', 'apply_patch'];
+  if (['implementer', 'test_writer'].includes(role) && profile?.includes('apply_patch')) return ['read', 'apply_patch'];
   return REQUIRED_BY_ROLE[role] ? [...REQUIRED_BY_ROLE[role]] : [];
 }
 
@@ -79,7 +83,7 @@ export function deterministicToolShortlist(role, prompt, roleProfile = ROLE_TOOL
   const selected = new Set(requiredRoleTools(role, ceiling));
   for (const name of ROLE_TOOL_CEILINGS[role]) {
     if (!TOOL_SIGNALS[name]?.test(prompt)) continue;
-    if (role === 'implementer' && ['edit', 'write'].includes(name) && ceiling.includes('apply_patch')) {
+    if (['implementer', 'test_writer'].includes(role) && ['edit', 'write'].includes(name) && ceiling.includes('apply_patch')) {
       selected.add('apply_patch');
       continue;
     }

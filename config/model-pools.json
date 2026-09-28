@@ -53,6 +53,13 @@
       ],
       "selection_policy": "quality"
     },
+    "planner": {
+      "enabled": true,
+      "selection_mode": "fallback",
+      "models": [
+        "opencode-go/gpt-5.6-luna"
+      ]
+    },
     "implementer": {
       "enabled": true,
       "selection_mode": "select",
@@ -250,6 +257,13 @@
         }
       },
       "selection_policy": "balanced"
+    },
+    "test_writer": {
+      "enabled": true,
+      "selection_mode": "fallback",
+      "models": [
+        "opencode-go/gpt-5.6-luna"
+      ]
     },
     "reviewer": {
       "enabled": true,

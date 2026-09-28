@@ -76,7 +76,8 @@ try {
   );
 
   assert.deepEqual(calls, ['ollama/qwen3.8:latest', 'fixture/fallback']);
-  assert.equal(result.output, 'fallback completed');
+  assert.equal(result.output, 'fallback completed\n\nChild session ID: explorer_child');
+  assert.equal(result.metadata.sessionID, 'explorer_child');
   const health = (await plugin.tool.nla_models.execute({}, { sessionID: 'primary_123' })).metadata.health;
   assert.equal(health.find((entry) => entry.binding === 'ollama/qwen3.8:latest').state, 'quarantined');
   assert.equal(health.find((entry) => entry.binding === 'ollama/qwen3.8:latest').reason, 'provider_message_validation_failed');

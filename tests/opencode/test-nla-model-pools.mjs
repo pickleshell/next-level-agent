@@ -28,6 +28,10 @@ try {
     assert.equal(nativeRole.model, pool.models[0], `default OpenCode ${role} model matches its pool primary`);
   }
   for (const role of ['build', 'plan']) assert.equal(defaultOpenCodeConfig.agent[role].model, 'opencode-go/gpt-5.6-luna', `${role} stays inside the ready-to-use OpenCode Go profile`);
+  for (const role of ['planner', 'test_writer']) {
+    assert.equal(resolved.roles[role].selection_mode, 'fallback', `${role} has a predictable default pool`);
+    assert.equal(defaultOpenCodeConfig.agent[role].model, resolved.roles[role].models[0], `${role} OpenCode role matches its pool`);
+  }
   assert.ok(Object.values(resolved.roles).every((pool) => ['fallback', 'select'].includes(pool.selection_mode)), 'every production role declares its pool mode');
   for (const role of ['architect', 'explorer', 'implementer', 'reviewer']) assert.equal(resolved.roles[role].selection_mode, 'select', `${role} uses adaptive selection by default`);
   const seededModels = Object.keys(JSON.parse(fs.readFileSync('config/model-evaluations.json', 'utf8')).models).sort();
