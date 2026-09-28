@@ -8,8 +8,8 @@ For architecture and roles, start with the main [README](../README.md). For the 
 
 **Current maturity: Alpha, active development**
 
-The canonical NLA release is `0.1.0-alpha.3`, tagged
-`nla-v0.1.0-alpha.3`. NLA release identity is stored in
+The canonical NLA release is `0.1.0-alpha.4`, tagged
+`nla-v0.1.0-alpha.4`. NLA release identity is stored in
 [`nla-version.json`](../nla-version.json) and is intentionally separate from the
 inherited Superpowers `6.3.0` package and harness-manifest metadata.
 

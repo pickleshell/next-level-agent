@@ -9,6 +9,16 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 No changes yet.
 
+## [0.1.0-alpha.4] - 2026-09-28
+
+### Planner and Test Writer workflow documentation
+
+- Show Planner and Test Writer in the primary architecture diagram and Tier 2/3
+  routes.
+- Document RED-before-GREEN sequencing, coordinator-owned integration, and the
+  requirement that parallel groups have independent dependencies and mutable
+  resources.
+
 ## [0.1.0-alpha.3] - 2026-09-28
 
 ### Planner and Test Writer roles

@@ -2,7 +2,7 @@
 
 Next Level Agent (NLA) is an OpenCode workflow for long or complex software development tasks. It keeps one coordinator responsible for the task while specialized agents handle research, architecture, implementation, review, supervision, and context recovery.
 
-**Current NLA release:** `0.1.0-alpha.3` (`nla-v0.1.0-alpha.3`). NLA uses its
+**Current NLA release:** `0.1.0-alpha.4` (`nla-v0.1.0-alpha.4`). NLA uses its
 own Alpha release namespace; the inherited Superpowers package/manifests retain
 their upstream `6.3.0` metadata. [`nla-version.json`](nla-version.json) is the
 canonical machine-readable NLA version record. See the [NLA Changelog](CHANGELOG.md)

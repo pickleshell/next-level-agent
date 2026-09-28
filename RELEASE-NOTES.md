@@ -5,6 +5,15 @@ has not been merged or released, see the [NLA Changelog](CHANGELOG.md).
 This file retains tagged NLA announcements and the inherited Superpowers
 release history; `Unreleased` entries are not release announcements.
 
+## NLA v0.1.0-alpha.4 (2026-09-28)
+
+Tag: `nla-v0.1.0-alpha.4`.
+
+- Aligns the README architecture diagram and documented Tier 2/3 workflow with
+  the released Planner and Test Writer roles.
+- Makes RED-before-GREEN sequencing and the safety boundary for parallel task
+  groups explicit.
+
 ## NLA v0.1.0-alpha.3 (2026-09-28)
 
 Tag: `nla-v0.1.0-alpha.3`.
