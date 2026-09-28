@@ -53,11 +53,15 @@ flowchart TB
     T -->|Tier 0 or 1| D[Direct work<br/>and verification]
     T -->|Tier 2 or 3| E[Explorer and Scout]
     E --> AG{Architecture required?}
-    AG -->|No| I[Implement]
+    AG -->|No| PL[Planner<br/>task graph and safe parallel groups]
     AG -->|Yes| A[Architect]
     A --> G{User approval}
-    G -->|Approved| I
-    I --> V[Verify]
+    G -->|Approved| PL
+    PL --> AC{Executable acceptance<br/>contract?}
+    AC -->|Yes| TW[Test Writer<br/>failing RED tests]
+    AC -->|No| I[Implementer tasks<br/>and integration]
+    TW --> I
+    I --> V[Verify GREEN]
     V --> RG{Independent review required?}
     RG -->|No| SA[Supervisor audit]
     RG -->|Yes| R[Reviewer]
@@ -83,6 +87,8 @@ flowchart TB
     RT -->|bounded utility work| UR[Utility-model runtime]
     OC -. powers .-> E
     OC -. powers .-> A
+    OC -. powers .-> PL
+    OC -. powers .-> TW
     OC -. powers .-> I
     OC -. powers .-> R
     OC -. powers .-> B
@@ -107,7 +113,7 @@ flowchart TB
     classDef gate fill:#f5c451,color:#111,stroke:#333;
     classDef memory fill:#78c6a3,color:#111,stroke:#333;
     class N primary;
-    class H,T,AG,G,RG,RF,P,RT gate;
+    class H,T,AG,G,AC,RG,RF,P,RT gate;
     class DB,NB,MEM memory;
 ```
 
@@ -737,8 +743,8 @@ The table describes the intended NLA role contracts. Some least-privilege bounda
 | --- | --- | --- |
 | 0 | Answer or focused read-only inspection | NLA works directly |
 | 1 | Small bounded change | Direct edit and targeted verification |
-| 2 | Non-trivial implementation | Explore, implement, verify, review when required, checkpoint |
-| 3 | Architecture or high-risk change | Clarify, explore, architect, approve, plan, implement, verify, review, checkpoint |
+| 2 | Non-trivial implementation | Explore, plan and decompose when useful, write RED acceptance tests when the contract is testable, implement, verify, review when required, checkpoint |
+| 3 | Architecture or high-risk change | Clarify, explore, architect, approve, build the Planner task graph, write applicable RED acceptance tests, implement and integrate, verify, review, checkpoint |
 
 Tier 3 design and execution:
 
@@ -747,13 +753,21 @@ NLA clarification
 → Explorer and optional Scout
 → Architect
 → user approval
-→ implementation plan
-→ Implementer
-→ verification
+→ Planner task graph and safe parallel groups
+→ Test Writer RED acceptance tests when the public contract is testable
+→ Implementer tasks and integration
+→ verification to GREEN
 → Reviewer
 → Supervisor completion audit
 → checkpoint and acceptance
 ```
+
+Planner proposes dependencies and safe parallel groups; NLA remains responsible
+for dispatch, write ownership, and integration. Work runs concurrently only when
+its dependencies and mutable resources are independent. For the same acceptance
+contract, Test Writer produces valid failing tests before Implementer begins the
+corresponding production change. Test preparation may overlap only with unrelated
+exploration or implementation work.
 
 Controlled context recovery:
 

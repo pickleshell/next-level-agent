@@ -223,12 +223,19 @@ User describes the feature
 → Architect compares viable designs
 → NLA discusses the recommendation with the user
 → the user approves the design
-→ NLA creates the implementation plan
-→ Implementer changes the scoped files and runs checks
+→ Planner converts the approved design into a dependency-aware task graph and safe parallel groups
+→ Test Writer creates executable RED acceptance tests where the public contract is testable
+→ Implementer completes the scoped tasks and integrates the independent work
+→ the acceptance tests and focused verification reach GREEN
 → Reviewer independently evaluates the diff and evidence
 → Supervisor checks completion state
 → NLA checkpoints and reports the accepted result
 ```
+
+Planner proposes parallel groups; the NLA coordinator owns dispatch, exclusive
+write ownership, and integration. Only tasks with independent dependencies and
+mutable resources may overlap. Test Writer precedes implementation of the same
+acceptance contract and does not write production code.
 
 For a small one-file correction, NLA should select Tier 1, make the bounded edit directly, verify it, and avoid the cost of creating a team.
 
