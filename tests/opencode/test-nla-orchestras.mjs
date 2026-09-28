@@ -28,7 +28,7 @@ try {
   proposal.guidance = 'Use Command Code for routine work; OpenAI when quality justifies it.';
   validateModelPools(proposal);
   assert.throws(() => validateModelPools({ roles: { implementer: { enabled: true, selection_mode: 'fallback', models: 'auto' } } }), /agent select pool/);
-  assert.deepEqual(saveOrchestra(file, 'command-openai', proposal), { name: 'command-openai', roles: 9 });
+  assert.deepEqual(saveOrchestra(file, 'command-openai', proposal), { name: 'command-openai', roles: 11 });
   assert.deepEqual(getOrchestra(file, 'command-openai').config.roles.implementer.models, [], 'legacy auto loads as canonical empty preferences');
   assert.equal(getOrchestra(file, 'command-openai').config.roles.implementer.selection_mode, 'auto');
   assert.throws(() => saveOrchestra(file, 'command-openai', proposal), /already exists/);

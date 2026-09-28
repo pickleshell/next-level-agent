@@ -9,6 +9,8 @@ assert.deepEqual(
   ['read', 'edit', 'write', 'bash'],
 );
 assert.deepEqual(deterministicToolShortlist('explorer', 'Inspect repository files and locate references.'), ['read', 'grep', 'glob']);
+assert.deepEqual(deterministicToolShortlist('planner', 'Inspect repository files and plan dependency-aware tasks.'), ['read', 'grep', 'glob']);
+assert.deepEqual(deterministicToolShortlist('test_writer', 'Write acceptance tests and run them to confirm RED.'), ['read', 'edit', 'write', 'bash']);
 assert.deepEqual(deterministicToolShortlist('reviewer', 'Review the changed source and run tests.'), ['read', 'grep', 'bash']);
 assert.deepEqual(deterministicToolShortlist('router', 'Route this task.'), []);
 assert.deepEqual(deterministicToolShortlist('implementer', 'Tool-free reasoning only; use no tools.'), []);

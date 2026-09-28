@@ -7,6 +7,17 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+### Planner and Test Writer roles
+
+- Add a read-only Planner that turns approved requirements and architecture
+  into dependency-aware tasks, safe parallel groups, integration order, and
+  verification without dispatching or editing.
+- Add a Test Writer that writes specification-derived acceptance tests and
+  test fixtures, proves valid RED failures, and never changes production code.
+- Give both roles explicit model pools, bounded tool ceilings, role prompts,
+  skills, tests, and user documentation while preserving NLA ownership of
+  dispatch, integration, review, and final acceptance.
+
 ### Recover incomplete child results
 
 - Distinguish context/output exhaustion and missing final text from provider

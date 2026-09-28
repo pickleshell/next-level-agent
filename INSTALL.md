@@ -107,7 +107,10 @@ OpenCode and ask NLA to propose and activate a new named orchestra. Architect,
 Explorer, Implementer, and Reviewer use
 `selection_mode: "select"`, while the remaining roles use ordered `fallback`.
 The select examples use `quality` for Architect and Reviewer and `balanced`
-for Explorer and Implementer. `nla_models` reports the effective policies;
+for Explorer and Implementer. Planner and Test Writer use predictable Luna
+fallback pools by default; their role prompts load the bundled
+`planning-parallel-work` and `writing-acceptance-tests` contracts. `nla_models`
+reports the effective policies;
 `nla_model_policy` persists one select role's policy and preferences in SQLite
 for new tasks without restart,
 while file-backed changes become active through `nla_models_reload`.
