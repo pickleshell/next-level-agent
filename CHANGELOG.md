@@ -7,6 +7,10 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 ## Unreleased
 
+No changes yet.
+
+## [0.1.0-alpha.3] - 2026-09-28
+
 ### Planner and Test Writer roles
 
 - Add a read-only Planner that turns approved requirements and architecture
@@ -123,7 +127,7 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
   primaries, and verify that a fresh launcher installation resolves this profile
   without private overrides.
 
-### Committed since `nla-v0.1.0-alpha.2` (not tagged as a new NLA release)
+### Included since `nla-v0.1.0-alpha.2`
 
 - Added optional Browser tasks with bounded permissions, isolated sessions,
   durable recovery, trusted evidence, and fail-closed cleanup and broker

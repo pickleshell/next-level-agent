@@ -5,6 +5,20 @@ has not been merged or released, see the [NLA Changelog](CHANGELOG.md).
 This file retains tagged NLA announcements and the inherited Superpowers
 release history; `Unreleased` entries are not release announcements.
 
+## NLA v0.1.0-alpha.3 (2026-09-28)
+
+Tag: `nla-v0.1.0-alpha.3`.
+
+- Adds durable named orchestras, dynamic model pools, provider/model switches,
+  adaptive quality/balanced/cost/local/free selection, and persistent SQLite
+  model facts, evaluations, health, usage, and workflow state.
+- Adds the Hybrid Risk & Complexity Assessor, safer model-request boundaries,
+  confirmed-stop failover, incomplete-child recovery, and checkpointed
+  mid-turn compaction.
+- Adds optional Browser workflows with durable evidence and recovery, plus
+  independent Planner and Test Writer roles for dependency-aware parallel plans
+  and specification-derived RED acceptance tests.
+
 ## NLA v0.1.0-alpha.2 (2026-09-02)
 
 - Establishes [`nla-version.json`](nla-version.json) as the canonical

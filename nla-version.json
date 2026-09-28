@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "name": "next-level-agent",
-  "version": "0.1.0-alpha.2",
-  "tag": "nla-v0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
+  "tag": "nla-v0.1.0-alpha.3",
   "channel": "alpha",
   "upstream_base": {
     "name": "superpowers",
