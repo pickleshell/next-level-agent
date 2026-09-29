@@ -1,0 +1,16 @@
+{
+  "title": "PickleShell Next Level Agent",
+  "creators": [
+    {
+      "name": "PickleShell"
+    }
+  ],
+  "description": "Next Level Agent (NLA), developed and maintained by PickleShell. NLA is an independent orchestration system based on the upstream Superpowers project; upstream components and their attribution remain documented in the repository README and LICENSES/SUPERPOWERS.txt.",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/obra/superpowers",
+      "relation": "isDerivedFrom",
+      "scheme": "url"
+    }
+  ]
+}
