@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use Next Level Agent in your work, please cite it using the metadata below."
+title: "Next Level Agent"
+abstract: "A managed multi-agent workflow for reliable, efficient, and verifiable software development in OpenCode."
+authors:
+  - name: "PickleShell"
+version: "0.1.0-alpha.4"
+date-released: 2026-09-28
+type: software
+license: MIT
+repository-code: "https://github.com/pickleshell/next-level-agent"
+url: "https://github.com/pickleshell/next-level-agent"
+keywords:
+  - artificial intelligence
+  - software engineering
+  - multi-agent systems
+  - coding agents
+  - OpenCode

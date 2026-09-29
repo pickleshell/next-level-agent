@@ -3,13 +3,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { NextLevelAgentPlugin } from '../../.opencode/plugins/next-level-agent.js';
+import { NextLevelAgentPlugin, childAgentRuntime } from '../../.opencode/plugins/next-level-agent.js';
 import { writeEvaluationStoreAtomic } from '../../.opencode/plugins/nla-model-evaluations.mjs';
 import { initializeSystemDatabase, loadSystemEvaluations } from '../../.opencode/plugins/nla-system-database.mjs';
 
 const oldPool = process.env.NLA_MODEL_POOLS_PATH;
 const oldMemory = process.env.NLA_MEMORY_DIR;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nla-model-selection-plugin-'));
+assert.deepEqual(childAgentRuntime('explorer', { providerID: 'fixture', modelID: 'a' }), { agent: 'explorer' });
+assert.deepEqual(
+  childAgentRuntime('explorer', { providerID: 'opencode', modelID: 'free' }, { agent: { explorer: { prompt: 'Explorer role prompt' } } }),
+  { agent: 'nla-zen-worker', system: 'Explorer role prompt' },
+  'Zen free-tier children use a primary-mode compatibility worker while retaining the exact role prompt',
+);
 process.env.NLA_MODEL_POOLS_PATH = path.join(root, 'pools.json');
 process.env.NLA_MEMORY_DIR = path.join(root, 'memory');
 

@@ -49,6 +49,15 @@ export { modelCooldownMs };
 export { formatModelPools };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ZEN_PRIMARY_WORKER = 'nla-zen-worker';
+
+export function childAgentRuntime(role, model, config = {}) {
+  if (model?.providerID !== 'opencode') return { agent: role };
+  return {
+    agent: ZEN_PRIMARY_WORKER,
+    system: config.agent?.[role]?.prompt || `You are the Next-Level Agent ${role}. Execute only the supplied bounded task and return a concise evidence-based report.`,
+  };
+}
 
 // Keep legacy SQLite/config values stable while presenting simple switches to
 // operators. Old tool callers can still send enabled/disabled.
@@ -618,7 +627,7 @@ export const NextLevelAgentPlugin = async ({ client, directory }) => {
             path: { id: childID },
             query: { directory: context.directory || directory },
             body: {
-              agent: args.role,
+              ...childAgentRuntime(args.role, model, liveConfig),
               model,
               tools: invocationTools,
               parts: [
@@ -1687,6 +1696,12 @@ ${toolMapping}
       initializeNotebook(notebookDir);
       config.skills = config.skills || {};
       config.skills.paths = config.skills.paths || [];
+      config.agent = config.agent || {};
+      config.agent[ZEN_PRIMARY_WORKER] = {
+        description: 'Internal primary-mode compatibility worker for OpenCode Zen free-tier child tasks',
+        mode: 'primary',
+        prompt: 'Execute exactly one bounded NLA child task. Follow the request system prompt and tool whitelist. Do not coordinate, delegate, or address the user.',
+      };
       if (config.agent?.browser) config.agent.browser.tools = toolPermissionMap(BROWSER_TOOLS);
       if (!config.skills.paths.includes(nlaSkillsDir)) {
         config.skills.paths.push(nlaSkillsDir);

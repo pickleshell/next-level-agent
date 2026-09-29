@@ -39,6 +39,10 @@ export function classifyProviderError(error, now = Date.now()) {
   if (/no user query found in messages/.test(lower)) return { category: 'defective', reason: 'provider_message_validation_failed', retryAfterMs: 0 };
   if (status === 410 || /model\s+(?:not\s+found|unavailable|retired)|unknown model|model missing|model_not_found|model[^\n]{0,80}does not exist|end of life/.test(lower)) return { category: 'defective', reason: 'model_binding_unavailable', retryAfterMs: 0 };
   if (status === 404) return { category: 'configuration', reason: 'provider_endpoint_not_found', retryAfterMs: 0 };
+  // Zen may transiently reject an otherwise valid in-process OpenCode request
+  // with this policy message. A later direct OpenCode request can succeed
+  // without any credential change, so an indefinite auth quarantine is wrong.
+  if (/free tier can only be used from within opencode/.test(lower)) return { category: 'transient', reason: 'provider_route_temporarily_restricted', retryAfterMs: retryAfter };
   if (status === 401 || status === 403 || /unauthori[sz]ed|forbidden|invalid (?:api|access) key|authentication/.test(lower)) return { category: 'configuration', reason: 'provider_authorization_failed', retryAfterMs: 0 };
   if (status === 429 || /rate limit|too many requests|overloaded|temporar(?:y|ily)|upstream|connection reset|network|timed out|timeout|service unavailable|unexpected server error/.test(lower) || [500, 502, 503, 504].includes(status)) {
     return { category: 'transient', reason: status ? `provider_http_${status}` : 'provider_transient_failure', retryAfterMs: retryAfter };

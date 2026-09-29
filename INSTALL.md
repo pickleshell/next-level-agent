@@ -321,7 +321,8 @@ Removing the clone does not remove those state directories.
 - Do not install or modify providers without explicit user approval.
 - Do not expose secrets in commands, logs, configuration, Notebook, or ledger.
 - NLA blocks common full-environment dump commands (`env`, `printenv`,
-  `export -p`, `declare -p`, `set`, and `/proc/*/environ`), nested shell
-  launchers, and direct privilege tools (`sudo`, `doas`, `runuser`, `su`) for
-  NLA-managed sessions. This is a narrow OpenCode hook policy, not a shell
-  sandbox; keep credentials out of the process environment where practical.
+  `export -p`, `declare -p`, `set`, and `/proc/*/environ`) and nested shell
+  launchers for NLA-managed sessions. Direct privilege commands are allowed
+  when the operator explicitly grants them through the host sudo policy. This
+  is a narrow OpenCode hook policy, not a shell sandbox; keep credentials out
+  of the process environment where practical.

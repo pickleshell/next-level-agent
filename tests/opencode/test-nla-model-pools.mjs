@@ -125,6 +125,11 @@ assert.equal(classifyProviderError(new Error('caller cancelled request after tim
 assert.equal(classifyProviderError({ status: 404, message: 'model endpoint missing' }).category, 'configuration');
 assert.equal(classifyProviderError({ status: 404, message: 'model missing' }).category, 'defective');
 assert.equal(classifyProviderError(new Error('HTTP 401')).category, 'configuration');
+assert.deepEqual(
+  classifyProviderError({ status: 403, message: "OpenCode's free tier can only be used from within OpenCode" }),
+  { category: 'transient', reason: 'provider_route_temporarily_restricted', retryAfterMs: null },
+  'a transient Zen route-policy rejection must cool down instead of quarantining the binding indefinitely',
+);
 assert.equal(retryAfterMs('60', 1000), 60000);
 assert.equal(retryAfterMs('Thu, 01 Jan 1970 00:02:00 GMT', 1000), 119000);
 assert.equal(retryAfterMs('-1', 1000), null);
@@ -211,10 +216,7 @@ try {
     plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'env' } }),
     error => error.code === 'NLA_SHELL_POLICY_BLOCKED',
   );
-  await assert.rejects(
-    plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'sudo -n id' } }),
-    error => error.code === 'NLA_SHELL_POLICY_BLOCKED',
-  );
+  await plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'sudo -n id' } });
   await plugin['tool.execute.before']({ tool: 'bash', sessionID: 'primary_123' }, { args: { command: 'npm test -- --runInBand' } });
   const context = { sessionID: 'primary_123', directory: fixture, abort: new AbortController().signal };
   const result = await plugin.tool.nla_task.execute({ role: 'architect', description: 'fixture', prompt: 'do bounded task' }, context);

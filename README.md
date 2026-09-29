@@ -642,6 +642,10 @@ dispatch settles, with failures taking precedence over idle. A rejected
 continuation advances through the remaining eligible models within the budget.
 Cancelling an active `nla_task` requests child-session abort, releases its health
 claim and rejects the task; a late response cannot turn cancellation into success.
+OpenCode Zen free-tier models require `mode=primary`. NLA routes only those
+`opencode/*` child calls through an internal primary-mode compatibility worker,
+while preserving the original role system prompt and the same deny-by-default
+tool shortlist. Other providers continue to use their configured subagent roles.
 After a model-request timeout, fallback waits up to five seconds for a successful abort
 response. A failed, negative or unconfirmed stop blocks fallback with
 `NLA_CHILD_STOP_UNCONFIRMED`. This prevents a new attempt from overlapping the

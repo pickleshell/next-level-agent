@@ -813,15 +813,16 @@ Distinguish session behavior:
   optional operator-managed dependencies; their availability is not required
   for ordinary NLA startup or non-Mem0 workflows;
 - NLA is not a sandbox and does not replace operating-system security boundaries.
-- NLA rejects common full-environment dump commands, nested shell launchers,
-  and direct `sudo`/`doas`/`runuser`/`su` commands for NLA-managed sessions,
-  but OpenCode exposes `bash` as a coarse capability and this is not a complete
+- NLA rejects common full-environment dump commands and nested shell launchers
+  for NLA-managed sessions. Direct `sudo`/`doas`/`runuser`/`su` commands are
+  permitted only when the operator explicitly grants host privilege, but
+  OpenCode exposes `bash` as a coarse capability and this is not a complete
   command parser or shell sandbox. Do not rely on it to protect secrets or to
   contain a process that already has elevated operating-system privileges.
 - External-directory controls are not a privilege boundary when the operator
   grants the runtime `sudo`, another privileged shell, or broad filesystem
-  access. Do not grant NLA/OpenCode sudo for acceptance runs; use a dedicated
-  unprivileged account and a task-owned worktree. This alpha does not enforce
+  access. With explicit operator approval, NLA may use the host's sudo policy;
+  the operator remains responsible for resulting system changes. This alpha does not enforce
   canonical path containment or prevent a privileged user from bypassing it.
 
 For a full requirement-by-requirement analysis, read [Draft 0.4 Implementation Status](DRAFT_0_4_IMPLEMENTATION_STATUS.md).
