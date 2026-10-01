@@ -997,6 +997,10 @@ Next Level Agent and its original components are licensed under the
 
 Copyright © 2026 PickleShell.
 
+Logo design: Zubovskyi, Oleksii (2026). *Logo designs for NLA (Next Level Agent)
+and NLA Team.* (Version 1.0). Zenodo.
+[DOI: 10.5281/zenodo.23081661](https://doi.org/10.5281/zenodo.23081661).
+
 This repository includes components derived from
 [Superpowers](https://github.com/obra/superpowers). Those components remain
 Copyright © 2025 Jesse Vincent and are distributed under their original
