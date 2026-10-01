@@ -1,5 +1,12 @@
 # Next Level Agent
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23080015.svg)](https://doi.org/10.5281/zenodo.23080015)
+[![Release](https://img.shields.io/github/v/release/pickleshell/next-level-agent?include_prereleases)](https://github.com/pickleshell/next-level-agent/releases)
+[![NLA checks](https://github.com/pickleshell/next-level-agent/actions/workflows/nla-ci.yml/badge.svg?branch=main)](https://github.com/pickleshell/next-level-agent/actions/workflows/nla-ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Runtime: OpenCode](https://img.shields.io/badge/Runtime-OpenCode-5b5bd6)](https://opencode.ai)
+[![Status: Experimental Alpha](https://img.shields.io/badge/Status-Experimental%20Alpha-orange)](docs/PROJECT_STATUS_AND_USAGE.md)
+
 Next Level Agent (NLA) is an OpenCode workflow for long or complex software development tasks. It keeps one coordinator responsible for the task while specialized agents handle research, architecture, implementation, review, supervision, and context recovery.
 
 **Current NLA release:** `0.1.0-alpha.5` (`nla-v0.1.0-alpha.5`). NLA uses its
