@@ -2,7 +2,7 @@
   <img src="nla.png" alt="NLA logo" width="160">
 </p>
 
-<p align="center"><strong>NLA</strong></p>
+<h1 align="center">NLA</h1>
 
 <h1 align="center">Next Level Agent</h1>
 
