@@ -1,3 +1,5 @@
+<img src="nla.png" alt="NLA logo" width="160">
+
 # Next Level Agent
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23080015.svg)](https://doi.org/10.5281/zenodo.23080015)
