@@ -2,6 +2,8 @@
   <img src="nla.png" alt="NLA logo" width="160">
 </p>
 
+<p align="center"><strong>NLA</strong></p>
+
 <h1 align="center">Next Level Agent</h1>
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23080015.svg)](https://doi.org/10.5281/zenodo.23080015)
@@ -1008,3 +1010,9 @@ See [NLA_MODIFICATIONS.md](NLA_MODIFICATIONS.md) for the separation between
 original NLA components and inherited Superpowers components.
 
 > If you want to go fast, go alone.
+
+---
+
+<p align="center">()</p>
+
+<p align="center">NLA</p>
