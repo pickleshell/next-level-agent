@@ -5,6 +5,15 @@ has not been merged or released, see the [NLA Changelog](CHANGELOG.md).
 This file retains tagged NLA announcements and the inherited Superpowers
 release history; `Unreleased` entries are not release announcements.
 
+## NLA v0.1.0-alpha.5 (2026-10-01)
+
+Tag: `nla-v0.1.0-alpha.5`.
+
+- Publishes the standalone NLA workflow, including Planner and Test Writer,
+  reliable privileged execution, provider failover, and optional Mem0.
+- Aligns citation metadata with the canonical release identity and creator.
+- Passes the complete `test:nla` regression suite.
+
 ## NLA v0.1.0-alpha.4 (2026-09-28)
 
 Tag: `nla-v0.1.0-alpha.4`.

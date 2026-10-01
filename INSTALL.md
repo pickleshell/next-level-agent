@@ -4,8 +4,8 @@ NLA is currently developed and tested for OpenCode. These instructions install t
 
 For status, limitations, storage, telemetry, and the roadmap, read [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md).
 
-These instructions currently describe NLA `0.1.0-alpha.4`
-(`nla-v0.1.0-alpha.4`). The canonical release identity is
+These instructions currently describe NLA `0.1.0-alpha.5`
+(`nla-v0.1.0-alpha.5`). The canonical release identity is
 [`nla-version.json`](nla-version.json); inherited Superpowers manifests keep
 their separate upstream version.
 

@@ -9,6 +9,13 @@ the inherited Superpowers notes remain in [Release Notes](RELEASE-NOTES.md).
 
 No changes yet.
 
+## [0.1.0-alpha.5] - 2026-10-01
+
+- Publish the standalone NLA workflow with existing roles and optional Mem0.
+- Include privileged-execution and provider reliability fixes since alpha.4.
+- Align citation title, creator, version, and release date.
+- Verify the complete `test:nla` regression suite.
+
 ## [0.1.0-alpha.4] - 2026-09-28
 
 ### Planner and Test Writer workflow documentation
