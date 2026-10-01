@@ -63,12 +63,14 @@ flowchart TB
     TW --> I
     I --> V[Verify GREEN]
     V --> RG{Independent review required?}
-    RG -->|No| SA[Supervisor audit]
+    RG -->|No| SG{Supervisor required?<br/>Tier 3 or Tier 2 escalation}
     RG -->|Yes| R[Reviewer]
     R --> RF{Changes needed?}
     RF -->|Yes| I
-    RF -->|No| SA
-    D --> SA
+    RF -->|No| SG
+    SG -->|Yes| SA[Supervisor audit]
+    SG -->|No| X
+    D --> X
     SA --> X[NLA acceptance]
 
     N -. optional browser tasks .-> B[Browser]
@@ -113,7 +115,7 @@ flowchart TB
     classDef gate fill:#f5c451,color:#111,stroke:#333;
     classDef memory fill:#78c6a3,color:#111,stroke:#333;
     class N primary;
-    class H,T,AG,G,AC,RG,RF,P,RT gate;
+    class H,T,AG,G,AC,RG,RF,SG,P,RT gate;
     class DB,NB,MEM memory;
 ```
 
@@ -485,7 +487,7 @@ not a live model availability test, and utility endpoints are not inferred from
 OpenCode providers. These first-use/reload operations may therefore update the
 local registry even when no model is invoked.
 
-Primary NLA has two bounded tools for this state:
+Primary NLA has bounded tools for this state:
 
 - `nla_system`: `schema`, `status`, `setting_list`, `setting_get`, `setting_set`,
   `database_create`, `database_list`, `table_create`, and `table_list`;
@@ -612,13 +614,15 @@ An excluded model does not receive a utility-Compactor request. This is useful
 for local, free, or latency-sensitive models; it does not disable controlled
 context compaction.
 
-Retryable provider failures also use a process-local model health list. A
-failed provider/model is placed into cooldown and skipped by later tasks in
-the same NLA process. The default cooldown is 30 seconds; a pool may override
+Retryable provider failures also use a SQLite-backed model health list. A
+failed provider/model is placed into cooldown and skipped by later tasks
+while that cooldown is active. The default cooldown is 30 seconds; a pool may override
 it with cooldown_ms, or the process-wide default may be changed with
 NLA_MODEL_COOLDOWN_MS. Successful recovery clears the entry. Cooldown
 decisions and expiry timestamps are written to the private agent-run log.
-The list is intentionally not persistent: restarting NLA resets it.
+Unexpired cooldowns and quarantine survive restart. An operator can inspect
+health and use `nla_model_health_reset` for an exact binding when a reset is
+justified; restarting NLA is not a health reset.
 
 Rate limits, overloads, transient network failures, and bounded timeouts are
 cooling failures. A retired or missing model binding, or a provider
@@ -881,7 +885,67 @@ Clone https://github.com/pickleshell/next-level-agent.git, read AGENTS.md comple
 
 ## Documentation
 
+### First launch and readiness
+
+After following [INSTALL.md](INSTALL.md), launch NLA against your own project:
+
+```bash
+OPENCODE_CONFIG="$HOME/.local/share/nla/next-level-agent/opencode.json" \
+  opencode /absolute/path/to/project
+```
+
+The supplied orchestra uses OpenCode Go; authenticate that provider or configure
+an accessible alternative before starting work. Provider credentials belong in
+OpenCode, never in NLA configuration or its database. Optional Browser and Mem0
+are not prerequisites for ordinary coding tasks.
+
+For a readiness check without delegating work, ask:
+
+```text
+Show the active orchestra, role pools, provider/model switches, system database
+status and schema, and current work state. Do not launch child tasks or call models
+from the pools. Report missing configuration and distinguish inventory/health
+metadata from an actual provider-response test.
+```
+
+Model inspection may populate missing registry facts from the provider inventory;
+it does not prove that a model endpoint responds. `nla_work_state` also persists
+the reconciled ledger; a fresh session may have no saved ledger yet, which is not
+by itself a startup failure. These checks are not a guarantee of zero local
+state writes. See
+[Healthy Startup](docs/PROJECT_STATUS_AND_USAGE.md#healthy-startup) and
+[Reading Telemetry](docs/PROJECT_STATUS_AND_USAGE.md#reading-telemetry).
+
+### Operational tools
+
+These are tool names used by NLA inside OpenCode, not standalone shell commands.
+
+| Tools | Purpose |
+| --- | --- |
+| `nla_task` | Delegate work to a configured role with model selection and failover. |
+| `nla_models`, `nla_model_policy`, `nla_model_health_reset`, `nla_models_reload` | Inspect pools and health, adjust selection, reset health when justified, or reload configuration. |
+| `nla_orchestra` | Inspect, create, edit, and activate saved orchestras. |
+| `nla_system`, `nla_models_registry` | Inspect persistent state and manage supported settings, model facts, scores, and switches. |
+| `nla_state`, `nla_work_state` | Save workflow checkpoints and reconcile them with repository evidence. |
+| `nla_notebook`, `nla_compact` | Maintain coordinator memory and request controlled context recovery. |
+| `nla_usage` | Show per-request and aggregated token, cache, and cost accounting. |
+
+System state lives in `~/.local/share/nla/system.sqlite` by default and survives
+new OpenCode sessions. Orchestras and model history are shared within that NLA
+user's state directory; workflow ledgers remain session-specific. Do not delete
+the database when updating the code. Runtime telemetry lives in the target
+project's `.opencode/agent-run.log`:
+
+```bash
+tail -f /absolute/path/to/project/.opencode/agent-run.log
+```
+
+### Detailed documentation
+
 - [Installation](INSTALL.md): supported Alpha setup for OpenCode.
+- [Model routing architecture](docs/NLA_MODEL_ROUTING_ARCHITECTURE.md): pools, policies, model facts, and evaluations.
+- [Changelog](CHANGELOG.md) and [Release Notes](RELEASE-NOTES.md): current changes and tagged announcements.
+- [Citation metadata](CITATION.cff): title, creator, and version for citing NLA.
 - [Project Status and Usage](docs/PROJECT_STATUS_AND_USAGE.md): status, limitations, telemetry, storage, evidence, and roadmap.
 - [Optional Browser role](docs/BROWSER.md): Playwright MCP installation, isolated configuration, target policy, and Browser-role boundaries.
 - [Browser production gate](docs/BROWSER_PRODUCTION_GATE.md): functional acceptance, isolation/security, failure/recovery and repeated-use evidence; every mandatory layer must pass.

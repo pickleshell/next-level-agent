@@ -58,7 +58,7 @@ API keys and provider credentials do not belong in this repository, model-pool c
 | `select` | Filters and ranks only the pool's listed models using role/task requirements, model facts, scores, policy, and health; a failed choice can be followed by another eligible candidate. |
 | `auto` | A separate agent pool mode. At task start, enabled registry bindings in the OpenCode provider inventory become the task's candidate list. The optional `models` array gives listed bindings a small, nonexclusive preference; `[]` means no preferences. |
 | Model binding | An exact `provider/model` ID, such as `openai/gpt-5.6-luna`. Provider names alone are not pool entries or health identities. |
-| Provider status | An independent switch displayed as `on`/`off` by NLA. An off provider is excluded from new NLA tasks without changing its models' individual statuses or evaluations; SQLite retains legacy values. |
+| Provider status | An independent switch displayed as `on`/`off` by NLA. An off provider is excluded from `auto` selection without changing its models' individual statuses or evaluations. Explicit `select`/`fallback` pools and fixed coordinator bindings ignore this switch; SQLite retains legacy values. |
 | Registry, inventory, facts, evaluations | The registry stores bindings and operator/runtime facts (for example context and price); the OpenCode inventory says which bindings the runtime exposes; evaluations store quality observations. Inventory presence is not a live endpoint check. |
 | Model health | Temporary runtime eligibility such as cooldown or quarantine after an attempt. It is separate from durable registry status (`enabled`/`disabled`) and quality scores. |
 
@@ -483,8 +483,10 @@ being retried on every cooldown cycle. Cooling or quarantined models are
 excluded before actual-call failover budgets are applied. If every model is
 cooling, NLA reports the earliest retry time without making a request. If every
 model is quarantined, an explicit exact-binding reset/probe is required.
-Successful recovery clears cooldown. The state resets when the NLA process
-restarts and is visible through model introspection and private telemetry.
+Successful recovery clears cooldown. Unexpired cooldowns and quarantine are
+restored from SQLite after restart and are visible through model introspection
+and private telemetry. Restarting is not a substitute for an explicit,
+justified health reset.
 
 Set `NLA_MODEL_POOLS_PATH` to an absolute path (or a path beginning with `~`) to
 load a complete machine-local pool file instead. If unset, NLA uses the
@@ -626,10 +628,11 @@ Supervisor does not use this optional path during controlled compaction: its
 audit still runs through the configured OpenCode pool and any Supervisor error
 or block stops compaction fail-closed.
 
-The public Architect pool starts with the smoke-tested
-`opencode/mimo-v2.5-free` and retains one bounded fallback. HTTP rejection and
-failover behavior are exercised with deterministic fixtures rather than a
-deliberately broken live default. Provider health is still installation-specific.
+The public Architect pool uses `select` with the `quality` policy and five
+OpenCode Go bindings: Kimi K3, GPT-5.6 Luna, DeepSeek V4 Pro, GLM-5.3, and
+Qwen3.8 Max. The ranked eligible list supplies bounded failover candidates.
+HTTP rejection and failover behavior are exercised with deterministic fixtures;
+provider health and access are still installation-specific.
 
 ## Local Data and Privacy
 

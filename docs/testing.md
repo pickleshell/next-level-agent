@@ -9,6 +9,7 @@ for pull requests because provider availability, latency, and cost are external.
 From the repository root, run:
 
 ```bash
+opencode --version
 npm install --no-save --prefix .opencode @opencode-ai/plugin@1.18.9
 npm run test:nla
 python3 -m venv .venv
@@ -16,7 +17,13 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q tests/test_model_pools.py tests/test_compact_checkpoint.py
 ```
 
-The first command installs the same pinned test dependency as CI. It is needed
+OpenCode must already be installed and available on `PATH`: the Mem0 skill
+discovery test invokes `opencode debug skill --pure` without a model call. The
+plugin package alone does not install the OpenCode CLI. A missing executable
+produces `spawnSync opencode ENOENT`, an environment/setup failure rather than a
+provider failure. Node.js must also support the built-in `node:sqlite` module.
+
+The `npm install` command installs the same pinned test dependency as CI. It is needed
 on a fresh clone: do not rely on an earlier OpenCode launch having populated
 `.opencode/node_modules`. This is test setup, not a paid provider/model call.
 
