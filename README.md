@@ -1,6 +1,8 @@
-<img src="nla.png" alt="NLA logo" width="160">
+<p align="center">
+  <img src="nla.png" alt="NLA logo" width="160">
+</p>
 
-# Next Level Agent
+<h1 align="center">Next Level Agent</h1>
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23080015.svg)](https://doi.org/10.5281/zenodo.23080015)
 [![Release](https://img.shields.io/github/v/release/pickleshell/next-level-agent?include_prereleases)](https://github.com/pickleshell/next-level-agent/releases)
