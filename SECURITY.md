@@ -12,7 +12,7 @@ understand. Review the current limitations in
 
 Do not include credentials, private repository content, session transcripts,
 or exploit details in a public issue. Email
-[`pickleshell.plugin@gmail.com`](mailto:pickleshell.plugin@gmail.com) with:
+[`leonweiner256@gmail.com`](mailto:leonweiner256@gmail.com) with:
 
 - the affected commit or release;
 - the impact and required preconditions;

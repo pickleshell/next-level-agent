@@ -988,7 +988,7 @@ Open a GitHub issue to report a bug, suggest an improvement, or ask for help.
 
 - [Create an issue](https://github.com/pickleshell/next-level-agent/issues/new)
 - [Browse existing issues](https://github.com/pickleshell/next-level-agent/issues)
-- Email: [pickleshell.plugin@gmail.com](mailto:pickleshell.plugin@gmail.com)
+- Email: [leonweiner256@gmail.com](mailto:leonweiner256@gmail.com)
 
 ## Credits and License
 
